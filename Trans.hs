@@ -34,52 +34,8 @@ quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
 quickPrint prg input =
   putStrLn $ CUDA.genKernel "kernel" prg input 
 
----------------------------------------------------------------------------
--- Scalar argument
----------------------------------------------------------------------------
-scalArg :: EInt -> GlobPull EInt -> Final (GProgram (GlobPull EInt)) 
-scalArg e = forceG . mapG (force . fmap (+e)) 256
-
-getScalArg = quickPrint scalArg ((variable "X") :->
-                                 undefinedGlobal)
-
----------------------------------------------------------------------------
--- MapFusion example
----------------------------------------------------------------------------
-
-mapFusion :: Pull EInt -> BProgram (Pull EInt)
-mapFusion arr =
-  do
-    imm <- sync $ (fmap (+1) . fmap (*2)) arr
-    sync $ (fmap (+3) . fmap (*4)) imm 
-
-input1 :: Pull EInt 
-input1 = namedArray "apa" 32
-
 input2 :: GlobPull EInt
 input2 = namedGlobal "apa" 
-
-input3 :: GlobPull (Exp Int32)
-input3 = namedGlobal "apa" 
-
-
-
----------------------------------------------------------------------------
--- Small experiments 
----------------------------------------------------------------------------
-
-sync :: Forceable a => a -> BProgram (Forced a)
-sync = force 
-
-prg0 = putStrLn$ printPrg$  mapFusion input1
-
-mapFusion' :: GlobPull EInt
-              -> GlobPush EInt
-mapFusion' arr = mapG mapFusion 256 arr
-                 
-prg1 = putStrLn$ printPrg$ cheat $ (forceG . mapFusion') input2
-
-prg2 = quickPrint (forceG . mapFusion') input2
 
 ---------------------------------------------------------------------------
 -- Transpose experiments 
@@ -158,33 +114,30 @@ t5 = quickPrint (forceG.mapGid (force . push . trans1 256) 16) input2
 
 t6 = quickPrint (forceG.mapGidP (return . push . trans1 256) 16) input2
 
-block :: Pull a -> Push a
-block (Pull b ixf) = Push b $ \wf -> do
+block :: Exp Word32 -> Exp Word32 -> Pull a -> Push a
+block w m (Pull b ixf) = Push b $ \wf -> do
     ForAll (Just b) $ \ix ->
         SeqFor m $ \ixs -> do
-            wf (ixf (ixs*bl + ix)) (ixs*bl + ix)
-    where bl = fromIntegral b
-          m = fromIntegral b --(n `div` b)
+            wf (ixf (ixs*w + ix)) (ixs*w + ix)
 
-trans7 :: Word32 -> Pull (Exp a) -> Push (Exp a)
-trans7 w = block.ixMap (transF (Literal w))
+trans7 :: Exp Word32 -> Pull (Exp a) -> Push (Exp a)
+trans7 w = block w w.ixMap (transF w)
 
 --wrong
 t7 = quickPrint (forceG.mapGidP (return . trans7 256) 16) input2
 
-blockGid :: Pull a -> GlobPush a
-blockGid (Pull b ixf) = GlobPush $ \wf -> do
+blockGid :: Exp Word32 -> Exp Word32 -> Pull a -> GlobPush a
+blockGid w m (Pull b ixf) = GlobPush $ \wf -> do
     ForAllBlocks $ \bx ->
         ForAll (Just b) $ \ix ->
             SeqFor m $ \ixs -> do
                 let i = bx*fromIntegral b + ix
-                wf (ixf (ixs*bl + i)) (ixs*bl + i)
-        where bl = fromIntegral b
-              m = fromIntegral b --(n `div` b)
+                wf (ixf (ixs*w + i)) (ixs*w + i)
 
 unGlobal :: Word32 -> GlobPull a -> Pull a
 unGlobal n (GlobPull ixf) = Pull n ixf
 
-trans8 w = blockGid.ixMap (transF (Literal w))
+--finally a somewhat correct version
+trans8 w = blockGid w w.ixMap (transF w)
 t8 = quickPrint (forceG .trans8 256.(unGlobal 16)) input2
 
