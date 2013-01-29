@@ -603,6 +603,7 @@ instance (Choice a, Choice b) => Choice (a,b) where
 
 printExp :: Scalar a => Exp a -> String
 printExp (BlockIdx X) = "blockIdx.x"
+printExp (ThreadIdx X) = "threadIdx.x"
 printExp (Literal a) = show a 
 printExp (Index (name,[])) = name
 printExp (Index (name,es)) = 
