@@ -74,7 +74,10 @@ data Program t a where
                   -> Program Grid () 
   
   Allocate :: Word32 -> Type -> Program Block Name
-
+  
+  -- Very experimental AllocateG (Add CodeGen support)
+  AllocateG :: Exp Word32 -> Type -> Program Grid Name 
+  -- I'm not sure exactly what scope AllocateG should have. 
 
   {- About Output (Creates a named output array). 
      This is similar to Allocate but concerning global arrays.
@@ -83,10 +86,21 @@ data Program t a where
      kernel, global arrays will only be written as outputs of the kernel
   -} 
   Output   :: Type -> Program Grid Name
-  
+  -- (Output may be replaced by AllocateG) 
   
   Sync     :: Program Block ()
+  -- Two very experimental threadfence constructs.
+  -- should correspond to cuda __threadfence();
+  -- and __threadfenceBlock(); 
+  ThreadFence :: Program Grid ()
+  ThreadFenceBlock :: Program Block () 
 
+  -- Parallel composition of Programs
+  Par :: Program p () ->
+         Program p () ->
+         Program p () 
+
+  -- Monad
   Return :: a -> Program t a
   Bind   :: Program t a -> (a -> Program t b) -> Program t b
 
@@ -99,6 +113,7 @@ forAll f = ForAll Nothing f
 forAllN :: Word32 -> (Exp Word32 -> Program Thread ()) -> Program Block ()
 forAllN n f = ForAll (Just n) f
 
+(*||*) = Par
 
 ---------------------------------------------------------------------------
 -- forAllT

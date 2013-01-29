@@ -3,10 +3,11 @@
              MultiParamTypeClasses,
              TypeOperators,
              TypeFamilies ,
-             ScopedTypeVariables, 
-             CPP #-}
+             ScopedTypeVariables
+             #-}
 
-{- Joel Svensson 2012
+{- Joel Svensson 2012, 2013
+   Niklas Ulvinge 2013
 
   Notes:
 
