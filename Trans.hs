@@ -141,3 +141,22 @@ unGlobal n (GlobPull ixf) = Pull n ixf
 trans8 w = blockGid w w.ixMap (transF w)
 t8 = quickPrint (forceG .trans8 256.(unGlobal 16)) input2
 
+--type 1 implemenation
+
+blockT :: Exp Word32 -> Exp Word32 -> Pull a -> Push a
+blockT w m p = Push (len p) $ \wf ->
+    ForAll Nothing $ \ix ->
+        SeqFor m $ \ixs -> do
+            wf (p ! (ixs*w + ix)) (ixs*w + ix)
+
+
+blockB :: Exp Word32 -> Exp Word32 -> Word32 -> (Pull a -> Push a) -> GlobPull a -> GlobPush a
+blockB w h b f (GlobPull ixf) = GlobPush $ \wf ->
+    ForAllBlocks $ \ixb -> do
+        let Push n pwf = f $ Pull b $ \ix -> ixf (ixb*fromIntegral b + ix)
+        pwf $ \a ix -> wf a (ixb*fromIntegral b + ix)
+
+--still wrong
+trans10 w b = blockB w w b $ blockT w w . ixMap (transF w)
+t10 = quickPrint (forceG .trans10 256 16) input2
+
