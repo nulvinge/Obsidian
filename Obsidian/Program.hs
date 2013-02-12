@@ -30,10 +30,16 @@ data Thread
 data Block
 data Grid 
 
+type Identifier = Int 
+
 ---------------------------------------------------------------------------
 -- Program datatype
----------------------------------------------------------------------------
-data Program t a where 
+--------------------------------------------------------------------------
+data Program t a where
+
+  -- Time to talk to Josef about all the changes I make here. 
+  Identifier :: Program t Identifier 
+  
   Assign :: Scalar a
             => Name
             -> (Exp Word32)
@@ -72,9 +78,13 @@ data Program t a where
   -} 
   ForAllBlocks :: (Exp Word32 -> Program Block ()) 
                   -> Program Grid () 
-  
-  Allocate :: Word32 -> Type -> Program Block Name
 
+  -- Allocate shared memory in each MP
+  Allocate :: Name -> Word32 -> Type -> Program t () 
+  
+  -- Very experimental AllocateG (Add CodeGen support)
+  AllocateG :: Exp Word32 -> Type -> Program Grid Name 
+  -- I'm not sure exactly what scope AllocateG should have. 
 
   {- About Output (Creates a named output array). 
      This is similar to Allocate but concerning global arrays.
@@ -83,12 +93,30 @@ data Program t a where
      kernel, global arrays will only be written as outputs of the kernel
   -} 
   Output   :: Type -> Program Grid Name
-  
+  -- (Output may be replaced by AllocateG) 
   
   Sync     :: Program Block ()
+  -- Two very experimental threadfence constructs.
+  -- should correspond to cuda __threadfence();
+  -- and __threadfenceBlock(); 
+  ThreadFence :: Program Grid ()
+  ThreadFenceBlock :: Program Block () 
 
+  -- Parallel composition of Programs
+  Par :: Program p () ->
+         Program p () ->
+         Program p () 
+
+  -- Monad
   Return :: a -> Program t a
   Bind   :: Program t a -> (a -> Program t b) -> Program t b
+
+---------------------------------------------------------------------------
+-- Helpers 
+--------------------------------------------------------------------------- 
+uniqueSM = do
+  id <- Identifier
+  return $ "arr" ++ show id 
 
 ---------------------------------------------------------------------------
 -- forAll and forAllN
@@ -99,6 +127,7 @@ forAll f = ForAll Nothing f
 forAllN :: Word32 -> (Exp Word32 -> Program Thread ()) -> Program Block ()
 forAllN n f = ForAll (Just n) f
 
+(*||*) = Par
 
 ---------------------------------------------------------------------------
 -- forAllT
@@ -116,7 +145,8 @@ forAllT f = ForAllBlocks
             $ \bid -> ForAll Nothing
                       $ \tid -> f (bid * BlockDim X + tid) 
 
-            
+
+
 
 ---------------------------------------------------------------------------
 -- Monad
@@ -133,9 +163,10 @@ type BProgram = Program Block
 type GProgram = Program Grid 
 
 ---------------------------------------------------------------------------
--- runPrg 
+-- runPrg (fix types here, Integer!)
 ---------------------------------------------------------------------------
-runPrg :: Int -> Program t a -> (a,Int) 
+runPrg :: Int -> Program t a -> (a,Int)
+runPrg i Identifier = (i,i+1)
 runPrg i (Return a) = (a,i)
 runPrg i (Bind m f) =
   let (a,i') = runPrg i m
@@ -144,7 +175,7 @@ runPrg i (Sync) = ((),i)
 runPrg i (ForAll n ixf) =
   let (p,i') = runPrg i (ixf (variable "tid")) 
   in  (p,i') 
-runPrg i (Allocate _ _) = ("new" ++ show i,i+1)
+runPrg i (Allocate id _ _ ) = ((),i)
 runPrg i (Assign _ _ a) = ((),i) -- Probaby wrong.. 
 runPrg i (AtomicOp _ _ _) = (variable ("new"++show i),i+1)
      
@@ -153,7 +184,8 @@ runPrg i (AtomicOp _ _ _) = (variable ("new"++show i),i+1)
 ---------------------------------------------------------------------------
 printPrg prg = (\(_,x,_) -> x) $ printPrg' 0 prg
 
-printPrg' :: Int -> Program t a -> (a,String,Int)  
+printPrg' :: Int -> Program t a -> (a,String,Int)
+printPrg' i Identifier = (i,"getId;\n",i+1) 
 -- printPrg' i Skip = ((),";\n", i)
 printPrg' i (Assign n ix e) =
   ((),n ++ "[" ++ show ix ++ "] = " ++ show e ++ ";\n", i) 
@@ -162,9 +194,9 @@ printPrg' i (AtomicOp n ix e) =
   in (variable newname,
       newname ++ " = " ++ printAtomic e ++
       "( " ++ n ++ "[" ++ show ix ++ "])\n",i+1)
-printPrg' i (Allocate n t) =
-  let newname = "arr" ++ show i
-  in (newname,newname ++ " = malloc(" ++ show n ++ ");\n",i+1)
+printPrg' i (Allocate id n t) =
+  let newname = id -- "arr" ++ show id
+  in ((),newname ++ " = malloc(" ++ show n ++ ");\n",i+1)
 printPrg' i (Output t) =
   let newname = "globalOut" ++ show i
   in (newname,newname ++ " = new Global output;\n",i+1)
@@ -177,7 +209,7 @@ printPrg' i (ForAll n f) =
        i')
 printPrg' i (ForAllBlocks f) =
   let (d,prg2,i') = printPrg' i (f (variable "BIX"))
-  in ((), 
+  in (d, 
       "blocks (i)" ++
       "{\n" ++ prg2 ++ "\n}",
       i')

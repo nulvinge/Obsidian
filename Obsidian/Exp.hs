@@ -137,6 +137,8 @@ data Exp a where
     can be translated into the CUDA/OpenCL specific 
     concept later in the codegeneration 
   -}
+  WarpSize :: Exp Word32
+  
   BlockDim :: DimSpec -> Exp Word32
   
   BlockIdx :: DimSpec 
@@ -244,7 +246,9 @@ data Op a where
 variable name = Index (name,[])
 index name ix = Index (name,[ix])
 
- 
+warpSize :: Exp Word32
+warpSize = WarpSize
+
 ---------------------------------------------------------------------------
 -- Collect array names
 
@@ -276,7 +280,7 @@ collectArrayIndexPairs (If b e1 e2) = collectArrayIndexPairs b ++
 -- Typecasts
 ---------------------------------------------------------------------------
 int32ToWord32 = UnOp Int32ToWord32
-
+word32ToInt32 = UnOp Word32ToInt32
 
 ---------------------------------------------------------------------------
 -- 
@@ -705,8 +709,9 @@ instance ExpToCExp Word64 where
   expToCExp a = expToCExpGeneral a 
 
   
-expToCExpGeneral :: ExpToCExp a  => Exp a -> CExpr 
-expToCExpGeneral (BlockIdx d) = cBlockIdx d
+expToCExpGeneral :: ExpToCExp a  => Exp a -> CExpr
+expToCExpGeneral WarpSize      = cWarpSize 
+expToCExpGeneral (BlockIdx d)  = cBlockIdx d
 expToCExpGeneral (ThreadIdx d) = cThreadIdx d
 
 expToCExpGeneral e@(Index (name,[])) = cVar name (typeToCType (typeOf e))

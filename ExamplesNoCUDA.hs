@@ -76,7 +76,7 @@ input3 = namedGlobal "apa"
 -- Small experiments 
 ---------------------------------------------------------------------------
 
-sync :: Forceable a => a -> BProgram (Forced a)
+sync :: (Len p, Pushable p, StoreOps a) => p a -> BProgram (Pull a)
 sync = force 
 
 prg0 = putStrLn$ printPrg$  mapFusion input1
@@ -180,6 +180,8 @@ fullHistogram (GlobPull ixf) = Final $
 
 getFullHistogram = quickPrint (fullHistogram) undefinedGlobal
 
+
+-- Now this one will break code generation ! 
 atomicForce :: forall a. Scalar a => Atomic a
                -> GlobPull (Exp Word32)
                -> GlobPull (Exp a)
@@ -189,9 +191,12 @@ atomicForce atop indices dat = Final $
     global <- Output $ Pointer (typeOf (undefined :: Exp a))
 
     forAllT $ \gix ->
-      do Assign   global gix (dat ! gix)
-         AtomicOp global (indices ! gix) atop
-         return ()
+      Assign   global gix (dat ! gix)
+    ThreadFence
+    forAllT $ \gix ->
+      do 
+        AtomicOp global (indices ! gix) atop
+        return ()
          
     return $ GlobPull (\gix -> index global gix)
 
@@ -224,7 +229,7 @@ sklansky :: (Num (Exp a), Scalar a)
             -> (Exp a -> Exp a -> Exp a)
             -> Pull (Exp a)
             -> BProgram (Pull (Exp a))
-sklansky 0 op arr = return (shiftRight 1 0 arr)
+sklansky 0 op arr = return arr
 sklansky n op arr =
   do 
     let arr1 = twoK (n-1) (fan op) arr
@@ -232,15 +237,80 @@ sklansky n op arr =
     sklansky (n-1) op arr2
 
 
+sklanskyT :: (Choice a, Num a, StoreOps a)
+            => Int
+            -> (a -> a -> a)
+            -> Pull a
+            -> BProgram (Pull a)
+sklanskyT 0 op arr = return arr
+sklanskyT n op arr =
+  do 
+    let arr1 = twoK (n-1) (fan op) arr
+    arr2 <- force arr1
+    sklanskyT (n-1) op arr2
+
+
+cons :: Choice a => a -> Pull a -> Pull a
+cons a p = singleton a `conc` p 
+
 sklanskyMax n op arr = do
   res <- sklansky n op arr
-  let m = fromIntegral $ (2^n) - 1
-  return (res,res ! m) 
+  let m = fromIntegral $ len res -1 
+  return (res,singleton (res ! m))
+
+sklanskyMaxT n op arr = do
+  res <- sklanskyT n op arr
+  let m = fromIntegral $ len res -1 
+  return (res,singleton (res ! m))
+
+
+-- Need to add codegen support form
+-- functions returning GPrograms !
+-- Codegeneration now also may need to support
+-- certain cases of sequences of ForAllBlock..
+-- I Think the important distinction there is if
+-- its used as a case of forAllT or not. Maybe this
+-- indicates that there should be a separate ForAllT
+-- constructor in the Program type. 
+sklanskyG :: (Num (Exp a), Scalar a)
+             => Int
+             -> GlobPull (Exp a)
+             -> GProgram (GlobPush  (Exp a), GlobPush (Exp a))
+sklanskyG logbsize input =
+  toGProgram (mapDist (sklanskyMax logbsize (+)) (2^logbsize) input)
+
+sklanskyGT ::Int -> GlobPull (Exp Word32)
+             -> GProgram (GlobPush (Exp Word32), GlobPush (Exp Word32))
+sklanskyGT logbsize input =
+  toGProgram (mapDist (sklanskyMaxT logbsize (+)) (2^logbsize) input)
+
+
+sklanskyGP logbsize input =
+  do
+    (r1,r2) <- sklanskyG logbsize input
+    forceGP r1
+    forceGP r2
+    return (r1, r2)
+
+sklanskyGPT logbsize input =
+  do
+    (r1,r2) <- sklanskyGT logbsize input
+    forceGP r1
+    forceGP r2
+    return (r1, r2)
+
+
+getSklanskyG = quickPrint (sklanskyG 8) (undefinedGlobal :: GlobPull (Exp Int))
+getSklanskyGP = quickPrint (sklanskyGP 8) (undefinedGlobal :: GlobPull (Exp Int))
+
+getSklanskyGPT = quickPrint (sklanskyGPT 8) (undefinedGlobal :: GlobPull EWord32)
 
 fan op arr =  a1 `conc`  fmap (op c) a2 
     where 
       (a1,a2) = halve arr
       c = a1 ! (fromIntegral (len a1 - 1))
+
+
 
 
 sklanskyAllBlocks :: Int

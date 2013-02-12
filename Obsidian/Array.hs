@@ -34,41 +34,33 @@ data Final a = Final {cheat :: a} -- cheat should not be exposed.
 data GlobPush a =
   GlobPush (( a -> Exp Word32 -> TProgram ()) -> GProgram ())
 
---data GlobPush2 a =
---  GlobPush2 Word32
---        ((a -> Exp Word32 -> Exp Word32 -> TProgram ()) ->
---         GProgram ())
-
-
--- Conversions between kinds of global push arrays 
---globView :: GlobPush2 a -> GlobPush a
---globView (GlobPush2 n pushf) = GlobPush n pushf'
--- where
---    pushf' wf = pushf $ \a bix tix -> wf a (bix * fromIntegral n + tix)
-
---blockView :: GlobPush a -> GlobPush2 a
---blockView (GlobPush n pushf) = GlobPush2 n pushf'
---  where
---    pushf' wf = pushf $ \a gix -> wf a (gix `div` fromIntegral n)
---                                       (gix `mod` fromIntegral n) 
-
-
 ---------------------------------------------------------------------------
 -- Experiment
 ---------------------------------------------------------------------------
 data GlobPull a = GlobPull (Exp Word32 -> a)
 
--- replaces Distrib ? 
--- data GlobPull2 a = GlobPull2 Word32 (Exp Word32 -> Exp Word32 -> a)
+
+-- Takes a block id and gives you what that block computes. 
+data DistPull a = DistPull (Exp Word32 -> BProgram a)
+
+-- Desired type (not sure). 
+--undist :: DistPull (Pull a) -> GProgram (GlobPush a)
+undist :: DistPull (Pull a) -> GlobPush a
+undist (DistPull bixf) =
+  GlobPush $ \wf ->
+  ForAllBlocks $ \bix ->
+  do
+    pully <- bixf bix
+    let n = len pully 
+    ForAll (Just n) $ \tix ->
+      wf (pully ! tix)
+         (bix * fromIntegral n + tix) 
+                          
 
 -- Create global pull arrays 
 undefinedGlobal = GlobPull $ \gix -> undefined
 namedGlobal name = GlobPull $ \gix -> index name gix
 
-
---sizedGlobal2 bs = GlobPull2 bs $ \bix tix -> undefined
---namedGlobal2 name bs = GlobPull2 bs
---                       $ \gix tix -> index name (gix * fromIntegral bs + tix) 
 
 ---------------------------------------------------------------------------
 -- Push and Pull arrays

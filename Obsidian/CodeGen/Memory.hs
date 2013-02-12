@@ -116,7 +116,8 @@ mapMemoryProgram (AtomicOp _ _ _ _) m mm = (m,mm)
 -- Added Jan-21-2013
 mapMemoryProgram (SeqFor nom n f) m mm = mapMemoryProgram (f (variable "X")) m mm 
 mapMemoryProgram (ForAll n f) m mm = mapMemoryProgram (f (variable "X")) m mm       
--- mapMemoryProgram (Cond c p) m mm = mapMemoryProgram p m mm 
+-- Added Jan 2013
+mapMemoryProgram (Cond c p) m mm = mapMemoryProgram p m mm 
 mapMemoryProgram (Synchronize _) m mm = (m,mm)
 mapMemoryProgram ((Allocate name size t alive) `ProgramSeq` prg2) m mm 
   = mapMemoryProgram prg2 {-m'-} mNew mm'
@@ -130,7 +131,7 @@ mapMemoryProgram ((Allocate name size t alive) `ProgramSeq` prg2) m mm
     mNew       =  
       case diffAddr of 
         (Just addys) -> freeAll m'' (map fst addys)
-        Nothing      -> error "atleast one array does not exist in memorymap" 
+        Nothing      -> error $ "atleast one array does not exist in memorymap: " ++ show mm'
    
     -- TODO: maybe create Global arrays if Local memory is full.
    
@@ -149,7 +150,8 @@ mapMemoryProgram (Allocate name size t _) m mm = (m',mm')
         (Just (a,t)) -> (m,mm) -- what does this case really mean ? -
 mapMemoryProgram (prg1 `ProgramSeq` prg2) m mm = mapMemoryProgram prg2 m' mm'
   where 
-    (m',mm') = mapMemoryProgram prg1 m mm 
+    (m',mm') = mapMemoryProgram prg1 m mm
+mapMemoryProgram (Output n t) m mm = (m,mm) 
     
 
 

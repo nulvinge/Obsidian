@@ -21,10 +21,10 @@ import Obsidian.CodeGen.Program
 
 type Liveness = Set.Set Name
 
-liveness :: Program e -> Program Liveness
+liveness :: Show e => Program e -> Program Liveness
 liveness p = fst$ liveness' p Set.empty 
 
-liveness' :: Program e -> Liveness -> (Program Liveness,Liveness) 
+liveness' :: Show e => Program e -> Liveness -> (Program Liveness,Liveness) 
 liveness' (Assign name ix exp ) s = (Assign name ix exp, living)
   where 
     arrays = collectArrays exp 
@@ -38,7 +38,13 @@ liveness' (Allocate name size t _) s =
 -- Added Jan 2013
 liveness' (AtomicOp n1 n2 ix op) s = (AtomicOp n1 n2 ix op, s)
  -- Is this correct. It would help if I remembered exactly what
- -- this does.                                      
+ -- this does.
+
+-- Added Jan 2013
+liveness' (Cond bexp p) s = (Cond bexp p',living)
+  where
+    (p',aliveInside) = liveness' p Set.empty
+    living = s `Set.union` aliveInside
   
 -- Added Jan 2013 
 liveness' (SeqFor nom n ixfToPrg) s = (SeqFor nom n (fst . ixf'),living)
@@ -67,7 +73,7 @@ liveness' (p1 `ProgramSeq` p2) s =
   where 
     (p2',l2) = liveness' p2 s
     (p1',l1) = liveness' p1 l2
-
+liveness' (Output n t) s = (Output n t,s) -- error $ printPrg p 
 
  
 
