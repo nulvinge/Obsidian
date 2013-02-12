@@ -139,6 +139,8 @@ data Exp a where
   -}
   WarpSize :: Exp Word32
   
+  GridDim :: DimSpec -> Exp Word32
+
   BlockDim :: DimSpec -> Exp Word32
   
   BlockIdx :: DimSpec 

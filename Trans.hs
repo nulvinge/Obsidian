@@ -1,5 +1,7 @@
 
 {-# LANGUAGE ScopedTypeVariables,
+             FlexibleInstances,
+             MultiParamTypeClasses,
              FlexibleContexts #-} 
 
 module Examples where
@@ -159,4 +161,102 @@ blockB w h b f (GlobPull ixf) = GlobPush $ \wf ->
 --still wrong
 trans10 w b = blockB w w b $ blockT w w . ixMap (transF w)
 t10 = quickPrint (forceG .trans10 256 16) input2
+
+block11 :: (Exp Word32 -> Exp Word32) -> Exp Word32 -> Exp Word32 -> GProgram ()
+block11 f w h = do
+    v <- Output (Pointer Int)
+    ForAllBlocks $ \bx ->
+        ForAll Nothing $ \ix ->
+            SeqFor h $ \ixs -> do
+                let i = bx*(BlockDim X)+ix+ixs*w
+                let val = (Index (v,[f i])) :: Exp Int
+                Assign v i val
+
+
+trans11 :: Exp Word32 -> GProgram ()
+trans11 w = block11 (transF w) w w
+t11 = quickPrint trans11 256
+
+
+
+block12 :: (Exp Word32 -> Exp Word32) -> Exp Word32 -> Exp Word32 -> GProgram ()
+block12 f w h = do
+    v <- Output (Pointer Int)
+    ForAllBlocks $ \bx -> do
+        ForAll Nothing $ \ix -> do
+            gid <- return (bx*(BlockDim X)+ix)
+            SeqFor h $ \ixs -> do
+                let i = gid+ixs*w
+                let val = (Index (v,[f i])) :: Exp Int
+                Assign v i val
+
+trans12 :: Exp Word32 -> GProgram ()
+trans12 w = block12 (transF w) w w
+t12 = quickPrint trans12 256
+
+map13 :: (Scalar a) => ((Exp Word32 -> Exp a -> TProgram ()) -> Exp Word32 -> Program Thread ()) -> GProgram ()
+map13 p = do
+    v <- Output (Pointer Int)
+    ForAllBlocks $ \bx -> do
+        ForAll Nothing $ \ix -> do
+            let gid = bx*(BlockDim X)+ix
+            p (Assign v) gid
+
+
+block13 :: (Scalar a) => (Exp Word32 -> Exp Word32) -> Exp Word32 -> Exp Word32 -> GlobPull (Exp a) -> GProgram ()
+
+block13 f w h p = map13 $ \wif gid ->
+            SeqFor h $ \ixs -> do
+                let i = gid+ixs*w
+                let val = p ! (f i)
+                wif i val
+
+trans13 :: (Scalar a) => Exp Word32 -> GlobPull (Exp a) -> GProgram ()
+trans13 w p = block13 (transF w) w w p
+t13 = quickPrint (trans13 256) input2
+
+
+
+mapGid2 :: (APull a -> BProgram (APull b))
+        -> GlobPull a
+        -> GlobPush b
+mapGid2 f (GlobPull ixf)  =
+  GlobPush
+    $ \wf ->
+      ForAllBlocks
+       $ \bix ->
+         do -- BProgram do block 
+           let n = BlockDim X --kkkk
+           let pully = APull n ixf --this n is wrong
+           res <- f pully
+           ForAll Nothing $ \ix ->
+             wf (res ! (bix * BlockDim X + ix)) (bix * BlockDim X + ix)
+
+
+data APull a = APull (Exp Word32) (Exp Word32 -> a)
+
+instance Indexible APull a where
+  access (APull n ixf) = ixf
+
+instance IxMap APull where
+  ixMap f (APull n ixf) = APull n (ixf.f)
+
+trans14 :: Exp Word32 -> APull a -> APull a
+trans14 w arr = ixMap (transF w) arr
+t14 = quickPrint (forceG.mapGid2 (return . trans14 256)) input2
+
+forceA :: APull a -> APull a
+forceA = undefined
+
+trans15 :: Exp Word32 -> APull a -> APull a
+trans15 w = forceA . ixMap (transF w)
+t15 = quickPrint (forceG.mapGid2 (return . trans15 256)) input2
+
+
+instance IxMap GlobPull where
+  ixMap f (GlobPull ixf) = GlobPull (ixf.f)
+
+trans16 :: Exp Word32 -> GlobPull a -> GlobPush a
+trans16 w = pushGN 256 16.(ixMap (transF w))
+t16 = quickPrint (forceG . trans16 256) input2
 
