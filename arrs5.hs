@@ -230,10 +230,12 @@ class (Pushable Pull d) => SForce d where
            => (forall d2. (SForce d2) => Pull d2 (Exp e) -> Program d2 (Push d2 (Exp e2)))
            -> Pull d (Exp e) -> Program d (Push d (Exp e2))
 
+forOneBlock f = ForAllBlocks $ \_ -> f  --wrong implementation
+
 instance SForce Grid where
     sforce p a | len a <= 256 = do
-        return $ Push (len a) $ \wf -> --wrong len, should be s
-            ForAllBlocks $ \gix -> do
+        return $ Push (len a) $ \wf -> do --wrong len, should be s
+            forOneBlock $ do
                 b <- forceP (mkB a)
                 Push s f <- p b
                 f wf
@@ -259,16 +261,6 @@ instance SForce Block where
         p b
 
 
-quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
-quickPrint prg input =
-  putStrLn $ CUDA.genKernel "kernel" prg input
-
-testInput :: GPull (Exp Int)
-testInput = mkGlobal "apa" 256
-
---testPrint :: (ToProgram a b, Ips a b ~ Pull Grid (Exp Int)) => (a -> b) -> IO ()
---testPrint f = quickPrint f testInput
-
 mkGlobal n s = Pull s $ \gix -> index n gix
 
 instance (Scalar t) => ToProgram (GPull (Exp t)) (GProgram a) where
@@ -293,18 +285,42 @@ forceG :: (Forceable a Grid e) => a Grid (Exp e) -> Program Grid (Pull Grid (Exp
 forceG = forceP
 
 
+quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
+quickPrint prg input =
+  putStrLn $ CUDA.genKernel "kernel" prg input
+
+testInput :: GPull (Exp Int)
+testInput = mkGlobal "apa" 256
+
+--testPrint :: (ToProgram a b, Ips a b ~ Pull Grid (Exp Int)) => (a -> b) -> IO ()
+--testPrint f = quickPrint f testInput
+
 rh1 :: (SForce d, Scalar e, Num (Exp e)) => Pull d (Exp e) -> Program d (Push d (Exp e))
 rh1 a | len a == 1 = return $ push a
 rh1 a = (sforce rh1.uncurry (zipWith (+)).halve) a
+
+trh1 :: IO ()
+trh1 = quickPrint (forceGP rh1) testInput
 
 rh2 :: (SForce d, Scalar e, Num (Exp e)) => Pull d (Exp e) -> Program d (Push d (Exp e))
 rh2 a | len a == 2 = (return.push.uncurry (zipWith (+)).halve) a
 rh2 a = (sforce rh2.uncurry (zipWith (+)).halve) a
 
-trh1 :: IO ()
-trh1 = quickPrint (forceGP rh1) testInput
-
 trh2 :: IO ()
 trh2 = quickPrint (forceGP rh2) testInput
 
+rh3 :: (SForce d, Scalar e, Num (Exp e)) => Pull d (Exp e) -> Program d (Push d (Exp e))
+rh3 a | len a == 1 = return $ push a
+rh3 a = (rh3.uncurry (zipWith (+)).halve) `sforce` a
+
+trh3 :: IO ()
+trh3 = quickPrint (forceGP rh3) testInput
+
+rh4 :: (SForce d, Scalar e, Num (Exp e)) => Pull d (Exp e) -> Program d (Push d (Exp e))
+rh4 a | len a == 1 = return $ push a
+rh4 a = (rh4.uncurry (zipWith (+)).halve) `sforce` a
+rh4' = (rh4.uncurry (zipWith (+)).halve)
+
+trh4 :: IO ()
+trh4 = quickPrint (forceGP rh4') testInput
 
