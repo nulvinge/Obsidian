@@ -2,7 +2,8 @@
              FlexibleInstances,
              FlexibleContexts,
              UndecidableInstances,
-             ScopedTypeVariables
+             ScopedTypeVariables,
+             RankNTypes
              #-}
 
 
@@ -79,6 +80,9 @@ class Forceable a d s e where
     writeP :: a d s (Exp e) -> Program d (Pull d s (Exp e))
     forceP :: a d s (Exp e) -> Program d (Pull d s (Exp e))
 
+force :: a d s e -> Program d (Pull d s e)
+force = undefined
+
 instance (Memory d, Scalar e) => Forceable Push d (Exp Word32) e where
     writeP (Push s w) = do
         name <- allocateP (s * fromIntegral (sizeOf (undefined :: Exp e)))
@@ -135,6 +139,11 @@ segment n (Pull s ixf) =
     mkPull2 (s `div` n) n $ \x y ->
         ixf (y*n+x)
 
+divide :: (Integral s) => s -> Pull d s e -> Pull d s (Pull d s e)
+divide n (Pull s ixf) = 
+    mkPull2 n (s `div` n) $ \x y ->
+        ixf (y*(s `div` n)+x)
+
 
 segment2 :: (Integral s, Array Pull d s) => s -> s -> Pull2 d s a -> Pull2 d s (Pull2 d s a)
 segment2 w h a =
@@ -179,6 +188,61 @@ t1  w = flatten.trans.(segment w)
 
 t2 w = flatten.(trans).(segment w)
 
+t3 w b = flatten.trans.(fmap (fmap trans)).(segment2 b b).(segment w)
+
+mkT :: Pull d s e -> Pull Thread s e
+mkT (Pull s f) = Pull s f
+
+mkB :: Pull d s e -> Pull Block s e
+mkB (Pull s f) = Pull s f
+
+-- this is somewhat of a target
+t4 w b = flatten.trans.(fmap (fmap (force.trans.mkB.(fmap mkB)))).(segment2 b b).(segment w)
+
+-- to get the maximum performance, this is needed
+diagonal = undefined
+undiagonal = undefined
+t5 w b = (ixMap diagonal).(t4 w b).(ixMap undiagonal)
+
 transG :: Pull2 Grid (Exp Word32) a -> Pull2 Grid (Exp Word32) a
 transG = trans
+
+halve = divide 2
+
+rh :: Pull d Integer e -> Program d (Pull d Integer e)
+rh = forces rh.(!0).halve
+
+class SForce d where
+    sforce :: (forall d2. Pull d2 Integer e -> Program d2 (Pull d2 Integer e))
+           -> Pull d Integer e -> Program d (Pull d Integer e)
+
+instance SForce Grid where
+    sforce f a | len a < 256 = do
+        force $ Push (len a) $ \wf ->
+            ForAllBlocks $ \gix -> do
+                rp <- rh (mkB a)
+                let Push s f = push rp
+                f wf
+                return ()
+    sforce f a = do
+        b <- force a
+        rh b
+        
+        
+
+forces :: (forall d. Pull d Integer e -> Program d (Pull d Integer e))
+       -> Pull d Integer e -> Program d2 (Pull d2 Integer e)
+forces f a | len a < 4 = do
+        b <- force a
+        rh (mkT b)
+forces f a | len a < 32 = Push (len a) $ \wf ->
+            ForAllBlocks $ \gix -> do
+                b <- force a
+                rp <- rh (mkB b)
+                let Push s f = push rp
+                f wf
+                return ()
+forces f a = do
+        b <- force a
+        rh b
 

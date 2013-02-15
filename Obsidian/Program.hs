@@ -140,6 +140,9 @@ instance Monad (Program t) where
   return = Return
   (>>=) = Bind
 
+instance Functor (Program t) where
+  fmap f = (>>= (return.f))
+
 ---------------------------------------------------------------------------
 -- Aliases 
 ---------------------------------------------------------------------------
