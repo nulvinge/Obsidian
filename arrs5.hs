@@ -89,17 +89,18 @@ instance Indexible Pull where
     access (Pull _ f) = f
     ixMap f (Pull s ixf) = Pull s (ixf.f)
 
-class Forceable a d e where
-    writeP :: a d (Exp e) -> Program d (Pull d (Exp e))
-    forceP :: a d (Exp e) -> Program d (Pull d (Exp e))
+class Forceable a d where
+    writeP :: (Scalar e) => a d (Exp e) -> Program d (Pull d (Exp e))
+    forceP :: (Scalar e) => a d (Exp e) -> Program d (Pull d (Exp e))
 
 force :: a d e -> Program d (Pull d e)
 force = undefined
 
-instance (Memory d, Scalar e) => Forceable Push d e where
-    writeP (Push s w) = do
-        name <- allocateP (s * fromIntegral (sizeOf (undefined :: Exp e)))
-                          (Pointer (typeOf (undefined :: (Exp e))))
+instance (Memory d) => Forceable Push d where
+    writeP (Push s w :: Push d (Exp e)) = do
+        let t = (undefined :: Exp e)
+        name <- allocateP (s * fromIntegral (sizeOf t))
+                        (Pointer (typeOf t))
         w $ \e i -> Assign name i e
         return $ Pull s (\i -> index name i)
     forceP p = do
@@ -107,7 +108,7 @@ instance (Memory d, Scalar e) => Forceable Push d e where
         syncP
         return r
 
-instance (Forceable Push d e, Pushable Pull d) => Forceable Pull d e where
+instance (Forceable Push d, Pushable Pull d) => Forceable Pull d where
     writeP = writeP.push
     forceP = forceP.push
 
@@ -127,7 +128,7 @@ instance Memory Thread where
     syncP = return ()
     allocateP s t = undefined
 
-instance (Forceable Push d e) => Array Push d where
+instance (Forceable Push d) => Array Push d where
     amap f (Push s wfi) = Push s $ \wf ->
         wfi (\a ix -> wf (f a) ix)
     len (Push s _) = s
@@ -232,13 +233,17 @@ class (Pushable Pull d) => SForce d where
 
 forOneBlock f = ForAllBlocks $ \_ -> f  --wrong implementation
 
-instance SForce Grid where
-    sforce p a | len a <= 256 = do
-        return $ Push (len a) $ \wf -> do --wrong len, should be s
+mapGPush :: (BPull e -> BProgram (BPush t)) -> GPull e -> GPush t
+mapGPush f a = Push (len a) $ \wf -> do --wrong len, should be s
             forOneBlock $ do
-                b <- forceP (mkB a)
-                Push s f <- p b
-                f wf
+                Push s rf <- f (mkB a)
+                rf wf
+
+instance SForce Grid where
+    sforce p a | len a <= 256 = return $ mapGPush f a
+        where f b = do
+                c <- forceP b
+                p c
     --sforce p a = do
     --    b <- forceP a
     --    p b
@@ -281,9 +286,10 @@ forceGP :: (Scalar e)
         -> GPull (Exp a) -> GProgram (GPull (Exp e))
 forceGP f = (>>= forceP).f
 
-forceG :: (Forceable a Grid e) => a Grid (Exp e) -> Program Grid (Pull Grid (Exp e))
+forceG :: (Forceable a Grid, Scalar e) => a Grid (Exp e) -> Program Grid (Pull Grid (Exp e))
 forceG = forceP
 
+forceBP f = forOneBlock f
 
 quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
 quickPrint prg input =
@@ -294,6 +300,13 @@ testInput = mkGlobal "apa" 256
 
 --testPrint :: (ToProgram a b, Ips a b ~ Pull Grid (Exp Int)) => (a -> b) -> IO ()
 --testPrint f = quickPrint f testInput
+
+rh0 :: (Memory d, Pushable Pull d, Scalar e, Num (Exp e)) => Pull d (Exp e) -> Program d (Push d (Exp e))
+rh0 a | len a == 1 = return $ push a
+rh0 a = ((>>= rh0).forceP.uncurry (zipWith (+)).halve) a
+
+trh0 :: IO ()
+trh0 = quickPrint (forceP.mapGPush rh0) testInput
 
 rh1 :: (SForce d, Scalar e, Num (Exp e)) => Pull d (Exp e) -> Program d (Push d (Exp e))
 rh1 a | len a == 1 = return $ push a
