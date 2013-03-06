@@ -332,8 +332,25 @@ trh3 = quickPrint (forceGP rh3) testInput
 rh4 :: (SForce d, Scalar e, Num (Exp e)) => Pull d (Exp e) -> Program d (Push d (Exp e))
 rh4 a | len a == 1 = return $ push a
 rh4 a = (rh4.uncurry (zipWith (+)).halve) `sforce` a
+rh4' :: (SForce d) => Pull d (Exp Int) -> Program d (Push d (Exp Int))
 rh4' = (rh4.uncurry (zipWith (+)).halve)
 
 trh4 :: IO ()
 trh4 = quickPrint (forceGP rh4') testInput
+
+ppush :: BProgram (BPush e) -> GPush e
+ppush a = Push (undefined) $ \wf -> do
+    ForAllBlocks $ \bix -> do
+        Push s f <- a
+        f wf
+
+forceGB :: (Scalar e) => GPull (Program Block (BPush (Exp e))) -> GPush (Exp e)
+forceGB a = Push (undefined) $ \wf -> do
+    ForAllBlocks $ \bix -> do
+        Push s f <- a ! bix
+        f wf
+
+br :: Word32 -> Pull Grid (Exp Int) -> GPush (Exp Int)
+br b a | len a < b = ppush.rh4'.mkB $ a
+br b a = br b $ forceP $ forceGB $ fmap (rh4'.mkB) (segment b a)
 
