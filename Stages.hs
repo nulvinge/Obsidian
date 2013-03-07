@@ -31,16 +31,16 @@ import qualified Prelude as P
 
 data Array a = Arr [a]
 
-data Stage a b where
-  IXMap :: (Exp Word32 -> Exp Word32) -> Stage a a
-  FMap  :: (Scalar b) => ([Exp a] -> [Exp b]) -> Word32 -> Word32 -> Stage a b
-  Comp  :: Stage a b -> Stage b c -> Stage a c
-  Id    :: Stage a a
-  Len   :: (Word32 -> Stage a' b') -> Stage a' b'
+data Stage a where
+  IXMap :: (Exp Word32 -> Exp Word32) -> Stage a
+  FMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> Word32 -> Word32 -> Stage a
+  Comp  :: Stage a -> Stage a -> Stage a
+  Id    :: Stage a
+  Len   :: (Word32 -> Stage a) -> Stage a
 
-instance Show (Stage a b) where
+instance Show (Stage a) where
   show (IXMap f) = "IXMap f"
-  show (FMap f n n') = "FMap f " ++ show n ++ show n'
+  show (FMap f n n') = "FMap f " ++ show n ++ " " ++ show n'
   show (Comp a b) = show a ++ " >> " ++ show b
   show (Id) = "Id"
   show (Len f) = "Len f"
@@ -51,7 +51,7 @@ instance Show (Stage a b) where
 --(FMap f) >- (FMap f') = FMap (f.f')
 --a >- b = a `Comp` b
 
-opt :: Word32 -> Stage a b -> Stage a b
+opt :: Word32 -> Stage a -> Stage a
 opt m ((IXMap f) `Comp` (IXMap f') `Comp` b) = opt m $ IXMap (f'.f) `Comp` b
 opt m ((FMap f n n') `Comp` (FMap f2 n2 n2') `Comp` b) | n' == n2 =
         opt m $ FMap (f2.f) n n' `Comp` b
@@ -69,40 +69,56 @@ opt m a = a
 segment :: Int -> [a] -> [[a]]
 segment = undefined
 
-runG :: (Scalar a, Scalar b)
-     => Stage a b -> Word32 -> Word32
-     -> GlobPull (Exp a) -> GProgram (GlobPull (Exp b))
+runG :: (Scalar a)
+     => Stage a -> Word32 -> Word32
+     -> GlobPull (Exp a) -> GProgram (GlobPull (Exp a))
 runG (IXMap f `Comp` s) b nn a = runG s b nn (ixMap f a)
-runG ss b nn (GlobPull ixf) = do
-    as <- rf
-    runG ts b (len (ta 0)) as
-  where rf = cheat $ forceG $ GlobPush $ \wf -> do
-                ForAllBlocks $ \bix -> do
-                    let (Push nl pf) = ta bix
-                    pf wf
-                    --ForAll (Just (len a')) $ \ix ->
-                    --    wf (a'!ix) (fromIntegral (len a')*bix+ix)
-        (ta, ts) = runB ss b nn (Pull nn ixf)
 runG (Len f) b nn a = runG (f nn) b nn a
 runG (Id) b nn a = return a
+runG ss b nn (GlobPull ixf) = do
+    as <- rf
+    runG tn b tl as
+  where rf = cheat $ forceG $ GlobPush $ \wf -> do
+                ForAllBlocks $ \bix -> do
+                    Push _ pf <- runB tr b nn bix (Pull nn ixf)
+                    pf wf
+        (tr, tn, tl) = strace $ runBable ss b nn
 
-runB :: (Scalar a, Scalar b)
-     => Stage a b -> Word32 -> Word32
-     -> Pull (Exp a) -> ((Exp Word32 -> Push (Exp c), Stage c b))
-runB (Comp (FMap f n n' :: Stage a c) (s :: Stage c b)) b nn a = (rf,s)
-    where rf bix = Push (nn `div` n*n') $ \wf ->
+strace a = trace (show a) a
+
+runBable :: (Scalar a)
+         => Stage a -> Word32 -> Word32
+         -> (Stage a, Stage a, Word32)
+runBable (a `Comp` as) b nn = case a of
+    (FMap f n n') -> (a `Comp` tr, tn, tl)
+                where (tr,tn,tl) = runBable as b ((nn`div`n)*n')
+    _             -> (Id, (a `Comp` as), nn)
+runBable (Len f) b nn = runBable (f nn) b nn
+runBable s b nn = (Id,s,nn)
+
+runB :: (Scalar a)
+     => Stage a -> Word32 -> Word32 -> Exp Word32
+     -> Pull (Exp a) -> BProgram (Push (Exp a))
+runB (s `Comp` Id) b nn bix a = runB s b nn bix a
+runB (s `Comp` ss) b nn bix a = do
+        a' <- runB s b nn bix a
+        a'' <- force a'
+        runB ss b (len a'') bix a''
+runB (FMap f n n') b nn bix a = return rf
+    where rf = Push (nn `div` n*n') $ \wf ->
                     ForAll (Just (nn`div`n)) $ \tix -> do
                         let ix = (bix*(fromIntegral (nn`div`n))+tix)*(fromIntegral n)
                             l = [a ! (ix+fromIntegral six) | six <- [0..n-1]]
-                            fl = f $ trace (show l) l
+                            fl = f l
                         sequence_ [wf (fl !! (fromIntegral six)) (ix+fromIntegral six) | six <- [0..n'-1]]
+runB Id b nn bix a = return (push a)
 --runB s b nn a = (return (),s)
 
 quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
 quickPrint prg input =
   putStrLn $ CUDA.genKernel "kernel" prg input
 
-reduce :: (Scalar a, Num (Exp a)) => Stage a a
+reduce :: (Scalar a, Num (Exp a)) => Stage a
 reduce = Len (\l ->
    if l==1 then Id
            else FMap (\[a,b] -> [a+b]) 2 1 `Comp` reduce
