@@ -38,10 +38,13 @@ data Stage a where
   Id    :: Stage a
   Len   :: (Word32 -> Stage a) -> Stage a
 
+(>>>) = Comp
+infixr 9 >>>
+
 instance Show (Stage a) where
   show (IXMap f) = "IXMap f"
   show (FMap f n n') = "FMap f " ++ show n ++ " " ++ show n'
-  show (Comp a b) = show a ++ " >> " ++ show b
+  show (Comp a b) = "(" ++ show a ++ " >> " ++ show b ++ ")"
   show (Id) = "Id"
   show (Len f) = "Len f"
 
@@ -92,6 +95,8 @@ runBable :: (Scalar a)
 runBable (a `Comp` as) b nn = case a of
     (FMap f n n') -> (a `Comp` tr, tn, tl)
                 where (tr,tn,tl) = runBable as b ((nn`div`n)*n')
+    (IXMap f) | nn < b -> (a `Comp` tr, tn, tl)
+                where (tr,tn,tl) = runBable as b nn
     _             -> (Id, (a `Comp` as), nn)
 runBable (Len f) b nn = runBable (f nn) b nn
 runBable s b nn = (Id,s,nn)
@@ -100,6 +105,7 @@ runB :: (Scalar a)
      => Stage a -> Word32 -> Word32 -> Exp Word32
      -> Pull (Exp a) -> BProgram (Push (Exp a))
 runB (s `Comp` Id) b nn bix a = runB s b nn bix a
+runB (IXMap f `Comp` ss) b nn bix a = runB ss b nn bix (ixMap f a)
 runB (s `Comp` ss) b nn bix a = do
         a' <- runB s b nn bix a
         a'' <- force a'
@@ -121,7 +127,9 @@ quickPrint prg input =
 reduce :: (Scalar a, Num (Exp a)) => Stage a
 reduce = Len (\l ->
    if l==1 then Id
-           else FMap (\[a,b] -> [a+b]) 2 1 `Comp` reduce
+           else IXMap (\i -> i`div`2 + (fromIntegral l)`div`2*(i `mod` 2))
+            >>> FMap (\[a,b] -> [a+b]) 2 1
+            >>> reduce
    )
 
 testInput :: GlobPull (Exp Int)
