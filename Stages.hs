@@ -37,6 +37,15 @@ data Stage a where
   Id    :: Stage a
   Len   :: (Word32 -> Stage a) -> Stage a
 
+{- monad
+data Stage a b where
+  FMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Exp Word32 -> Exp Word32] -> Word32 -> Stage a ()
+  Comp  :: Stage a b -> (b -> Stage a c) -> Stage a c
+  Return :: b -> Stage a b
+  Len   :: Stage a Word32
+  Block :: Stage a Word32
+-}
+
 (>>>) = Comp
 infixr 9 >>>
 
@@ -66,8 +75,29 @@ opt m a = a
 
 --a >- b = a `Comp` b
 
-segment :: Int -> [a] -> [[a]]
-segment = undefined
+runable :: (Scalar a)
+        => Word32 -> ((Exp Word32 -> Exp Word32) -> Bool)
+        -> Stage a -> Word32 -> Word32
+        -> (Stage a, Stage a, Word32, Word32)
+runable max access aa b nn = 
+  case aa of
+    (a@(FMap f i o) `Comp` as) -> (tr1 `Comp` tr2, tn2, tl2, ti1)
+            where (tr1,Id,tl1,ti1) = runable' a nn
+                  (tr2,tn2,tl2,_)  = runable' as tl1
+    _                          -> runable' aa nn
+  where runable' :: (Scalar a)
+                 => Stage a -> Word32
+                 -> (Stage a, Stage a, Word32, Word32)
+        runable' (a@(FMap f i o) `Comp` as) nn =
+                if nn <= max || all access i
+                    then (tr1 `Comp` tr2, tn2, tl2,ti1)
+                    else (Id, (a `Comp` as), nn, ti1)
+                where (tr1,Id,tl1,ti1) = runable' a nn
+                      (tr2,tn2,tl2,_)  = runable' as tl1
+        runable' a@(FMap f i o) nn = (a, Id, nn`div`ni*o, ni)
+            where ni = fromIntegral (length i)
+        runable' (Len f) nn = runable max access (f nn) b nn
+        runable' s nn = (Id,s,nn,undefined)
 
 runG :: (Scalar a)
      => Stage a -> Word32 -> Word32
@@ -86,29 +116,14 @@ runG ss b nn (GlobPull ixf) = do
 
 strace a = trace (show a) a
 
+accessB :: (Exp Word32 -> Exp Word32) -> Bool
 accessB ixf = False
-
 
 runBable :: (Scalar a)
          => Stage a -> Word32 -> Word32
          -> (Stage a, Stage a, Word32)
-runBable (a@(FMap f i o) `Comp` as) b nn = (tr1 `Comp` tr2, tn2, tl2)
-      where (tr1,Id,tl1) = runBable' a b nn
-            (tr2,tn2,tl2) = runBable' as b tl1
-runBable a b nn = runBable' a b nn
-
-runBable' :: (Scalar a)
-         => Stage a -> Word32 -> Word32
-         -> (Stage a, Stage a, Word32)
-runBable' (a@(FMap f i o) `Comp` as) b nn =
-    if nn < b || all accessB i
-        then (tr1 `Comp` tr2, tn2, tl2)
-        else (Id, (a `Comp` as), nn)
-      where (tr1,Id,tl1) = runBable' a b nn
-            (tr2,tn2,tl2) = runBable' as b tl1
-runBable' a@(FMap f i o) b nn = (a,Id,nn `div` fromIntegral (length i) * o)
-runBable' (Len f) b nn = runBable (f nn) b nn
-runBable' s b nn = (Id,s,nn)
+runBable a b nn = (tr,tn,tl)
+  where (tr,tn,tl,_) = runable b accessB a b nn
 
 runB :: (Scalar a)
      => Stage a -> Word32 -> Word32 -> Exp Word32
@@ -124,29 +139,14 @@ runB s@(_ `Comp` _) b nn bix a = do
     where (tr, tn, tl) = runWable s b nn
 runB s b nn bix a = runW s b nn bix a
 
+accessW :: (Exp Word32 -> Exp Word32) -> Bool
 accessW ixf = False
 
 runWable :: (Scalar a)
          => Stage a -> Word32 -> Word32
          -> (Stage a, Stage a, Word32)
-runWable (a@(FMap f i o) `Comp` as) b nn = (tr1 `Comp` tr2, tn2, tl2)
-      where (tr1,Id,tl1) = runWable' a b nn
-            (tr2,tn2,tl2) = runWable' as b tl1
-runWable a b nn = runWable' a b nn
-
-runWable' :: (Scalar a)
-         => Stage a -> Word32 -> Word32
-         -> (Stage a, Stage a, Word32)
-runWable' (a@(FMap f i o) `Comp` as) b nn =
-    if nn <= 32 || all accessW i
-        then (tr1 `Comp` tr2, tn2, tl2)
-        else (Id, (a `Comp` as), nn)
-      where (tr1,Id,tl1) = runWable' a b nn
-            (tr2,tn2,tl2) = runWable' as b tl1
-runWable' a@(FMap f i o) b nn = (a,Id,nn `div` fromIntegral (length i) * o)
-runWable' (Len f) b nn = runWable (f nn) b nn
-runWable' s b nn = (Id,s,nn)
-
+runWable a b nn = (tr,tn,tl)
+  where (tr,tn,tl,_) = runable 32 accessB a b nn
 
 runW :: (Scalar a)
      => Stage a -> Word32 -> Word32 -> Exp Word32
@@ -168,28 +168,13 @@ runW s b nn bix a = do
           (tr, tn, tl, ti) = runTable s b nn
           newn = nn `div` ti
 
+accessT :: (Exp Word32 -> Exp Word32) -> Bool
 accessT ixf = False
 
 runTable :: (Scalar a)
          => Stage a -> Word32 -> Word32
          -> (Stage a, Stage a, Word32, Word32)
-runTable (a@(FMap f i o) `Comp` as) b nn = (tr1 `Comp` tr2, tn2, tl2, ti1)
-      where (tr1,Id,tl1,ti1) = runTable' a b nn
-            (tr2,tn2,tl2,_) = runTable' as b tl1
-runTable a b nn = runTable' a b nn
-
-runTable' :: (Scalar a)
-         => Stage a -> Word32 -> Word32
-         -> (Stage a, Stage a, Word32, Word32)
-runTable' (a@(FMap f i o) `Comp` as) b nn =
-    if nn <= 1 || all accessT i
-        then (tr1 `Comp` tr2, tn2, tl2,ti1)
-        else (Id, (a `Comp` as), nn, ti1)
-      where (tr1,Id,tl1,ti1) = runTable' a b nn
-            (tr2,tn2,tl2,_) = runTable' as b tl1
-runTable' a@(FMap f i o) b nn = (a,Id,nn `div` fromIntegral (length i) * o, fromIntegral (length i))
-runTable' (Len f) b nn = runTable (f nn) b nn
-runTable' s b nn = (Id,s,nn,undefined)
+runTable = runable 1 accessT
 
 runT :: (Scalar a)
      => Stage a -> Word32 -> Word32 -> Exp Word32
