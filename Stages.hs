@@ -32,12 +32,12 @@ import qualified Prelude as P
 data Array a = Arr [a]
 
 data Stage a where
-  FMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Exp Word32 -> Exp Word32] -> Word32 -> Stage a
+  FMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Exp Word32 -> Exp Word32] -> [Exp Word32 -> Exp Word32] -> Stage a
   Comp  :: Stage a -> Stage a -> Stage a
   Id    :: Stage a
 
 data FrontStage a b where
-  SFMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Exp Word32 -> Exp Word32] -> Word32 -> FrontStage a ()
+  SFMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Exp Word32 -> Exp Word32] -> [Exp Word32 -> Exp Word32] -> FrontStage a ()
   Bind   :: FrontStage a b -> (b -> FrontStage a c) -> FrontStage a c
   Return :: b -> FrontStage a b
   Len    :: FrontStage a Word32
@@ -52,13 +52,15 @@ run :: (Scalar a)
     -> GlobPull (Exp a) -> GProgram (GlobPull (Exp a))
 run a b n = runG s' b n
   where (s,_,()) = mkStage b n a
-        s' = opt n s
+        s' = opt s
 
 mkStage :: (Scalar a)
         => Word32 -> Word32 -> FrontStage a b
         -> (Stage a, Word32, b)
+mkStage _ 0 _ = error "Stage cannot have zero width"
+mkStage 0 _ _ = error "Stage cannot have zero blocksize"
 mkStage b n (SFMap f i o) = (FMap f i o, ni ,())
-  where ni = n `div` (fromIntegral (length i)) * o
+  where ni = n `div` fromIntegral (length i) * fromIntegral (length o)
 mkStage b n (a `Bind` f) = (s1 `Comp` s2, n2, b2)
   where (s1,n1,b1) = mkStage b n a
         (s2,n2,b2) = mkStage b n1 (f b1)
@@ -67,7 +69,7 @@ mkStage b n (Len) = (Id,n,n)
 mkStage b n (Block) = (Id,n,b)
 
 instance Show (Stage a) where
-  show (FMap f i o) = "FMap f " ++ show (length i) ++ " " ++ show o
+  show (FMap f i o) = "FMap f " ++ show (length i) ++ " " ++ show (length o)
   show (Comp a b) = "(" ++ show a ++ " >> " ++ show b ++ ")"
   show (Id) = "Id"
   --show (Len f) = "Len f"
@@ -77,12 +79,11 @@ instance Show (Stage a) where
 --(FMap f) >- (FMap f') = FMap (f.f')
 --a >- b = a `Comp` b
 
-opt :: Word32 -> Stage a -> Stage a
-opt 0 _ = error "Stage cannot have zero width"
-opt m (FMap f i o `Comp` a) = FMap f i o `Comp` opt ((m `div` fromIntegral (length i))*o) a
-opt m (Id `Comp` a) = opt m a
-opt m (a `Comp` Id) = opt m a
-opt m a = a
+opt :: Stage a -> Stage a
+opt (Id `Comp` a) = opt a
+opt (a `Comp` Id) = opt a
+opt (s `Comp` a) = s `Comp` opt a
+opt a = a
 
 
 --a >- b = a `Comp` b
@@ -106,8 +107,9 @@ runable max access aa b nn =
                     else (Id, (a `Comp` as), nn, ti1)
                 where (tr1,Id,tl1,ti1) = runable' a nn
                       (tr2,tn2,tl2,_)  = runable' as tl1
-        runable' a@(FMap f i o) nn = (a, Id, nn`div`ni*o, ni)
+        runable' a@(FMap f i o) nn = (a, Id, nn`div`ni*no, ni)
             where ni = fromIntegral (length i)
+                  no = fromIntegral (length o)
         --runable' (Len f) nn = runable max access (f nn) b nn
         runable' s nn = (Id,s,nn,undefined)
 
@@ -192,8 +194,8 @@ runT :: (Scalar a)
      -> Pull (Exp a) -> TProgram ()
 runT (s `Comp` Id) b nn ix wf a = runT s b nn ix wf a
 runT (FMap f i o) b nn ix wf a = sequence_ [wf (fl !! (fromIntegral six))
-                                            (ix*(fromIntegral o)+fromIntegral six)
-                                        | six <- [0..o-1]]
+                                            (ix*(fromIntegral (length o))+fromIntegral six)
+                                        | six <- [0..(length o)-1]]
     where l = map (\ixf -> a!(ixf ix)) i
           fl = f l
 --runT Id b nn ix wf a = return ()
@@ -210,14 +212,14 @@ reduce = do
   l <- Len
   if l==1
     then Return ()
-    else do SFMap (\[a,b] -> [a+b]) [id, (+(fromIntegral l`div`2))] 1
+    else do SFMap (\[a,b] -> [a+b]) [id, (+(fromIntegral l`div`2))] [id]
             reduce
 
 testInput :: GlobPull (Exp Int)
 testInput = namedGlobal "apa"
-tr0 = quickPrint (run reduce 512 2048) testInput
+tr0 = quickPrint (run reduce 1024 2048) testInput
 
 tr1 = mkStage 1024 1024 (reduce :: FrontStage Int ())
-tr2 = opt 1024 $ fst3 $ mkStage 1024 1024 (reduce :: FrontStage Int ())
+tr2 = opt $ fst3 $ mkStage 1024 1024 (reduce :: FrontStage Int ())
 
 fst3 (a,_,_) = a
