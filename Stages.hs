@@ -86,7 +86,8 @@ runG ss b nn (GlobPull ixf) = do
 
 strace a = trace (show a) a
 
-blockAccess ixf = False
+accessB ixf = False
+
 
 runBable :: (Scalar a)
          => Stage a -> Word32 -> Word32
@@ -100,7 +101,7 @@ runBable' :: (Scalar a)
          => Stage a -> Word32 -> Word32
          -> (Stage a, Stage a, Word32)
 runBable' (a@(FMap f i o) `Comp` as) b nn =
-    if nn < b || all blockAccess i
+    if nn < b || all accessB i
         then (tr1 `Comp` tr2, tn2, tl2)
         else (Id, (a `Comp` as), nn)
       where (tr1,Id,tl1) = runBable' a b nn
@@ -120,10 +121,10 @@ runB s@(_ `Comp` _) b nn bix a = do
           Id -> return a'
           _  -> do a'' <- force a'
                    runB tn b (len a'') bix a''
-    where (tr, tn, tl) = strace $ runWable s b nn
+    where (tr, tn, tl) = runWable s b nn
 runB s b nn bix a = runW s b nn bix a
 
-warpAccess ixf = False
+accessW ixf = False
 
 runWable :: (Scalar a)
          => Stage a -> Word32 -> Word32
@@ -137,7 +138,7 @@ runWable' :: (Scalar a)
          => Stage a -> Word32 -> Word32
          -> (Stage a, Stage a, Word32)
 runWable' (a@(FMap f i o) `Comp` as) b nn =
-    if nn <= 32 || all warpAccess i
+    if nn <= 32 || all accessW i
         then (tr1 `Comp` tr2, tn2, tl2)
         else (Id, (a `Comp` as), nn)
       where (tr1,Id,tl1) = runWable' a b nn
@@ -151,23 +152,56 @@ runW :: (Scalar a)
      => Stage a -> Word32 -> Word32 -> Exp Word32
      -> Pull (Exp a) -> BProgram (Push (Exp a))
 runW (s `Comp` Id) b nn bix a = runW s b nn bix a
-runW (s `Comp` ss) b nn bix a = do
-        a' <- runW s b nn bix a
-        a'' <- write a'
-        runW ss b (len a'') bix a''
-runW (FMap f i o) b nn bix a = return rf
-    where rf = Push (newn * o) $ \wf ->
+--runW (s `Comp` ss) b nn bix a = do
+--        a' <- runW s b nn bix a
+--        a'' <- write a'
+--        runW ss b (len a'') bix a''
+runW s b nn bix a = do
+    case tn of
+        Id -> return a'
+        _  -> do a'' <- write a'
+                 runW tn b (len a'') bix a''
+    where a' = Push tl $ \wf ->
                     ForAll (Just newn) $ \tix -> do
-                        let ix = (bix*(fromIntegral newn)+tix)
-                            l = map (\ixf -> a!(ixf ix)) i
-                            fl = f l
-                        sequence_ [wf (fl !! (fromIntegral six)) (ix*(fromIntegral o)+fromIntegral six) | six <- [0..o-1]]
-          ni = fromIntegral (length i)
-          newn = nn `div` ni
-runW Id b nn bix a = return (push a)
+                        let ix = (bix*(fromIntegral b)+tix)
+                        runT (strace tr) b nn ix wf a
+          (tr, tn, tl, ti) = runTable s b nn
+          newn = nn `div` ti
 
+accessT ixf = False
 
+runTable :: (Scalar a)
+         => Stage a -> Word32 -> Word32
+         -> (Stage a, Stage a, Word32, Word32)
+runTable (a@(FMap f i o) `Comp` as) b nn = (tr1 `Comp` tr2, tn2, tl2, ti1)
+      where (tr1,Id,tl1,ti1) = runTable' a b nn
+            (tr2,tn2,tl2,_) = runTable' as b tl1
+runTable a b nn = runTable' a b nn
 
+runTable' :: (Scalar a)
+         => Stage a -> Word32 -> Word32
+         -> (Stage a, Stage a, Word32, Word32)
+runTable' (a@(FMap f i o) `Comp` as) b nn =
+    if nn <= 1 || all accessT i
+        then (tr1 `Comp` tr2, tn2, tl2,ti1)
+        else (Id, (a `Comp` as), nn, ti1)
+      where (tr1,Id,tl1,ti1) = runTable' a b nn
+            (tr2,tn2,tl2,_) = runTable' as b tl1
+runTable' a@(FMap f i o) b nn = (a,Id,nn `div` fromIntegral (length i) * o, fromIntegral (length i))
+runTable' (Len f) b nn = runTable (f nn) b nn
+runTable' s b nn = (Id,s,nn,undefined)
+
+runT :: (Scalar a)
+     => Stage a -> Word32 -> Word32 -> Exp Word32
+     -> (Exp a -> Exp Word32 -> TProgram ())
+     -> Pull (Exp a) -> TProgram ()
+runT (s `Comp` Id) b nn ix wf a = runT s b nn ix wf a
+runT (FMap f i o) b nn ix wf a = sequence_ [wf (fl !! (fromIntegral six))
+                                            (ix*(fromIntegral o)+fromIntegral six)
+                                        | six <- [0..o-1]]
+    where l = map (\ixf -> a!(ixf ix)) i
+          fl = f l
+--runT Id b nn ix wf a = return ()
 
 quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
 quickPrint prg input =
