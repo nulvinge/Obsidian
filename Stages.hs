@@ -8,7 +8,7 @@ module Stages where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 
-import Obsidian.Program
+import Obsidian.Program hiding (Bind,Return)
 import Obsidian.Exp
 import Obsidian.Types
 import Obsidian.Array
@@ -35,25 +35,42 @@ data Stage a where
   FMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Exp Word32 -> Exp Word32] -> Word32 -> Stage a
   Comp  :: Stage a -> Stage a -> Stage a
   Id    :: Stage a
-  Len   :: (Word32 -> Stage a) -> Stage a
 
-{- monad
-data Stage a b where
-  FMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Exp Word32 -> Exp Word32] -> Word32 -> Stage a ()
-  Comp  :: Stage a b -> (b -> Stage a c) -> Stage a c
-  Return :: b -> Stage a b
-  Len   :: Stage a Word32
-  Block :: Stage a Word32
--}
+data FrontStage a b where
+  SFMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Exp Word32 -> Exp Word32] -> Word32 -> FrontStage a ()
+  Bind   :: FrontStage a b -> (b -> FrontStage a c) -> FrontStage a c
+  Return :: b -> FrontStage a b
+  Len    :: FrontStage a Word32
+  Block  :: FrontStage a Word32
 
-(>>>) = Comp
-infixr 9 >>>
+instance Monad (FrontStage a) where
+  return = Return
+  (>>=)  = Bind
+
+run :: (Scalar a)
+    => FrontStage a () -> Word32 -> Word32
+    -> GlobPull (Exp a) -> GProgram (GlobPull (Exp a))
+run a b n = runG s' b n
+  where (s,_,()) = mkStage b n a
+        s' = opt n s
+
+mkStage :: (Scalar a)
+        => Word32 -> Word32 -> FrontStage a b
+        -> (Stage a, Word32, b)
+mkStage b n (SFMap f i o) = (FMap f i o, ni ,())
+  where ni = n `div` (fromIntegral (length i)) * o
+mkStage b n (a `Bind` f) = (s1 `Comp` s2, n2, b2)
+  where (s1,n1,b1) = mkStage b n a
+        (s2,n2,b2) = mkStage b n1 (f b1)
+mkStage b n (Return a) = (Id,n,a)
+mkStage b n (Len) = (Id,n,n)
+mkStage b n (Block) = (Id,n,b)
 
 instance Show (Stage a) where
   show (FMap f i o) = "FMap f " ++ show (length i) ++ " " ++ show o
   show (Comp a b) = "(" ++ show a ++ " >> " ++ show b ++ ")"
   show (Id) = "Id"
-  show (Len f) = "Len f"
+  --show (Len f) = "Len f"
 
 --(>-) :: Stage a b -> Stage a b -> Stage a b
 --(IXMap f) >- (IXMap f') = IXMap (f.f')
@@ -61,13 +78,8 @@ instance Show (Stage a) where
 --a >- b = a `Comp` b
 
 opt :: Word32 -> Stage a -> Stage a
---opt m ((IXMap f) `Comp` (IXMap f') `Comp` b) = opt m $ IXMap (f'.f) `Comp` b
---opt m ((FMap f i o) `Comp` (FMap f2 i2 o2) `Comp` b) | o == fromIntegral (length i2) =
---        opt m $ FMap (f2.f) i o2 `Comp` b
---opt m ((IXMap f'') `Comp` (FMap f n n') `Comp` (FMap f2 n2 n2') `Comp` b) | n' == n2 =
---        opt m $ IXMap f'' `Comp` FMap (f2.f) n n' `Comp` b
+opt 0 _ = error "Stage cannot have zero width"
 opt m (FMap f i o `Comp` a) = FMap f i o `Comp` opt ((m `div` fromIntegral (length i))*o) a
---opt m (IXMap f `Comp` a) = IXMap f `Comp` opt m a
 opt m (Id `Comp` a) = opt m a
 opt m (a `Comp` Id) = opt m a
 opt m a = a
@@ -96,14 +108,14 @@ runable max access aa b nn =
                       (tr2,tn2,tl2,_)  = runable' as tl1
         runable' a@(FMap f i o) nn = (a, Id, nn`div`ni*o, ni)
             where ni = fromIntegral (length i)
-        runable' (Len f) nn = runable max access (f nn) b nn
+        --runable' (Len f) nn = runable max access (f nn) b nn
         runable' s nn = (Id,s,nn,undefined)
 
 runG :: (Scalar a)
      => Stage a -> Word32 -> Word32
      -> GlobPull (Exp a) -> GProgram (GlobPull (Exp a))
 --runG (IXMap f `Comp` s) b nn a = runG s b nn (ixMap f a)
-runG (Len f) b nn a = runG (f nn) b nn a
+--runG (Len f) b nn a = runG (f nn) b nn a
 runG (Id) b nn a = return a
 runG ss b nn (GlobPull ixf) = do
     as <- rf
@@ -113,8 +125,6 @@ runG ss b nn (GlobPull ixf) = do
                     Push _ pf <- runB tr b nn bix (Pull nn ixf)
                     pf wf
         (tr, tn, tl) = runBable ss b nn
-
-strace a = trace (show a) a
 
 accessB :: (Exp Word32 -> Exp Word32) -> Bool
 accessB ixf = False
@@ -164,7 +174,7 @@ runW s b nn bix a = do
     where a' = Push tl $ \wf ->
                     ForAll (Just newn) $ \tix -> do
                         let ix = (bix*(fromIntegral b)+tix)
-                        runT (strace tr) b nn ix wf a
+                        runT tr b nn ix wf a
           (tr, tn, tl, ti) = runTable s b nn
           newn = nn `div` ti
 
@@ -192,14 +202,22 @@ quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
 quickPrint prg input =
   putStrLn $ CUDA.genKernel "kernel" prg input
 
-reduce :: (Scalar a, Num (Exp a)) => Stage a
-reduce = Len (\l ->
-   if l==1 then Id
-           else FMap (\[a,b] -> [a+b]) [id, (+(fromIntegral l`div`2))] 1
-            >>> reduce
-   )
+strace a = trace (show a) a
+
+
+reduce :: (Scalar a, Num (Exp a)) => FrontStage a ()
+reduce = do
+  l <- Len
+  if l==1
+    then Return ()
+    else do SFMap (\[a,b] -> [a+b]) [id, (+(fromIntegral l`div`2))] 1
+            reduce
 
 testInput :: GlobPull (Exp Int)
 testInput = namedGlobal "apa"
-tr0 = quickPrint (runG reduce 1024 1024) testInput
+tr0 = quickPrint (run reduce 512 2048) testInput
 
+tr1 = mkStage 1024 1024 (reduce :: FrontStage Int ())
+tr2 = opt 1024 $ fst3 $ mkStage 1024 1024 (reduce :: FrontStage Int ())
+
+fst3 (a,_,_) = a
