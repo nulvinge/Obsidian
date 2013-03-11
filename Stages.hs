@@ -35,10 +35,10 @@ data Array a = Arr [a]
 
 type Index = Exp Word32 -> Exp Word32
 
-data Stage a where
-  FMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Index] -> [Index] -> [Index] -> Word32 -> Stage a
-  Comp  :: Stage a -> Stage a -> Stage a
-  Id    :: Stage a
+data BackStage a where
+  FMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Index] -> [Index] -> [Index] -> Word32 -> BackStage a
+
+type Stage a = [BackStage a]
 
 data FrontStage a b where
   SFMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Index] -> [Index] -> FrontStage a ()
@@ -63,19 +63,17 @@ mkStage :: (Scalar a)
         -> (Stage a, [Index], Word32, b)
 mkStage _ 0 _ _ = error "Stage cannot have zero width"
 mkStage 0 _ _ _ = error "Stage cannot have zero blocksize"
-mkStage b n ob (SFMap f i o) = (FMap f i o ob n, ob, ni ,())
+mkStage b n ob (SFMap f i o) = ([FMap f i o ob n], ob, ni ,())
   where ni = n `div` fromIntegral (length i) * fromIntegral (length o)
-mkStage b n ob (a `Bind` f) = (s1 `Comp` s2, ob2, n2, b2)
+mkStage b n ob (a `Bind` f) = (s1 ++ s2, ob2, n2, b2)
   where (s1,ob1,n1,b1) = mkStage b n ob a
         (s2,ob2,n2,b2) = mkStage b n1 ob1 (f b1)
-mkStage b n ob (Return a)   = (Id,ob,n,a)
-mkStage b n ob (Len)        = (Id,ob,n,n)
-mkStage b n ob (Block)      = (Id,ob,n,b)
+mkStage b n ob (Return a)   = ([],ob,n,a)
+mkStage b n ob (Len)        = ([],ob,n,n)
+mkStage b n ob (Block)      = ([],ob,n,b)
 
-instance Show (Stage a) where
+instance Show (BackStage a) where
   show (FMap f i o ob nn) = "FMap f " ++ show (length i) ++ " " ++ show (length o)
-  show (Comp a b) = "(" ++ show a ++ " >> " ++ show b ++ ")"
-  show (Id) = "Id"
   --show (Len f) = "Len f"
 
 --(>-) :: Stage a b -> Stage a b -> Stage a b
@@ -84,9 +82,6 @@ instance Show (Stage a) where
 --a >- b = a `Comp` b
 
 opt :: Stage a -> Stage a
-opt (Id `Comp` a) = opt a
-opt (a `Comp` Id) = opt a
-opt (s `Comp` a) = s `Comp` opt a
 opt a = a
 
 
@@ -111,25 +106,27 @@ runable :: (Scalar a)
         => Word32
         -> Stage a -> Word32
         -> (Stage a, Stage a, Word32, Word32)
-runable divisions aa b = 
-  case aa of
-    (a@(FMap f i o ob nn) `Comp` as) -> (tr1 `Comp` tr2, tn2, tl2, tt1 `max` tt2)
-            where (tr1,Id,tl1,tt1)  = runable' a
-                  (tr2,tn2,tl2,tt2) = runable' as
-    _                          -> runable' aa
+runable divisions (a:as) b = 
+  case as of
+    [] -> single a
+    _  -> (tr1 : tr2, tn2, tl2, tt1 `max` tt2)
+            where ([tr1],[], tl1,tt1) = single a
+                  (tr2,tn2,tl2,tt2) = runable' (strace as)
   where runable' :: (Scalar a)
                  => Stage a
                  -> (Stage a, Stage a, Word32, Word32)
-        runable' ao@(a@(FMap f i o ob nn) `Comp` as) =
-                if null ob || {- nn <= divisions || -} accessA divisions ob nn i
-                    then (tr1 `Comp` tr2, tn2, tl2, tt1 `max` tt2)
-                    else (Id, ao, nn, 0)
-                where (tr1,Id,tl1,tt1)  = runable' a
-                      (tr2,tn2,tl2,tt2) = runable' as
-        runable' a@(FMap f i o ob nn) = (a, Id, nn`div`ni*no, nn`div`ni)
+        runable' ao@(a@(FMap f i o ob nn) : as) =
+            if null ob || {- nn <= divisions || -} accessA divisions ob nn i
+                then case as of
+                    [] -> single a
+                    _  -> (tr1 : tr2, tn2, tl2, tt1 `max` tt2)
+                else ([], ao, nn, 0)
+            where ([tr1],[], tl1,tt1)  = single a
+                  (tr2,tn2,tl2,tt2) = runable' as
+        --runable' s = ([],s,undefined,undefined)
+        single a@(FMap f i o ob nn) = ([a], [], nn`div`ni*no, nn`div`ni)
             where ni = fromIntegral (length i)
                   no = fromIntegral (length o)
-        runable' s = (Id,s,undefined,undefined)
 
 
 {-
@@ -170,7 +167,7 @@ runG :: (Scalar a)
      -> GlobPull (Exp a) -> GProgram (GlobPull (Exp a))
 --runG (IXMap f `Comp` s) b nn a = runG s b nn (ixMap f a)
 --runG (Len f) b nn a = runG (f nn) b nn a
-runG (Id) b nn a = return a
+runG [] _ _ a = return a
 runG ss b nn (GlobPull ixf) = do
     as <- rf
     runG tn b tl as
@@ -188,16 +185,15 @@ runBable a b = runable b a b
 runB :: (Scalar a)
      => Stage a -> Word32 -> Exp Word32
      -> Pull (Exp a) -> BProgram (Push (Exp a))
-runB (s `Comp` Id) b bix a = runB s b bix a
 --runB (IXMap f `Comp` ss) b nn bix a = runB ss b nn bix (ixMap f a)
-runB s@(_ `Comp` _) b bix a = do
+runB s b bix a = do
         a' <- runW tr b bix a
         case tn of
-          Id -> return a'
+          [] -> return a'
           _  -> do a'' <- force a'
                    runB tn b bix a''
     where (tr, tn, _, _) = runWable s b
-runB s b bix a = runW s b bix a
+--runB s b bix a = runW s b bix a
 
 runWable :: (Scalar a)
          => Stage a -> Word32
@@ -207,14 +203,13 @@ runWable a b = runable 32 a b
 runW :: (Scalar a)
      => Stage a -> Word32 -> Exp Word32
      -> Pull (Exp a) -> BProgram (Push (Exp a))
-runW (s `Comp` Id) b bix a = runW s b bix a
 --runW (s `Comp` ss) b nn bix a = do
 --        a' <- runW s b nn bix a
 --        a'' <- write a'
 --        runW ss b (len a'') bix a''
 runW s b bix a = do
     case tn of
-        Id -> return a'
+        [] -> return a'
         _  -> do a'' <- write a'
                  runW tn b bix a''
     where a' = Push tl $ \wf ->
@@ -235,13 +230,12 @@ runT :: (Scalar a)
      => Stage a -> Word32 -> Exp Word32
      -> (Exp a -> Exp Word32 -> TProgram ())
      -> Pull (Exp a) -> TProgram ()
-runT (s `Comp` Id) b ix wf a = runT s b ix wf a
-runT (FMap f i o ob nn) b ix wf a = sequence_ [wf (fl !! (fromIntegral six))
+runT [FMap f i o ob nn] b ix wf a = sequence_ [wf (fl !! (fromIntegral six))
                                             (ix*(fromIntegral (length o))+fromIntegral six)
                                         | six <- [0..(length o)-1]]
     where l = map (\ixf -> a!(ixf ix)) i
           fl = f l
-runT Id b ix wf a = return ()
+runT [] b ix wf a = return ()
 
 quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
 quickPrint prg input =
