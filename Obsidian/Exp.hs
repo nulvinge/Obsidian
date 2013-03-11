@@ -315,6 +315,8 @@ instance Num (Exp Int) where
   (-) (Literal a) (Literal b) = Literal (a - b) 
   (-) a b = BinOp Sub a b 
   
+  (*) _ (Literal 0) = Literal 0
+  (*) (Literal 0) _ = Literal 0
   (*) a (Literal 1) = a 
   (*) (Literal 1) a = a
   (*) a b = BinOp Mul a b 
@@ -375,6 +377,8 @@ instance Num (Exp Int32) where
   (-) (Literal a) (Literal b) = Literal (a - b) 
   (-) a b = BinOp Sub a b 
   
+  (*) _ (Literal 0) = Literal 0
+  (*) (Literal 0) _ = Literal 0
   (*) a (Literal 1) = a 
   (*) (Literal 1) a = a
   (*) a b = BinOp Mul a b 
@@ -446,6 +450,8 @@ instance Num (Exp Word32) where
   (-) (Literal a) (Literal b) = Literal (a - b) 
   (-) a b = BinOp Sub a b 
   
+  (*) _ (Literal 0) = Literal 0
+  (*) (Literal 0) _ = Literal 0
   (*) a (Literal 1) = a 
   (*) (Literal 1) a = a
   (*) a b = BinOp Mul a b 

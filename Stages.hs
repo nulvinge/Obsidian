@@ -24,7 +24,7 @@ import Debug.Trace
 import Data.Word
 import Data.Int
 import Data.Bits
-import Data.Maybe (isJust)
+import Data.Maybe
 import Data.List (genericIndex)
 
 import qualified Data.Vector.Storable as V
@@ -125,45 +125,80 @@ runG ss b nn (GlobPull ixf) = do
     runG tn b tl as
   where rf = cheat $ forceG $ GlobPush $ \wf -> do
                 ForAllBlocks $ \bix -> do
-                    Push _ pf <- runB tr b bix (Pull nn ixf)
+                    Push _ pf <- runB False tr b bix (Pull nn ixf)
                     pf wf
         (tr, tn, tl, _) = runnable b ss
 
 runB :: (Scalar a)
-     => Stage a -> Word32 -> Exp Word32
+     => Bool -> Stage a -> Word32 -> Exp Word32
      -> Pull (Exp a) -> BProgram (Push (Exp a))
-runB s b bix a = do
-        a' <- runW tr b bix a
+runB fromShared s b bix a = do
+        a' <- runW fromShared tr b bix a
         case tn of
           [] -> return a'
           _  -> do a'' <- force a'
-                   runB tn b bix a''
+                   runB True tn b bix a''
     where (tr, tn, _, _) = runnable 32 s
 
 runW :: (Scalar a)
-     => Stage a -> Word32 -> Exp Word32
+     => Bool -> Stage a -> Word32 -> Exp Word32
      -> Pull (Exp a) -> BProgram (Push (Exp a))
-runW s b bix a = do
+runW fromShared s b bix a = do
     case tn of
         [] -> return a'
         _  -> do a'' <- write a'
-                 runW tn b bix a''
+                 runW True tn b bix a''
     where a' = Push tl $ \wf ->
                     ForAll (Just tt) $ \tix -> do
                         let ix = (bix*(fromIntegral b)+tix)
-                        runT tr ix wf a
+                        runT fromShared tr b tt ix wf a
           (tr, tn, tl, tt) = runnable 1 s
 
 runT :: (Scalar a)
-     => Stage a -> Exp Word32
+     => Bool -> Stage a -> Word32 -> Word32 -> Exp Word32
      -> (Exp a -> Exp Word32 -> TProgram ())
      -> Pull (Exp a) -> TProgram ()
-runT [FMap f i o ob nn] ix wf a = sequence_ [wf (fl !! (fromIntegral six))
-                                            (ix*(fromIntegral (length o))+fromIntegral six)
-                                        | six <- [0..(length o)-1]]
-    where l = map (\ixf -> a!(ixf ix)) i
+runT fromShared [FMap f i o ob nn] b tt ix wf a =
+      sequence_ [wf (fl !! (fromIntegral six))
+                    ((divide ix)*(fromIntegral (length o))+fromIntegral six)
+                | six <- [0..(length o)-1]]
+    where l = map (\ixf -> a!(divide $ ixf ix)) i
           fl = f l
-runT [] ix wf a = return ()
+          divide :: Exp Word32 -> Exp Word32
+          divide a = if fromShared
+                        then simplifyMod b b tt a
+                        else a
+runT _ [] b tt ix wf a = return ()
+
+--simplifying treating i as an integer modulo m
+simplifyMod :: Word32 -> Word32 -> Word32 -> Exp Word32 -> Exp Word32
+simplifyMod m bs tt = makeExp.sm.snd.sm --second time to get correct range after simplifications
+  where sm :: Exp Word32 -> (Maybe (Word32,Word32),Exp Word32)
+        sm (Literal a) = (Just (am,am),Literal am)
+            where am = a`mod`m
+        sm (BinOp Mul a b) = bop a b (*) (*)
+        sm (BinOp Add a b) = bop a b (+) (+)
+        sm (BinOp Sub a b) = bop a b (-) (-)
+        sm (ThreadIdx X) | tt <= m = (Just (0,tt-1),ThreadIdx X)
+        sm (ThreadIdx X) | bs <= m = (Just (0,bs-1),ThreadIdx X)
+        sm a = (Nothing,a)
+        bop :: Exp Word32 -> Exp Word32
+            -> (Exp Word32 -> Exp Word32 -> Exp Word32)
+            -> (Word32 -> Word32 -> Word32)
+            -> (Maybe (Word32,Word32),Exp Word32)
+        bop a b f fw = (r,av `f` bv)
+            where (ab,av) = sm a
+                  (bb,bv) = sm b
+                  r = do
+                    (al,ah) <- ab
+                    (bl,bh) <- bb
+                    guard $ al `fw` bl >= 0
+                    guard $ ah `fw` bh < m
+                    Just (al `fw` bl,ah `fw` bh)
+        makeExp :: (Maybe (Word32,Word32),Exp Word32) -> Exp Word32
+        makeExp (Just _,a) = a
+        makeExp (Nothing,a) = a`mod`(Literal m)
+
 
 quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
 quickPrint prg input =
