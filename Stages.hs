@@ -92,26 +92,25 @@ accessA divisions ob n i = (length arrWriteThreads) == (length arrReadThreads)
           guard $ (w `div` divisions) == (r `div` divisions)
         getConstant (Literal a) = Just a
 
-runable :: (Scalar a)
-        => Word32
-        -> Stage a -> Word32
+runnable :: (Scalar a)
+        => Word32 -> Stage a
         -> (Stage a, Stage a, Word32, Word32)
-runable divisions (a:as) b = 
-  case runable' (a:as) of
+runnable divisions (a:as) = 
+  case runnable' (a:as) of
     ([],_,_,_) -> ([tr1], as, tl1, tt1)
       where ([tr1],[],tl1,tt1) = single a
     a          -> a
-  where runable' :: (Scalar a)
+  where runnable' :: (Scalar a)
                  => Stage a
                  -> (Stage a, Stage a, Word32, Word32)
-        runable' ao@(a@(FMap f i o ob nn) : as) =
+        runnable' ao@(a@(FMap f i o ob nn) : as) =
             if null ob || {- nn <= divisions || -} accessA divisions ob nn i
-                then case as of
-                    [] -> single a
-                    _  -> (tr1 : tr2, tn2, tl2, tt1 `max` tt2)
+                then if null as || (divisions == 1 && tt1 /= tt2) --special case
+                        then single a
+                        else (tr1 : tr2, tn2, tl2, tt1)
                 else ([], ao, nn, 0)
             where ([tr1],[], tl1,tt1)  = single a
-                  (tr2,tn2,tl2,tt2) = runable' as
+                  (tr2,tn2,tl2,tt2) = runnable' as
         single a@(FMap f i o ob nn) = ([a], [], nn`div`ni*no, nn`div`ni)
             where ni = fromIntegral (length i)
                   no = fromIntegral (length o)
@@ -128,12 +127,7 @@ runG ss b nn (GlobPull ixf) = do
                 ForAllBlocks $ \bix -> do
                     Push _ pf <- runB tr b bix (Pull nn ixf)
                     pf wf
-        (tr, tn, tl, _) = runBable ss b
-
-runBable :: (Scalar a)
-         => Stage a -> Word32
-         -> (Stage a, Stage a, Word32, Word32)
-runBable a b = runable b a b
+        (tr, tn, tl, _) = runnable b ss
 
 runB :: (Scalar a)
      => Stage a -> Word32 -> Exp Word32
@@ -144,12 +138,7 @@ runB s b bix a = do
           [] -> return a'
           _  -> do a'' <- force a'
                    runB tn b bix a''
-    where (tr, tn, _, _) = runWable s b
-
-runWable :: (Scalar a)
-         => Stage a -> Word32
-         -> (Stage a, Stage a, Word32, Word32)
-runWable a b = runable 32 a b
+    where (tr, tn, _, _) = runnable 32 s
 
 runW :: (Scalar a)
      => Stage a -> Word32 -> Exp Word32
@@ -162,24 +151,19 @@ runW s b bix a = do
     where a' = Push tl $ \wf ->
                     ForAll (Just tt) $ \tix -> do
                         let ix = (bix*(fromIntegral b)+tix)
-                        runT tr b ix wf a
-          (tr, tn, tl, tt) = runTable s b
-
-runTable :: (Scalar a)
-         => Stage a -> Word32
-         -> (Stage a, Stage a, Word32, Word32)
-runTable = runable 1
+                        runT tr ix wf a
+          (tr, tn, tl, tt) = runnable 1 s
 
 runT :: (Scalar a)
-     => Stage a -> Word32 -> Exp Word32
+     => Stage a -> Exp Word32
      -> (Exp a -> Exp Word32 -> TProgram ())
      -> Pull (Exp a) -> TProgram ()
-runT [FMap f i o ob nn] b ix wf a = sequence_ [wf (fl !! (fromIntegral six))
+runT [FMap f i o ob nn] ix wf a = sequence_ [wf (fl !! (fromIntegral six))
                                             (ix*(fromIntegral (length o))+fromIntegral six)
                                         | six <- [0..(length o)-1]]
     where l = map (\ixf -> a!(ixf ix)) i
           fl = f l
-runT [] b ix wf a = return ()
+runT [] ix wf a = return ()
 
 quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
 quickPrint prg input =
@@ -208,8 +192,8 @@ tr1 = mkStage 1024 1024 [id] (reduce :: FrontStage Int ())
 {- TODO:
    Divide threads!!! sharedmem
      simplify mod expression
-   tt1 max tt2 ??
    TProgram
+   runT composings
    lambda quadpair for additions
    algorithms:
         scan
