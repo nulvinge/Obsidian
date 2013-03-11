@@ -133,42 +133,42 @@ runB :: (Scalar a)
      => Bool -> Stage a -> Word32 -> Exp Word32
      -> Pull (Exp a) -> BProgram (Push (Exp a))
 runB fromShared s b bix a = do
-        a' <- runW fromShared tr b bix a
-        case tn of
-          [] -> return a'
-          _  -> do a'' <- force a'
-                   runB True tn b bix a''
+        a' <- runW fromShared (not $ null tn) tr b bix a
+        if null tn
+            then return a'
+            else do a'' <- force a'
+                    runB True tn b bix a''
     where (tr, tn, _, _) = runnable 32 s
 
 runW :: (Scalar a)
-     => Bool -> Stage a -> Word32 -> Exp Word32
+     => Bool -> Bool -> Stage a -> Word32 -> Exp Word32
      -> Pull (Exp a) -> BProgram (Push (Exp a))
-runW fromShared s b bix a = do
-    case tn of
-        [] -> return a'
-        _  -> do a'' <- write a'
-                 runW True tn b bix a''
+runW fromShared toShared s b bix a = if null tn
+        then return a'
+        else do a'' <- write a'
+                runW True toShared tn b bix a''
     where a' = Push tl $ \wf ->
                     ForAll (Just tt) $ \tix -> do
                         let ix = (bix*(fromIntegral b)+tix)
-                        runT fromShared tr b tt ix wf a
+                        runT fromShared toShared' tr b tt ix wf a
           (tr, tn, tl, tt) = runnable 1 s
+          toShared' = toShared || (not $ null tn)
 
 runT :: (Scalar a)
-     => Bool -> Stage a -> Word32 -> Word32 -> Exp Word32
+     => Bool -> Bool -> Stage a -> Word32 -> Word32 -> Exp Word32
      -> (Exp a -> Exp Word32 -> TProgram ())
      -> Pull (Exp a) -> TProgram ()
-runT fromShared [FMap f i o ob nn] b tt ix wf a =
+runT fromShared toShared [FMap f i o ob nn] b tt ix wf a =
       sequence_ [wf (fl !! (fromIntegral six))
-                    ((divide ix)*(fromIntegral (length o))+fromIntegral six)
+                    ((divide toShared ix)*(fromIntegral (length o))+fromIntegral six)
                 | six <- [0..(length o)-1]]
-    where l = map (\ixf -> a!(divide $ ixf ix)) i
+    where l = map (\ixf -> a!(divide fromShared $ ixf ix)) i
           fl = f l
-          divide :: Exp Word32 -> Exp Word32
-          divide a = if fromShared
+          divide :: Bool -> Exp Word32 -> Exp Word32
+          divide cond a = if cond
                         then simplifyMod b b tt a
                         else a
-runT _ [] b tt ix wf a = return ()
+runT _ _ [] b tt ix wf a = return ()
 
 --simplifying treating i as an integer modulo m
 simplifyMod :: Word32 -> Word32 -> Word32 -> Exp Word32 -> Exp Word32
