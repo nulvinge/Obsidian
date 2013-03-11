@@ -21,6 +21,8 @@ import Debug.Trace
 import Data.Word
 import Data.Int
 import Data.Bits
+import Data.Maybe (isJust)
+import Data.List (genericIndex)
 
 import qualified Data.Vector.Storable as V
 
@@ -31,13 +33,15 @@ import qualified Prelude as P
 
 data Array a = Arr [a]
 
+type Index = Exp Word32 -> Exp Word32
+
 data Stage a where
-  FMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Exp Word32 -> Exp Word32] -> [Exp Word32 -> Exp Word32] -> Stage a
+  FMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Index] -> [Index] -> [Index] -> Word32 -> Stage a
   Comp  :: Stage a -> Stage a -> Stage a
   Id    :: Stage a
 
 data FrontStage a b where
-  SFMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Exp Word32 -> Exp Word32] -> [Exp Word32 -> Exp Word32] -> FrontStage a ()
+  SFMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Index] -> [Index] -> FrontStage a ()
   Bind   :: FrontStage a b -> (b -> FrontStage a c) -> FrontStage a c
   Return :: b -> FrontStage a b
   Len    :: FrontStage a Word32
@@ -51,25 +55,25 @@ run :: (Scalar a)
     => FrontStage a () -> Word32 -> Word32
     -> GlobPull (Exp a) -> GProgram (GlobPull (Exp a))
 run a b n = runG s' b n
-  where (s,_,()) = mkStage b n a
+  where (s,_,_,()) = mkStage b n [id] a
         s' = opt s
 
 mkStage :: (Scalar a)
-        => Word32 -> Word32 -> FrontStage a b
-        -> (Stage a, Word32, b)
-mkStage _ 0 _ = error "Stage cannot have zero width"
-mkStage 0 _ _ = error "Stage cannot have zero blocksize"
-mkStage b n (SFMap f i o) = (FMap f i o, ni ,())
+        => Word32 -> Word32 -> [Index] -> FrontStage a b
+        -> (Stage a, [Index], Word32, b)
+mkStage _ 0 _ _ = error "Stage cannot have zero width"
+mkStage 0 _ _ _ = error "Stage cannot have zero blocksize"
+mkStage b n ob (SFMap f i o) = (FMap f i o ob n, ob, ni ,())
   where ni = n `div` fromIntegral (length i) * fromIntegral (length o)
-mkStage b n (a `Bind` f) = (s1 `Comp` s2, n2, b2)
-  where (s1,n1,b1) = mkStage b n a
-        (s2,n2,b2) = mkStage b n1 (f b1)
-mkStage b n (Return a) = (Id,n,a)
-mkStage b n (Len) = (Id,n,n)
-mkStage b n (Block) = (Id,n,b)
+mkStage b n ob (a `Bind` f) = (s1 `Comp` s2, ob2, n2, b2)
+  where (s1,ob1,n1,b1) = mkStage b n ob a
+        (s2,ob2,n2,b2) = mkStage b n1 ob1 (f b1)
+mkStage b n ob (Return a)   = (Id,ob,n,a)
+mkStage b n ob (Len)        = (Id,ob,n,n)
+mkStage b n ob (Block)      = (Id,ob,n,b)
 
 instance Show (Stage a) where
-  show (FMap f i o) = "FMap f " ++ show (length i) ++ " " ++ show (length o)
+  show (FMap f i o ob nn) = "FMap f " ++ show (length i) ++ " " ++ show (length o)
   show (Comp a b) = "(" ++ show a ++ " >> " ++ show b ++ ")"
   show (Id) = "Id"
   --show (Len f) = "Len f"
@@ -88,30 +92,78 @@ opt a = a
 
 --a >- b = a `Comp` b
 
+accessA :: Word32 -> [Index] -> Word32 -> [Index] -> Bool
+accessA divisions ob n i = (length arrWriteThreads) == (length arrReadThreads)
+                        && all sameDivision (zip arrWriteThreads arrReadThreads)
+  where arrWriteThreads = getIndices ob
+        arrReadThreads  = getIndices i
+        getIndices :: [Index] -> [Exp Word32]
+        getIndices ixf = concat [[(ixf !! x) (fromIntegral (ix+fromIntegral x))
+                                 | x <- [0..(length ixf-1)]]
+                                | ix <- [0..((n `div` (fromIntegral (length ixf)))-1)]]
+        sameDivision (wt,rt) = isJust $ do
+          w <- getConstant wt
+          r <- getConstant rt
+          guard $ (w `div` divisions) == (r `div` divisions)
+        getConstant (Literal a) = Just a
+
 runable :: (Scalar a)
-        => Word32 -> ((Exp Word32 -> Exp Word32) -> Bool)
-        -> Stage a -> Word32 -> Word32
+        => Word32
+        -> Stage a -> Word32
         -> (Stage a, Stage a, Word32, Word32)
-runable max access aa b nn = 
+runable divisions aa b = 
   case aa of
-    (a@(FMap f i o) `Comp` as) -> (tr1 `Comp` tr2, tn2, tl2, ti1)
-            where (tr1,Id,tl1,ti1) = runable' a nn
-                  (tr2,tn2,tl2,_)  = runable' as tl1
-    _                          -> runable' aa nn
+    (a@(FMap f i o ob nn) `Comp` as) -> (tr1 `Comp` tr2, tn2, tl2, tt1 `max` tt2)
+            where (tr1,Id,tl1,tt1)  = runable' a
+                  (tr2,tn2,tl2,tt2) = runable' as
+    _                          -> runable' aa
   where runable' :: (Scalar a)
-                 => Stage a -> Word32
+                 => Stage a
                  -> (Stage a, Stage a, Word32, Word32)
-        runable' (a@(FMap f i o) `Comp` as) nn =
-                if nn <= max || all access i
-                    then (tr1 `Comp` tr2, tn2, tl2,ti1)
-                    else (Id, (a `Comp` as), nn, ti1)
-                where (tr1,Id,tl1,ti1) = runable' a nn
-                      (tr2,tn2,tl2,_)  = runable' as tl1
-        runable' a@(FMap f i o) nn = (a, Id, nn`div`ni*no, ni)
+        runable' ao@(a@(FMap f i o ob nn) `Comp` as) =
+                if null ob || {- nn <= divisions || -} accessA divisions ob nn i
+                    then (tr1 `Comp` tr2, tn2, tl2, tt1 `max` tt2)
+                    else (Id, ao, nn, 0)
+                where (tr1,Id,tl1,tt1)  = runable' a
+                      (tr2,tn2,tl2,tt2) = runable' as
+        runable' a@(FMap f i o ob nn) = (a, Id, nn`div`ni*no, nn`div`ni)
             where ni = fromIntegral (length i)
                   no = fromIntegral (length o)
-        --runable' (Len f) nn = runable max access (f nn) b nn
-        runable' s nn = (Id,s,nn,undefined)
+        runable' s = (Id,s,undefined,undefined)
+
+
+{-
+runable :: (Scalar a)
+        => Word32 -> ([Index] -> Word32 -> Word32 -> Index -> Bool)
+        -> Stage a -> Word32
+        -> (Stage a, Stage a, Word32, Word32) --last is wrong
+runable max access aa b = case runable' aa of
+   Just a  -> a
+   Nothing -> case runonce aa of
+    Just a  -> a
+    Nothing -> (Id,aa,undefined,undefined)
+  where runable' :: (Scalar a)
+                 => Stage a
+                 -> Maybe (Stage a, Stage a, Word32, Word32)
+        runable' (a@(FMap f i o ob nn) `Comp` as) =
+            if nn <= max || all (access ob b nn) i
+            then case runonce a of
+                    Nothing               -> runable' as
+                    Just (tr1,Id,tl1,tt1) ->
+                        case runable' as of
+                            Nothing                -> Just (tr1,as,tl1,tt1)
+                            Just (tr2,tn2,tl2,tt2) ->
+                                Just (tr1 `Comp` tr2, tn2, tl2, tt1)
+            else Nothing
+        runable' s = Nothing
+        runonce a@(FMap f i o ob nn) = Just (a, Id, nn`div`ni*no, nn`div`ni)
+            where ni = fromIntegral (length i)
+                  no = fromIntegral (length o)
+        runonce (a `Comp` as) = case runonce a of
+                                    Nothing               -> Nothing
+                                    Just (tr1,Id,tl1,tt1) -> Just (tr1,as,tl1,tt1)
+        runonce _ = Nothing
+-}
 
 runG :: (Scalar a)
      => Stage a -> Word32 -> Word32
@@ -124,81 +176,72 @@ runG ss b nn (GlobPull ixf) = do
     runG tn b tl as
   where rf = cheat $ forceG $ GlobPush $ \wf -> do
                 ForAllBlocks $ \bix -> do
-                    Push _ pf <- runB tr b nn bix (Pull nn ixf)
+                    Push _ pf <- runB tr b bix (Pull nn ixf)
                     pf wf
-        (tr, tn, tl) = runBable ss b nn
-
-accessB :: (Exp Word32 -> Exp Word32) -> Bool
-accessB ixf = False
+        (tr, tn, tl, _) = runBable ss b
 
 runBable :: (Scalar a)
-         => Stage a -> Word32 -> Word32
-         -> (Stage a, Stage a, Word32)
-runBable a b nn = (tr,tn,tl)
-  where (tr,tn,tl,_) = runable b accessB a b nn
+         => Stage a -> Word32
+         -> (Stage a, Stage a, Word32, Word32)
+runBable a b = runable b a b
 
 runB :: (Scalar a)
-     => Stage a -> Word32 -> Word32 -> Exp Word32
+     => Stage a -> Word32 -> Exp Word32
      -> Pull (Exp a) -> BProgram (Push (Exp a))
-runB (s `Comp` Id) b nn bix a = runB s b nn bix a
+runB (s `Comp` Id) b bix a = runB s b bix a
 --runB (IXMap f `Comp` ss) b nn bix a = runB ss b nn bix (ixMap f a)
-runB s@(_ `Comp` _) b nn bix a = do
-        a' <- runW tr b nn bix a
+runB s@(_ `Comp` _) b bix a = do
+        a' <- runW tr b bix a
         case tn of
           Id -> return a'
           _  -> do a'' <- force a'
-                   runB tn b (len a'') bix a''
-    where (tr, tn, tl) = runWable s b nn
-runB s b nn bix a = runW s b nn bix a
-
-accessW :: (Exp Word32 -> Exp Word32) -> Bool
-accessW ixf = False
+                   runB tn b bix a''
+    where (tr, tn, _, _) = runWable s b
+runB s b bix a = runW s b bix a
 
 runWable :: (Scalar a)
-         => Stage a -> Word32 -> Word32
-         -> (Stage a, Stage a, Word32)
-runWable a b nn = (tr,tn,tl)
-  where (tr,tn,tl,_) = runable 32 accessB a b nn
+         => Stage a -> Word32
+         -> (Stage a, Stage a, Word32, Word32)
+runWable a b = runable 32 a b
 
 runW :: (Scalar a)
-     => Stage a -> Word32 -> Word32 -> Exp Word32
+     => Stage a -> Word32 -> Exp Word32
      -> Pull (Exp a) -> BProgram (Push (Exp a))
-runW (s `Comp` Id) b nn bix a = runW s b nn bix a
+runW (s `Comp` Id) b bix a = runW s b bix a
 --runW (s `Comp` ss) b nn bix a = do
 --        a' <- runW s b nn bix a
 --        a'' <- write a'
 --        runW ss b (len a'') bix a''
-runW s b nn bix a = do
+runW s b bix a = do
     case tn of
         Id -> return a'
         _  -> do a'' <- write a'
-                 runW tn b (len a'') bix a''
+                 runW tn b bix a''
     where a' = Push tl $ \wf ->
-                    ForAll (Just newn) $ \tix -> do
+                    ForAll (Just tt) $ \tix -> do
                         let ix = (bix*(fromIntegral b)+tix)
-                        runT tr b nn ix wf a
-          (tr, tn, tl, ti) = runTable s b nn
-          newn = nn `div` ti
+                        runT tr b ix wf a
+          (tr, tn, tl, tt) = runTable s b
 
-accessT :: (Exp Word32 -> Exp Word32) -> Bool
-accessT ixf = False
+--accessT :: [Index] -> Word32 -> Word32 -> [Index] -> Bool
+--accessT ob b n i = accessD 1 ob b n i
 
 runTable :: (Scalar a)
-         => Stage a -> Word32 -> Word32
+         => Stage a -> Word32
          -> (Stage a, Stage a, Word32, Word32)
-runTable = runable 1 accessT
+runTable = runable 1
 
 runT :: (Scalar a)
-     => Stage a -> Word32 -> Word32 -> Exp Word32
+     => Stage a -> Word32 -> Exp Word32
      -> (Exp a -> Exp Word32 -> TProgram ())
      -> Pull (Exp a) -> TProgram ()
-runT (s `Comp` Id) b nn ix wf a = runT s b nn ix wf a
-runT (FMap f i o) b nn ix wf a = sequence_ [wf (fl !! (fromIntegral six))
+runT (s `Comp` Id) b ix wf a = runT s b ix wf a
+runT (FMap f i o ob nn) b ix wf a = sequence_ [wf (fl !! (fromIntegral six))
                                             (ix*(fromIntegral (length o))+fromIntegral six)
                                         | six <- [0..(length o)-1]]
     where l = map (\ixf -> a!(ixf ix)) i
           fl = f l
---runT Id b nn ix wf a = return ()
+runT Id b ix wf a = return ()
 
 quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
 quickPrint prg input =
@@ -215,11 +258,16 @@ reduce = do
     else do SFMap (\[a,b] -> [a+b]) [id, (+(fromIntegral l`div`2))] [id]
             reduce
 
+--class SFMappable a
+--  sfmap :: a -> FrontStage b ()
+
+--sfmap (uncurry (+)) (id, (+l`div`2))
+
 testInput :: GlobPull (Exp Int)
 testInput = namedGlobal "apa"
 tr0 = quickPrint (run reduce 1024 2048) testInput
 
-tr1 = mkStage 1024 1024 (reduce :: FrontStage Int ())
-tr2 = opt $ fst3 $ mkStage 1024 1024 (reduce :: FrontStage Int ())
+tr1 = mkStage 1024 1024 [id] (reduce :: FrontStage Int ())
+tr2 = opt $ fst4 $ mkStage 1024 1024 [id] (reduce :: FrontStage Int ())
 
-fst3 (a,_,_) = a
+fst4 (a,_,_,_) = a

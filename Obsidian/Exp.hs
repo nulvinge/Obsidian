@@ -353,6 +353,8 @@ instance Enum (Exp Int) where
          
 instance Integral (Exp Int) where
   mod a b = BinOp Mod a b 
+
+  div (Literal a) (Literal b) = Literal (a `div` b)
   div a b = BinOp Div a b
   quotRem = error "quotRem: not implemented for Exp Int" 
   toInteger = error "toInteger: not implemented for Exp Int" 
@@ -411,6 +413,8 @@ instance Enum (Exp Int32) where
          
 instance Integral (Exp Int32) where
   mod a b = BinOp Mod a b 
+
+  div (Literal a) (Literal b) = Literal (a `div` b)
   div a b = BinOp Div a b
   quotRem = error "quotRem: not implemented for Exp Int32" 
   toInteger = error "toInteger: not implemented for Exp Int32" 
@@ -491,6 +495,8 @@ instance Enum (Exp Word32) where
 
 instance Integral (Exp Word32) where
   mod a b = BinOp Mod a b 
+
+  div (Literal a) (Literal b) = Literal (a `div` b)
   div a b = BinOp Div a b
   quotRem = error "quotRem: not implemented for Exp Word32" 
   toInteger = error "toInteger: not implemented for Exp Word32"
