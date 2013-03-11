@@ -39,12 +39,12 @@ data Array a = Arr [a]
 type Index = Exp Word32 -> Exp Word32
 
 data BackStage a where
-  FMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Index] -> [Index] -> [Index] -> Word32 -> BackStage a
+  FMap  :: (Scalar a) => ([Exp a] -> TProgram [Exp a]) -> [Index] -> [Index] -> [Index] -> Word32 -> BackStage a
 
 type Stage a = [BackStage a]
 
 data FrontStage a b where
-  SFMap  :: (Scalar a) => ([Exp a] -> [Exp a]) -> [Index] -> [Index] -> FrontStage a ()
+  SFMap  :: (Scalar a) => ([Exp a] -> TProgram [Exp a]) -> [Index] -> [Index] -> FrontStage a ()
   Bind   :: FrontStage a b -> (b -> FrontStage a c) -> FrontStage a c
   Return :: b -> FrontStage a b
   Len    :: FrontStage a Word32
@@ -158,12 +158,12 @@ runT :: (Scalar a)
      => Bool -> Bool -> Stage a -> Word32 -> Word32 -> Exp Word32
      -> (Exp a -> Exp Word32 -> TProgram ())
      -> Pull (Exp a) -> TProgram ()
-runT fromShared toShared [FMap f i o ob nn] b tt ix wf a =
+runT fromShared toShared [FMap f i o ob nn] b tt ix wf a = do
+      fl <- f l
       sequence_ [wf (fl !! (fromIntegral six))
                     ((divide toShared ix)*(fromIntegral (length o))+fromIntegral six)
                 | six <- [0..(length o)-1]]
     where l = map (\ixf -> a!(divide fromShared $ ixf ix)) i
-          fl = f l
           divide :: Bool -> Exp Word32 -> Exp Word32
           divide cond a = if cond
                         then simplifyMod b b tt a
@@ -207,14 +207,39 @@ quickPrint prg input =
 strace a = trace (show a) a
 
 binOpStage :: (Scalar a) => (Exp a -> Exp a -> Exp a) -> Index -> Index -> FrontStage a ()
-binOpStage f i1 i2 = SFMap (\[a,b] -> [a `f` b]) [i1,i2] [id]
+binOpStage f i1 i2 = SFMap (\[a,b] -> return [a `f` b]) [i1,i2] [id]
+
+fakeProg :: (Scalar a, Num (Exp a)) => (Exp Word32 -> Pull (Exp a) -> Exp a) -> FrontStage a ()
+fakeProg f = do
+  l <- Len
+  let e = f (Index ("Index",[])) (Pull l (\i -> Index ("Read", [i])))
+      i = extractIndices e
+      rf = \x -> return [replace "Read" e x]
+      i' = [\ix -> replace "Index" ixf [ix] | ixf <- i]
+  SFMap rf i' [id]
+  where extractIndices :: Exp a -> [Exp Word32]
+        extractIndices (Index ("Read",[i])) = [i]
+        extractIndices (BinOp op a b) = extractIndices a ++ extractIndices b
+        replace :: (Scalar a, Num (Exp a)) => String -> Exp a -> [Exp a] -> Exp a
+        replace n a x = let (r,[]) = replaceValues n a x in r
+        replaceValues :: (Scalar a, Num (Exp a)) =>  String -> Exp a -> [Exp a] -> (Exp a, [Exp a])
+        replaceValues n (Index (n',_)) (x:xs) | n == n' = (x,xs)
+        replaceValues n (BinOp Add a b) xs = replaceBin n (+) a b xs
+        replaceValues n (BinOp Mul a b) xs = replaceBin n (*) a b xs
+        replaceValues n (BinOp Sub a b) xs = replaceBin n (-) a b xs
+        replaceValues n a xs = (a,xs)
+        replaceBin :: (Scalar a, Num (Exp a)) => String -> (Exp a -> Exp a -> Exp a)
+                   -> Exp a -> Exp a -> [Exp a] -> (Exp a, [Exp a])
+        replaceBin n op a b xs = (x1 `op` x2, xs2)
+          where (x1,xs1) = replaceValues n a xs
+                (x2,xs2) = replaceValues n b xs1
 
 reduce :: (Scalar a, Num (Exp a))  => FrontStage a ()
 reduce = do
   l <- Len
   if l==1
     then Return ()
-    else do binOpStage (+) id (+(fromIntegral l`div`2))
+    else do fakeProg $ \ix a -> (a!ix) + (a!(ix + (fromIntegral l`div`2)))
             reduce
 
 
@@ -225,9 +250,7 @@ tr0 = quickPrint (run reduce 1024 2048) testInput
 tr1 = mkStage 1024 1024 [id] (reduce :: FrontStage Int ())
 
 {- TODO:
-   Divide threads!!! sharedmem
-     simplify mod expression
-   TProgram
+   TProgram with assignments
    runT composings
    lambda quadpair for additions
    algorithms:
