@@ -2,6 +2,9 @@
              GADTs,
              RankNTypes,
              ExistentialQuantification,
+             MultiParamTypeClasses,
+             FlexibleInstances,
+             TypeFamilies,
              FlexibleContexts #-}
 
 module Stages where
@@ -54,9 +57,8 @@ instance Monad (FrontStage a) where
 run :: (Scalar a)
     => FrontStage a () -> Word32 -> Word32
     -> GlobPull (Exp a) -> GProgram (GlobPull (Exp a))
-run a b n = runG s' b n
+run a b n = runG s b n
   where (s,_,_,()) = mkStage b n [] a
-        s' = opt s
 
 mkStage :: (Scalar a)
         => Word32 -> Word32 -> [Index] -> FrontStage a b
@@ -74,18 +76,6 @@ mkStage b n ob (Block)      = ([],ob,n,b)
 
 instance Show (BackStage a) where
   show (FMap f i o ob nn) = "FMap f " ++ show (length i) ++ " " ++ show (length o) ++  " " ++ show (length ob)
-  --show (Len f) = "Len f"
-
---(>-) :: Stage a b -> Stage a b -> Stage a b
---(IXMap f) >- (IXMap f') = IXMap (f.f')
---(FMap f) >- (FMap f') = FMap (f.f')
---a >- b = a `Comp` b
-
-opt :: Stage a -> Stage a
-opt a = a
-
-
---a >- b = a `Comp` b
 
 accessA :: Word32 -> [Index] -> Word32 -> [Index] -> Bool
 accessA divisions ob n i = (length arrWriteThreads) == (length arrReadThreads)
@@ -122,7 +112,6 @@ runable divisions (a:as) b =
                 else ([], ao, nn, 0)
             where ([tr1],[], tl1,tt1)  = single a
                   (tr2,tn2,tl2,tt2) = runable' as
-        --runable' s = ([],s,undefined,undefined)
         single a@(FMap f i o ob nn) = ([a], [], nn`div`ni*no, nn`div`ni)
             where ni = fromIntegral (length i)
                   no = fromIntegral (length o)
@@ -131,8 +120,6 @@ runable divisions (a:as) b =
 runG :: (Scalar a)
      => Stage a -> Word32 -> Word32
      -> GlobPull (Exp a) -> GProgram (GlobPull (Exp a))
---runG (IXMap f `Comp` s) b nn a = runG s b nn (ixMap f a)
---runG (Len f) b nn a = runG (f nn) b nn a
 runG [] _ _ a = return a
 runG ss b nn (GlobPull ixf) = do
     as <- rf
@@ -151,7 +138,6 @@ runBable a b = runable b a b
 runB :: (Scalar a)
      => Stage a -> Word32 -> Exp Word32
      -> Pull (Exp a) -> BProgram (Push (Exp a))
---runB (IXMap f `Comp` ss) b nn bix a = runB ss b nn bix (ixMap f a)
 runB s b bix a = do
         a' <- runW tr b bix a
         case tn of
@@ -159,7 +145,6 @@ runB s b bix a = do
           _  -> do a'' <- force a'
                    runB tn b bix a''
     where (tr, tn, _, _) = runWable s b
---runB s b bix a = runW s b bix a
 
 runWable :: (Scalar a)
          => Stage a -> Word32
@@ -169,10 +154,6 @@ runWable a b = runable 32 a b
 runW :: (Scalar a)
      => Stage a -> Word32 -> Exp Word32
      -> Pull (Exp a) -> BProgram (Push (Exp a))
---runW (s `Comp` ss) b nn bix a = do
---        a' <- runW s b nn bix a
---        a'' <- write a'
---        runW ss b (len a'') bix a''
 runW s b bix a = do
     case tn of
         [] -> return a'
@@ -206,25 +187,34 @@ quickPrint prg input =
 
 strace a = trace (show a) a
 
+binOpStage :: (Scalar a) => (Exp a -> Exp a -> Exp a) -> Index -> Index -> FrontStage a ()
+binOpStage f i1 i2 = SFMap (\[a,b] -> [a `f` b]) [i1,i2] [id]
 
-reduce :: (Scalar a, Num (Exp a)) => FrontStage a ()
+reduce :: (Scalar a, Num (Exp a))  => FrontStage a ()
 reduce = do
   l <- Len
   if l==1
     then Return ()
-    else do SFMap (\[a,b] -> [a+b]) [id, (+(fromIntegral l`div`2))] [id]
+    else do binOpStage (+) id (+(fromIntegral l`div`2))
             reduce
 
---class SFMappable a
---  sfmap :: a -> FrontStage b ()
-
---sfmap (uncurry (+)) (id, (+l`div`2))
 
 testInput :: GlobPull (Exp Int)
 testInput = namedGlobal "apa"
 tr0 = quickPrint (run reduce 1024 2048) testInput
 
 tr1 = mkStage 1024 1024 [id] (reduce :: FrontStage Int ())
-tr2 = opt $ fst4 $ mkStage 1024 1024 [id] (reduce :: FrontStage Int ())
 
-fst4 (a,_,_,_) = a
+{- TODO:
+   Divide threads!!! sharedmem
+     simplify mod expression
+   tt1 max tt2 ??
+   TProgram
+   lambda quadpair for additions
+   algorithms:
+        scan
+        sort
+        pack
+        filter
+ -}
+
