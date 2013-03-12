@@ -75,7 +75,7 @@ mkStage b n ob (Len)        = ([],ob,n,n)
 mkStage b n ob (Block)      = ([],ob,n,b)
 
 instance Show (BackStage a) where
-  show (FMap f i o ob nn) = "FMap f " ++ show (length i) ++ " " ++ show (length o) ++  " " ++ show (length ob)
+  show (FMap f i o ob nn) = "FMap f " ++ show (length i) ++ " " ++ show (length o) ++  " " ++ show (length ob) ++ " " ++ show nn
 
 accessA :: Word32 -> [Index] -> Word32 -> [Index] -> Bool
 accessA divisions ob n i = (length arrWriteThreads) == (length arrReadThreads)
@@ -95,20 +95,23 @@ accessA divisions ob n i = (length arrWriteThreads) == (length arrReadThreads)
 runnable :: (Scalar a)
         => Word32 -> Stage a
         -> (Stage a, Stage a, Word32, Word32)
-runnable divisions (a:as) = 
-  case runnable' (a:as) of
-    ([],_,_,_) -> ([tr1], as, tl1, tt1)
-      where ([tr1],[],tl1,tt1) = single a
-    a          -> a
+runnable divisions as = runone as
   where runnable' :: (Scalar a)
-                 => Stage a
-                 -> (Stage a, Stage a, Word32, Word32)
+                  => Stage a
+                  -> (Stage a, Stage a, Word32, Word32)
         runnable' ao@(a@(FMap f i o ob nn) : as) =
-            if null ob || {- nn <= divisions || -} accessA divisions ob nn i
-                then if null as || (divisions == 1 && tt1 /= tt2) --special case
-                        then single a
-                        else (tr1 : tr2, tn2, tl2, tt1)
+            if null ob
+               || (nn`div`(fromIntegral (length ob))) <= divisions
+               || accessA divisions ob nn i
+                then runone ao
                 else ([], ao, nn, 0)
+        runone :: (Scalar a)
+               => Stage a
+               -> (Stage a, Stage a, Word32, Word32)
+        runone (a:as) = 
+            if null as || (divisions == 1 && tt1 /= tt2) --special case
+                then ([tr1],     as,  tl1, tt1)
+                else (tr1 : tr2, tn2, tl2, tt1)
             where ([tr1],[], tl1,tt1)  = single a
                   (tr2,tn2,tl2,tt2) = runnable' as
         single a@(FMap f i o ob nn) = ([a], [], nn`div`ni*no, nn`div`ni)
@@ -138,7 +141,7 @@ runB fromShared s b bix a = do
             then return a'
             else do a'' <- force a'
                     runB True tn b bix a''
-    where (tr, tn, _, _) = runnable 32 s
+    where (tr, tn, _, _) = strace $ runnable 32 s
 
 runW :: (Scalar a)
      => Bool -> Bool -> Stage a -> Word32 -> Exp Word32
@@ -234,25 +237,35 @@ fakeProg f = do
           where (x1,xs1) = replaceValues n a xs
                 (x2,xs2) = replaceValues n b xs1
 
-reduce :: (Scalar a, Num (Exp a))  => FrontStage a ()
-reduce = do
+reduce0 :: (Scalar a, Num (Exp a))  => FrontStage a ()
+reduce0 = do
   l <- Len
   if l==1
     then Return ()
-    else do fakeProg $ \ix a -> (a!ix) + (a!(ix + (fromIntegral l`div`2)))
-            reduce
+    else do binOpStage (+) id (+(fromIntegral l)`div`2)
+            reduce0
+
+reduce1 :: (Scalar a, Num (Exp a))  => FrontStage a ()
+reduce1 = do
+  l <- Len
+  if l==1
+    then Return ()
+    else do fakeProg $ \ix a -> (a!ix) + (a!(ix + (fromIntegral (len a)`div`2)))
+            reduce1
 
 
 testInput :: GlobPull (Exp Int)
 testInput = namedGlobal "apa"
-tr0 = quickPrint (run reduce 1024 2048) testInput
+tr0 = quickPrint (run reduce0 1024 2048) testInput
+tr1 = quickPrint (run reduce1 1024 2048) testInput
 
-tr1 = mkStage 1024 1024 [id] (reduce :: FrontStage Int ())
+tr0' = mkStage 1024 1024 [id] (reduce0 :: FrontStage Int ())
 
 {- TODO:
    TProgram with assignments
    runT composings
    lambda quadpair for additions
+   return false
    algorithms:
         scan
         sort

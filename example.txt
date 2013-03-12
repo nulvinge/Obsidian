@@ -1,0 +1,73 @@
+reduce0 :: (Scalar a, Num (Exp a))  => FrontStage a ()
+reduce0 = do
+  l <- Len
+  if l==1
+    then Return ()
+    else do binOpStage (+) id (+(fromIntegral l)`div`2)
+            reduce0
+
+reduce1 :: (Scalar a, Num (Exp a))  => FrontStage a ()
+reduce1 = do
+  l <- Len
+  if l==1
+    then Return ()
+    else do fakeProg $ \ix a -> (a!ix) + (a!(ix + (fromIntegral (len a)`div`2)))
+            reduce1
+
+
+*Stages> tr0
+extern "C" __global__ void kernel(int *input0,int *output0);
+__global__ void kernel(int *input0,int *output0){
+
+  extern __shared__ __attribute__ ((aligned (16))) unsigned char sbase[];
+  ((int *)sbase)[threadIdx.x] = (input0[((blockIdx.x*1024)+threadIdx.x)]+input0[(((blockIdx.x*1024)+threadIdx.x)+1024)]);
+  __syncthreads();
+  if (threadIdx.x<512){
+    ((int *)(sbase + 8192))[threadIdx.x] = (((int *)sbase)[threadIdx.x]+((int *)sbase)[(threadIdx.x+512)]);
+    
+  }
+  __syncthreads();
+  if (threadIdx.x<256){
+    ((int *)sbase)[threadIdx.x] = (((int *)(sbase+8192))[threadIdx.x]+((int *)(sbase+8192))[(threadIdx.x+256)]);
+    
+  }
+  __syncthreads();
+  if (threadIdx.x<128){
+    ((int *)(sbase + 2048))[threadIdx.x] = (((int *)sbase)[threadIdx.x]+((int *)sbase)[(threadIdx.x+128)]);
+    
+  }
+  __syncthreads();
+  if (threadIdx.x<64){
+    ((int *)sbase)[threadIdx.x] = (((int *)(sbase+2048))[threadIdx.x]+((int *)(sbase+2048))[(threadIdx.x+64)]);
+    
+  }
+  __syncthreads();
+  if (threadIdx.x<32){
+    ((int *)(sbase + 512))[threadIdx.x] = (((int *)sbase)[threadIdx.x]+((int *)sbase)[(threadIdx.x+32)]);
+    
+  }
+  __syncthreads();
+  if (threadIdx.x<16){
+    ((int *)sbase)[threadIdx.x] = (((int *)(sbase+512))[threadIdx.x]+((int *)(sbase+512))[(threadIdx.x+16)]);
+    
+  }
+  if (threadIdx.x<8){
+    ((int *)(sbase + 128))[threadIdx.x] = (((int *)sbase)[threadIdx.x]+((int *)sbase)[(threadIdx.x+8)]);
+    
+  }
+  if (threadIdx.x<4){
+    ((int *)sbase)[threadIdx.x] = (((int *)(sbase+128))[threadIdx.x]+((int *)(sbase+128))[(threadIdx.x+4)]);
+    
+  }
+  if (threadIdx.x<2){
+    ((int *)(sbase + 32))[threadIdx.x] = (((int *)sbase)[threadIdx.x]+((int *)sbase)[(threadIdx.x+2)]);
+    
+  }
+  if (threadIdx.x<1){
+    output0[((blockIdx.x*1024)+threadIdx.x)] = (((int *)(sbase+32))[threadIdx.x]+((int *)(sbase+32))[(threadIdx.x+1)]);
+    
+  }
+  
+}
+
+
