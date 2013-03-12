@@ -319,6 +319,7 @@ instance Num (Exp Int) where
   (*) (Literal 0) _ = Literal 0
   (*) a (Literal 1) = a 
   (*) (Literal 1) a = a
+  (*) (Literal a) (Literal b) = Literal (a*b)
   (*) a b = BinOp Mul a b 
   
   signum = error "signum: not implemented for Exp Int" 
@@ -354,6 +355,7 @@ instance Enum (Exp Int) where
   fromEnum = error "fromEnum: not implemented for Exp Int"
          
 instance Integral (Exp Int) where
+  mod (Literal a) (Literal b) = Literal (a `mod` b)
   mod a b = BinOp Mod a b 
 
   div (Literal a) (Literal b) = Literal (a `div` b)
@@ -381,6 +383,7 @@ instance Num (Exp Int32) where
   (*) (Literal 0) _ = Literal 0
   (*) a (Literal 1) = a 
   (*) (Literal 1) a = a
+  (*) (Literal a) (Literal b) = Literal (a*b)
   (*) a b = BinOp Mul a b 
   
   signum = error "signum: not implemented for Exp Int32"
@@ -416,6 +419,7 @@ instance Enum (Exp Int32) where
   fromEnum = error "fromEnum: not implemented for Exp Int32" 
          
 instance Integral (Exp Int32) where
+  mod (Literal a) (Literal b) = Literal (a `mod` b)
   mod a b = BinOp Mod a b 
 
   div (Literal a) (Literal b) = Literal (a `div` b)
@@ -454,6 +458,7 @@ instance Num (Exp Word32) where
   (*) (Literal 0) _ = Literal 0
   (*) a (Literal 1) = a 
   (*) (Literal 1) a = a
+  (*) (Literal a) (Literal b) = Literal (a*b)
   (*) a b = BinOp Mul a b 
   
   signum = error "signum: not implemented for Exp Word32"
@@ -500,6 +505,7 @@ instance Enum (Exp Word32) where
   fromEnum = error "fromEnum: not implemented for Exp Word32" 
 
 instance Integral (Exp Word32) where
+  mod (Literal a) (Literal b) = Literal (a `mod` b)
   mod a b = BinOp Mod a b 
 
   div (Literal a) (Literal b) = Literal (a `div` b)

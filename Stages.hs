@@ -90,7 +90,8 @@ accessA divisions ob n i = (length arrWriteThreads) == (length arrReadThreads)
           w <- getConstant wt
           r <- getConstant rt
           guard $ (w `div` divisions) == (r `div` divisions)
-        getConstant (Literal a) = Just a
+        getConstant (Literal c) = Just c
+        getConstant nc          = error $ "Cannot get constant for: " ++ (show nc)
 
 runnable :: (Scalar a)
         => Word32 -> Stage a
@@ -141,7 +142,7 @@ runB fromShared s b bix a = do
             then return a'
             else do a'' <- force a'
                     runB True tn b bix a''
-    where (tr, tn, _, _) = strace $ runnable 32 s
+    where (tr, tn, _, _) = runnable 32 s
 
 runW :: (Scalar a)
      => Bool -> Bool -> Stage a -> Word32 -> Exp Word32
@@ -169,25 +170,26 @@ runT fromShared toShared [FMap f i o ob nn] b tt ix wf a = do
     where l = map (\ixf -> a!(divide fromShared $ ixf ix)) i
           divide :: Bool -> Exp Word32 -> Exp Word32
           divide cond a = if cond
-                        then simplifyMod b b tt a
+                        then simplifyMod b (b`min`tt) a
                         else a
 runT _ _ [] b tt ix wf a = return ()
 
 --simplifying treating i as an integer modulo m
-simplifyMod :: Word32 -> Word32 -> Word32 -> Exp Word32 -> Exp Word32
-simplifyMod m bs tt = makeExp.sm.snd.sm --second time to get correct range after simplifications
+simplifyMod :: Word32 -> Word32 -> Exp Word32 -> Exp Word32
+simplifyMod m bs = makeExp.sm.snd.sm --second time to get correct range after simplifications
   where sm :: Exp Word32 -> (Maybe (Word32,Word32),Exp Word32)
         sm (Literal a) = (Just (am,am),Literal am)
             where am = a`mod`m
-        sm (BinOp Mul a b) = bop a b (*) (*)
-        sm (BinOp Add a b) = bop a b (+) (+)
-        sm (BinOp Sub a b) = bop a b (-) (-)
-        sm (ThreadIdx X) | tt <= m = (Just (0,tt-1),ThreadIdx X)
-        sm (ThreadIdx X) | bs <= m = (Just (0,bs-1),ThreadIdx X)
+        sm (BinOp Mul a b) = bop a b (*) (\al ah bl bh -> Just (al*bl,ah*bh))
+        sm (BinOp Add a b) = bop a b (+) (\al ah bl bh -> Just (al+bl,ah+bh))
+        sm (BinOp Sub a b) = bop a b (-) (\al ah bl bh -> Just (al-bh,ah-bl))
+        sm (BinOp Div a b) = bop a b div (\al ah bl bh -> Just (al`div`bh,ah`div`bl))
+        sm a@(BinOp Mod _ (Literal b)) = (Just (0,b-1),a)
+        sm (ThreadIdx X) = (Just (0,bs-1),ThreadIdx X)
         sm a = (Nothing,a)
         bop :: Exp Word32 -> Exp Word32
             -> (Exp Word32 -> Exp Word32 -> Exp Word32)
-            -> (Word32 -> Word32 -> Word32)
+            -> (Word32 -> Word32 -> Word32 -> Word32 -> Maybe (Word32,Word32))
             -> (Maybe (Word32,Word32),Exp Word32)
         bop a b f fw = (r,av `f` bv)
             where (ab,av) = sm a
@@ -195,12 +197,12 @@ simplifyMod m bs tt = makeExp.sm.snd.sm --second time to get correct range after
                   r = do
                     (al,ah) <- ab
                     (bl,bh) <- bb
-                    guard $ al `fw` bl >= 0
-                    guard $ ah `fw` bh < m
-                    Just (al `fw` bl,ah `fw` bh)
+                    --guard $ al `fw` bl >= 0
+                    --guard $ ah `fw` bh < m
+                    fw al ah bl bh
         makeExp :: (Maybe (Word32,Word32),Exp Word32) -> Exp Word32
-        makeExp (Just _,a) = a
-        makeExp (Nothing,a) = a`mod`(Literal m)
+        makeExp (Just (l,h),a) | l>=0 && h<m = a
+        makeExp (Nothing,a) = error $ "Not modable by m" ++ (show a) --a`mod`(Literal m)
 
 
 quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
@@ -212,6 +214,27 @@ strace a = trace (show a) a
 binOpStage :: (Scalar a) => (Exp a -> Exp a -> Exp a) -> Index -> Index -> FrontStage a ()
 binOpStage f i1 i2 = SFMap (\[a,b] -> return [a `f` b]) [i1,i2] [id]
 
+collectExp :: (Exp a -> b) -> (b -> b -> b) -> Exp a -> b
+collectExp f g c@(BinOp Mul a b) = (collectExp f g a) `g` (collectExp f g b) `g` f c
+collectExp f g c@(BinOp Add a b) = (collectExp f g a) `g` (collectExp f g b) `g` f c
+collectExp f g c@(BinOp Sub a b) = (collectExp f g a) `g` (collectExp f g b) `g` f c
+collectExp f g a = f a
+
+
+traverseBin :: (Num (Exp a)) => (b -> Exp a -> (Exp a,b)) -> b -> Exp a -> Exp a 
+            -> (Exp a -> Exp a -> Exp a) -> (Exp a,b)
+traverseBin f d a b op = (lv `op` rv, rd)
+    where (lv,ld) = traverseExp f d a
+          (rv,rd) = traverseExp f ld b
+
+traverseExp :: (Num (Exp a)) => (b -> Exp a -> (Exp a,b)) -> b -> Exp a -> (Exp a,b)
+traverseExp f d (BinOp Mul a b) = traverseBin f d a b (*)
+traverseExp f d (BinOp Add a b) = traverseBin f d a b (+)
+traverseExp f d (BinOp Sub a b) = traverseBin f d a b (-)
+traverseExp f d a = f d a
+
+
+
 fakeProg :: (Scalar a, Num (Exp a)) => (Exp Word32 -> Pull (Exp a) -> Exp a) -> FrontStage a ()
 fakeProg f = do
   l <- Len
@@ -221,21 +244,22 @@ fakeProg f = do
       i' = [\ix -> replace "Index" ixf [ix] | ixf <- i]
   SFMap rf i' [id]
   where extractIndices :: Exp a -> [Exp Word32]
-        extractIndices (Index ("Read",[i])) = [i]
-        extractIndices (BinOp op a b) = extractIndices a ++ extractIndices b
+        extractIndices = collectExp f (++)
+            where f a@(Index ("Read",[i])) = [i]
+                  f a                      = []
         replace :: (Scalar a, Num (Exp a)) => String -> Exp a -> [Exp a] -> Exp a
-        replace n a x = let (r,[]) = replaceValues n a x in r
-        replaceValues :: (Scalar a, Num (Exp a)) =>  String -> Exp a -> [Exp a] -> (Exp a, [Exp a])
-        replaceValues n (Index (n',_)) (x:xs) | n == n' = (x,xs)
-        replaceValues n (BinOp Add a b) xs = replaceBin n (+) a b xs
-        replaceValues n (BinOp Mul a b) xs = replaceBin n (*) a b xs
-        replaceValues n (BinOp Sub a b) xs = replaceBin n (-) a b xs
-        replaceValues n a xs = (a,xs)
-        replaceBin :: (Scalar a, Num (Exp a)) => String -> (Exp a -> Exp a -> Exp a)
-                   -> Exp a -> Exp a -> [Exp a] -> (Exp a, [Exp a])
-        replaceBin n op a b xs = (x1 `op` x2, xs2)
-          where (x1,xs1) = replaceValues n a xs
-                (x2,xs2) = replaceValues n b xs1
+        replace n a x = let (r,[]) = replaceValues n x a in r
+        replaceValues :: (Scalar a, Num (Exp a)) =>  String -> [Exp a] -> Exp a -> (Exp a, [Exp a])
+        replaceValues n = traverseExp f 
+            where f (x:xs) (Index (n',_ ))| n==n' = (x,xs)
+                  f xs     x                      = (x,xs)
+        replaceAllValues n v = traverseExp f ()
+            where f () (Index (n',_ ))| n==n' = (v,())
+                  f () x                    = (x,())
+
+
+testInput :: GlobPull (Exp Int)
+testInput = namedGlobal "apa"
 
 reduce0 :: (Scalar a, Num (Exp a))  => FrontStage a ()
 reduce0 = do
@@ -244,6 +268,8 @@ reduce0 = do
     then Return ()
     else do binOpStage (+) id (+(fromIntegral l)`div`2)
             reduce0
+tr0 = quickPrint (run reduce0 1024 2048) testInput
+--tr0' = mkStage 1024 1024 [id] (reduce0 :: FrontStage Int ())
 
 reduce1 :: (Scalar a, Num (Exp a))  => FrontStage a ()
 reduce1 = do
@@ -252,14 +278,46 @@ reduce1 = do
     then Return ()
     else do fakeProg $ \ix a -> (a!ix) + (a!(ix + (fromIntegral (len a)`div`2)))
             reduce1
-
-
-testInput :: GlobPull (Exp Int)
-testInput = namedGlobal "apa"
-tr0 = quickPrint (run reduce0 1024 2048) testInput
 tr1 = quickPrint (run reduce1 1024 2048) testInput
 
-tr0' = mkStage 1024 1024 [id] (reduce0 :: FrontStage Int ())
+scan0 :: (Scalar a, Num (Exp a))  => FrontStage a ()
+scan0 = do
+    buildup 1
+    where buildup s = do
+            l <- Len
+            if s >= l 
+                then fakeProg $ \ix a -> if ix==0 then 0 else a!ix
+                else do
+                    --SFMap (\(a:as) -> return (a+as!!s:as)) [(+d) | d <- [s*2-1..0]] [(+d) | d <- [s*2-1..0]]
+                    --buildup (s*2)
+                    --SFMap (\(a:as) -> return (a+as!!s:as)) [(+d) | d <- [s*2-1..0]] [(+d) | d <- [s*2-1..0]]
+                    
+                    SFMap (\[a,b] -> return [a + b]) [(*2),(+1).(*2)] [id]
+                    --fakeProg $ \ix a -> (a!(ix*2)) + (a!(ix*2+1))
+                    --buildup (s*2)
+                    fakeProg $ \ix a -> If (ix==*0) 0 $ If (ix`mod`2==*0) (a!(ix`div`2)) (a!(ix`div`2-1))
+ts0 = quickPrint (run scan0 1024 1024) testInput
+
+bitonic0 :: (Scalar a, Ord a)  => FrontStage a ()
+bitonic0 = do
+    --SFMap (\[a,b,c,d] -> return [a`mine`b,a`maxe`b,c`maxe`d,c`mine`d]) [id,(+1),(+2),(+3)] [id,(+1),(+2),(+3)]
+    l <- Len
+    br (l`div`2)
+    where br d =
+            if d==0
+                then return ()
+                else do
+                    SFMap (\[a,b] -> return [a`mine`b,a`maxe`b]) [ixf,(+de).ixf] [ixf,(+de).ixf]
+                    br (d`div`2)
+                        where ixf i = i`mod`de+(i`div`de)*2*de
+                              de = fromIntegral d
+
+mine :: (Scalar a, Ord a) => Exp a -> Exp a -> Exp a
+mine = BinOp Min
+maxe :: (Scalar a, Ord a) => Exp a -> Exp a -> Exp a
+maxe = BinOp Max
+
+tb0 = quickPrint (run bitonic0 1024 1024) testInput
 
 {- TODO:
    TProgram with assignments
