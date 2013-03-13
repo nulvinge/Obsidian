@@ -170,21 +170,31 @@ runT fromShared toShared [FMap f i o ob nn] b tt ix wf a = do
     where l = map (\ixf -> a!(divide fromShared $ ixf ix)) i
           divide :: Bool -> Exp Word32 -> Exp Word32
           divide cond a = if cond
-                        then simplifyMod b (b`min`tt) a
+                        then simplifyMod (b) ((b`min`tt)) a
                         else a
+          obl = if null ob then 1 else fromIntegral (length ob)
 runT _ _ [] b tt ix wf a = return ()
+
 
 --simplifying treating i as an integer modulo m
 simplifyMod :: Word32 -> Word32 -> Exp Word32 -> Exp Word32
-simplifyMod m bs = makeExp.sm.snd.sm --second time to get correct range after simplifications
+simplifyMod m bs = makeExp.(simplifyMod' m bs).snd.(simplifyMod' m bs) --second time to get correct range after simplifications
+  where makeExp :: (Maybe (Word32,Word32),Exp Word32) -> Exp Word32
+        makeExp (Just (l,h),a) | l>=0 && h<m = a
+        makeExp (Nothing,a) = error $ (show a) ++ " not modable by " ++ (show m) --a`mod`(Literal m)
+        makeExp (_,q) = error $ "yes " ++ (show q) --a`mod`(Literal m)
+        makeExp a= error $ "wtf " ++ (show a) --a`mod`(Literal m)
+
+simplifyMod' :: Word32 -> Word32 -> Exp Word32 -> (Maybe (Word32,Word32),Exp Word32)
+simplifyMod' m bs = sm
   where sm :: Exp Word32 -> (Maybe (Word32,Word32),Exp Word32)
         sm (Literal a) = (Just (am,am),Literal am)
             where am = a`mod`m
-        sm (BinOp Mul a b) = bop a b (*) (\al ah bl bh -> Just (al*bl,ah*bh))
+        sm (BinOp Mul a b) = after $ bop a b (*) (\al ah bl bh -> Just (al*bl,ah*bh))
         sm (BinOp Add a b) = bop a b (+) (\al ah bl bh -> Just (al+bl,ah+bh))
         sm (BinOp Sub a b) = bop a b (-) (\al ah bl bh -> Just (al-bh,ah-bl))
-        sm (BinOp Div a b) = bop a b div (\al ah bl bh -> Just (al`div`bh,ah`div`bl))
-        sm a@(BinOp Mod _ (Literal b)) = (Just (0,b-1),a)
+        sm (BinOp Div a b) = after $ bop a b div (\al ah bl bh -> Just (al`div`bh,ah`div`bl))
+        sm (BinOp Mod a bb@(Literal b)) = (Just (0,b-1),snd $ newmod b a (`mod`bb))
         sm (ThreadIdx X) = (Just (0,bs-1),ThreadIdx X)
         sm a = (Nothing,a)
         bop :: Exp Word32 -> Exp Word32
@@ -200,9 +210,17 @@ simplifyMod m bs = makeExp.sm.snd.sm --second time to get correct range after si
                     --guard $ al `fw` bl >= 0
                     --guard $ ah `fw` bh < m
                     fw al ah bl bh
-        makeExp :: (Maybe (Word32,Word32),Exp Word32) -> Exp Word32
-        makeExp (Just (l,h),a) | l>=0 && h<m = a
-        makeExp (Nothing,a) = error $ "Not modable by m" ++ (show a) --a`mod`(Literal m)
+        after :: (Maybe (Word32,Word32),Exp Word32) -> (Maybe (Word32,Word32),Exp Word32)
+        after (_,(BinOp Mul a bb@(Literal b))) = newmod (m`div`b) a (*bb)
+        after (_,(BinOp Mul aa@(Literal a) b)) = newmod (m`div`a) b (aa*)
+        after (_,(BinOp Div a bb@(Literal b))) = newmod (m*b) a (`div`bb)
+        after (_,(BinOp Div aa@(Literal a) b)) = newmod (m*a) b (aa`div`)
+        after a = a
+        newmod :: Word32 -> Exp Word32
+               -> (Exp Word32 -> Exp Word32)
+               -> (Maybe (Word32,Word32),Exp Word32)
+        newmod m' a f = (ab,f av)
+            where (ab,av) = simplifyMod' m' bs a
 
 
 quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
@@ -328,7 +346,7 @@ mine = BinOp Min
 maxe :: (Scalar a, Ord a) => Exp a -> Exp a -> Exp a
 maxe = BinOp Max
 
-tb0 = quickPrint (run bitonic0 1024 1024) testInput
+tb0 = quickPrint (run bitonic0 512 1024) testInput
 
 {- TODO:
    TProgram with assignments

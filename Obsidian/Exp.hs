@@ -358,6 +358,7 @@ instance Integral (Exp Int) where
   mod (Literal a) (Literal b) = Literal (a `mod` b)
   mod a b = BinOp Mod a b 
 
+  div _ (Literal 0) = error "Division by zero in expression"
   div (Literal a) (Literal b) = Literal (a `div` b)
   div a b = BinOp Div a b
   quotRem = error "quotRem: not implemented for Exp Int" 
@@ -422,6 +423,7 @@ instance Integral (Exp Int32) where
   mod (Literal a) (Literal b) = Literal (a `mod` b)
   mod a b = BinOp Mod a b 
 
+  div _ (Literal 0) = error "Division by zero in expression"
   div (Literal a) (Literal b) = Literal (a `div` b)
   div a b = BinOp Div a b
   quotRem = error "quotRem: not implemented for Exp Int32" 
@@ -508,6 +510,7 @@ instance Integral (Exp Word32) where
   mod (Literal a) (Literal b) = Literal (a `mod` b)
   mod a b = BinOp Mod a b 
 
+  div a b@(Literal 0) = (BinOp Div a b)
   div (Literal a) (Literal b) = Literal (a `div` b)
   div a b = BinOp Div a b
   quotRem = error "quotRem: not implemented for Exp Word32" 
