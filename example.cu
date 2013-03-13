@@ -1,3 +1,5 @@
+/*
+
 reduce0 :: (Scalar a, Num (Exp a))  => FrontStage a ()
 reduce0 = do
   l <- Len
@@ -14,8 +16,8 @@ reduce1 = do
     else do fakeProg $ \ix a -> (a!ix) + (a!(ix + (fromIntegral (len a)`div`2)))
             reduce1
 
+*/
 
-*Stages> tr0
 extern "C" __global__ void kernel(int *input0,int *output0);
 __global__ void kernel(int *input0,int *output0){
 
@@ -71,6 +73,8 @@ __global__ void kernel(int *input0,int *output0){
 }
 
 
+/*
+
 bitonic0 :: (Scalar a, Ord a)  => FrontStage a ()
 bitonic0 = do
     l <- Len
@@ -85,6 +89,7 @@ bitonic0 = do
                         where ixf i = i`mod`de+(i`div`de)*2*de
                               de = fromIntegral d
 
+*/
 
 __global__ void kernel(int *input0,int *output0){
   
@@ -119,6 +124,7 @@ __global__ void kernel(int *input0,int *output0){
 
 
 
+/*
 
 
 bitonic0 :: (Scalar a, Ord a) => FrontStage a ()
@@ -147,6 +153,7 @@ bitonic0 = bt 1
                                                 (a`maxe`b)
 
 
+*/
 
 
 extern "C" __global__ void kernel(int *input0,int *output0);
