@@ -165,13 +165,14 @@ runT :: (Scalar a)
 runT fromShared toShared [FMap f i o ob nn] b tt ix wf a = do
       fl <- f l ix
       sequence_ [wf (fl !! (fromIntegral six))
-                    ((divide toShared ix)*(fromIntegral (length o))+fromIntegral six)
+                    (divide toShared ol ((o !! six) ix))
                 | six <- [0..(length o)-1]]
-    where l = map (\ixf -> a!(divide fromShared $ ixf ix)) i
-          divide :: Bool -> Exp Word32 -> Exp Word32
-          divide cond a = if cond
-                        then simplifyMod (b) ((b`min`tt)) a
+    where l = map (\ixf -> a!(divide fromShared obl $ ixf ix)) i
+          divide :: Bool -> Word32 -> Exp Word32 -> Exp Word32
+          divide cond wl a = if cond
+                        then simplifyMod (b*wl) (b`min`tt) a
                         else a
+          ol  = fromIntegral (length o)
           obl = if null ob then 1 else fromIntegral (length ob)
 runT _ _ [] b tt ix wf a = return ()
 
@@ -181,11 +182,16 @@ simplifyMod :: Word32 -> Word32 -> Exp Word32 -> Exp Word32
 simplifyMod m bs = makeExp.(simplifyMod' m bs).snd.(simplifyMod' m bs) --second time to get correct range after simplifications
   where makeExp :: (Maybe (Word32,Word32),Exp Word32) -> Exp Word32
         makeExp (Just (l,h),a) | l>=0 && h<m = a
-        makeExp (Nothing,a) = error $ (show a) ++ " not modable by " ++ (show m) --a`mod`(Literal m)
-        makeExp (_,q) = error $ "yes " ++ (show q) --a`mod`(Literal m)
-        makeExp a= error $ "wtf " ++ (show a) --a`mod`(Literal m)
+        makeExp (Just r,a) = error $ (show a) ++ " not moddable by " ++ (show m) ++ " because it has range " ++ show r
+        makeExp (Nothing,a) = error $ (show a) ++ " not moddable by " ++ (show m) --a`mod`(Literal m)
+
+t0 = simplifyMod' 512 512 $ (ThreadIdx X)
+t1 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2
+t2 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2 *2
+t3 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2 *2*2
 
 simplifyMod' :: Word32 -> Word32 -> Exp Word32 -> (Maybe (Word32,Word32),Exp Word32)
+simplifyMod' 0 bs = error "Divzero"
 simplifyMod' m bs = sm
   where sm :: Exp Word32 -> (Maybe (Word32,Word32),Exp Word32)
         sm (Literal a) = (Just (am,am),Literal am)
@@ -193,7 +199,7 @@ simplifyMod' m bs = sm
         sm (BinOp Mul a b) = after $ bop a b (*) (\al ah bl bh -> Just (al*bl,ah*bh))
         sm (BinOp Add a b) = bop a b (+) (\al ah bl bh -> Just (al+bl,ah+bh))
         sm (BinOp Sub a b) = bop a b (-) (\al ah bl bh -> Just (al-bh,ah-bl))
-        sm (BinOp Div a b) = after $ bop a b div (\al ah bl bh -> Just (al`div`bh,ah`div`bl))
+        sm (BinOp Div a b) = let (ab,av) = sm a in (ab,av `div` b)
         sm (BinOp Mod a bb@(Literal b)) = (Just (0,b-1),snd $ newmod b a (`mod`bb))
         sm (ThreadIdx X) = (Just (0,bs-1),ThreadIdx X)
         sm a = (Nothing,a)
@@ -211,10 +217,12 @@ simplifyMod' m bs = sm
                     --guard $ ah `fw` bh < m
                     fw al ah bl bh
         after :: (Maybe (Word32,Word32),Exp Word32) -> (Maybe (Word32,Word32),Exp Word32)
-        after (_,(BinOp Mul a bb@(Literal b))) = newmod (m`div`b) a (*bb)
-        after (_,(BinOp Mul aa@(Literal a) b)) = newmod (m`div`a) b (aa*)
-        after (_,(BinOp Div a bb@(Literal b))) = newmod (m*b) a (`div`bb)
-        after (_,(BinOp Div aa@(Literal a) b)) = newmod (m*a) b (aa`div`)
+        after a@(_,(BinOp Mul _ (Literal 0)))  = a
+        after a@(_,(BinOp Mul (Literal 0) _))  = a
+        after (_,(BinOp Mul a b@(Literal bb))) = newmod (m`div`bb) a (*b)
+        after (_,(BinOp Mul a@(Literal aa) b)) = newmod (m`div`aa) b (a*)
+        --after (_,(BinOp Div a bb@(Literal b))) = newmod (m*b) a (`div`bb)
+        --after (_,(BinOp Div aa@(Literal a) b)) = newmod (m*a) b (aa`div`)
         after a = a
         newmod :: Word32 -> Exp Word32
                -> (Exp Word32 -> Exp Word32)
@@ -347,6 +355,7 @@ maxe :: (Scalar a, Ord a) => Exp a -> Exp a -> Exp a
 maxe = BinOp Max
 
 tb0 = quickPrint (run bitonic0 512 1024) testInput
+main = tb0
 
 {- TODO:
    TProgram with assignments

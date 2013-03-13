@@ -507,10 +507,13 @@ instance Enum (Exp Word32) where
   fromEnum = error "fromEnum: not implemented for Exp Word32" 
 
 instance Integral (Exp Word32) where
+  mod a b@(Literal 0) = (BinOp Mod a b)
+  mod a b@(Literal 1) = (Literal 0)
   mod (Literal a) (Literal b) = Literal (a `mod` b)
   mod a b = BinOp Mod a b 
 
   div a b@(Literal 0) = (BinOp Div a b)
+  div a b@(Literal 1) = a
   div (Literal a) (Literal b) = Literal (a `div` b)
   div a b = BinOp Div a b
   quotRem = error "quotRem: not implemented for Exp Word32" 
