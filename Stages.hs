@@ -39,12 +39,12 @@ data Array a = Arr [a]
 type Index = Exp Word32 -> Exp Word32
 
 data BackStage a where
-  FMap  :: (Scalar a) => ([Exp a] -> TProgram [Exp a]) -> [Index] -> [Index] -> [Index] -> Word32 -> BackStage a
+  FMap  :: (Scalar a) => ([Exp a] -> Exp Word32 -> TProgram [Exp a]) -> [Index] -> [Index] -> [Index] -> Word32 -> BackStage a
 
 type Stage a = [BackStage a]
 
 data FrontStage a b where
-  SFMap  :: (Scalar a) => ([Exp a] -> TProgram [Exp a]) -> [Index] -> [Index] -> FrontStage a ()
+  SFMap  :: (Scalar a) => ([Exp a] -> Exp Word32 -> TProgram [Exp a]) -> [Index] -> [Index] -> FrontStage a ()
   Bind   :: FrontStage a b -> (b -> FrontStage a c) -> FrontStage a c
   Return :: b -> FrontStage a b
   Len    :: FrontStage a Word32
@@ -163,7 +163,7 @@ runT :: (Scalar a)
      -> (Exp a -> Exp Word32 -> TProgram ())
      -> Pull (Exp a) -> TProgram ()
 runT fromShared toShared [FMap f i o ob nn] b tt ix wf a = do
-      fl <- f l
+      fl <- f l ix
       sequence_ [wf (fl !! (fromIntegral six))
                     ((divide toShared ix)*(fromIntegral (length o))+fromIntegral six)
                 | six <- [0..(length o)-1]]
@@ -212,7 +212,7 @@ quickPrint prg input =
 strace a = trace (show a) a
 
 binOpStage :: (Scalar a) => (Exp a -> Exp a -> Exp a) -> Index -> Index -> FrontStage a ()
-binOpStage f i1 i2 = SFMap (\[a,b] -> return [a `f` b]) [i1,i2] [id]
+binOpStage f i1 i2 = SFMap (\[a,b] _ -> return [a `f` b]) [i1,i2] [id]
 
 collectExp :: (Exp a -> b) -> (b -> b -> b) -> Exp a -> b
 collectExp f g c@(BinOp Mul a b) = (collectExp f g a) `g` (collectExp f g b) `g` f c
@@ -240,20 +240,19 @@ fakeProg f = do
   l <- Len
   let e = f (Index ("Index",[])) (Pull l (\i -> Index ("Read", [i])))
       i = extractIndices e
-      rf = \x -> return [replace "Read" e x]
-      i' = [\ix -> replace "Index" ixf [ix] | ixf <- i]
+      rf = \x ix -> return [{- replaceAll "Index" ix $ -} replace "Read" x e]
+      i' = [\ix -> replaceAll "Index" ix ixf | ixf <- i]
   SFMap rf i' [id]
   where extractIndices :: Exp a -> [Exp Word32]
         extractIndices = collectExp f (++)
             where f a@(Index ("Read",[i])) = [i]
                   f a                      = []
-        replace :: (Scalar a, Num (Exp a)) => String -> Exp a -> [Exp a] -> Exp a
-        replace n a x = let (r,[]) = replaceValues n x a in r
-        replaceValues :: (Scalar a, Num (Exp a)) =>  String -> [Exp a] -> Exp a -> (Exp a, [Exp a])
-        replaceValues n = traverseExp f 
+        replace :: (Scalar a, Num (Exp a)) => String -> [Exp a] -> Exp a -> Exp a
+        replace n x a = let (r,[]) = traverseExp f x a in r
             where f (x:xs) (Index (n',_ ))| n==n' = (x,xs)
                   f xs     x                      = (x,xs)
-        replaceAllValues n v = traverseExp f ()
+        replaceAll :: (Scalar a, Num (Exp a)) => String -> Exp a -> Exp a -> Exp a
+        replaceAll n v = fst . traverseExp f ()
             where f () (Index (n',_ ))| n==n' = (v,())
                   f () x                    = (x,())
 
@@ -292,25 +291,37 @@ scan0 = do
                     --buildup (s*2)
                     --SFMap (\(a:as) -> return (a+as!!s:as)) [(+d) | d <- [s*2-1..0]] [(+d) | d <- [s*2-1..0]]
                     
-                    SFMap (\[a,b] -> return [a + b]) [(*2),(+1).(*2)] [id]
+                    SFMap (\[a,b] _ -> return [a + b]) [(*2),(+1).(*2)] [id]
                     --fakeProg $ \ix a -> (a!(ix*2)) + (a!(ix*2+1))
                     --buildup (s*2)
                     fakeProg $ \ix a -> If (ix==*0) 0 $ If (ix`mod`2==*0) (a!(ix`div`2)) (a!(ix`div`2-1))
 ts0 = quickPrint (run scan0 1024 1024) testInput
 
-bitonic0 :: (Scalar a, Ord a)  => FrontStage a ()
-bitonic0 = do
-    --SFMap (\[a,b,c,d] -> return [a`mine`b,a`maxe`b,c`maxe`d,c`mine`d]) [id,(+1),(+2),(+3)] [id,(+1),(+2),(+3)]
-    l <- Len
-    br (l`div`2)
-    where br d =
+bitonic0 :: (Scalar a, Ord a) => FrontStage a ()
+bitonic0 = bt 1
+  where bt :: (Scalar a, Ord a) => Word32 -> FrontStage a ()
+        bt e = do l <- Len
+                  if e >= l
+                    then return ()
+                    else do
+                        br e e
+                        bt (2*e)
+        br :: (Scalar a, Ord a) => Word32 -> Word32 -> FrontStage a ()
+        br d e =
             if d==0
                 then return ()
                 else do
-                    SFMap (\[a,b] -> return [a`mine`b,a`maxe`b]) [ixf,(+de).ixf] [ixf,(+de).ixf]
-                    br (d`div`2)
+                    SFMap op [ixf,(+de).ixf] [ixf,(+de).ixf]
+                    br (d`div`2) e
                         where ixf i = i`mod`de+(i`div`de)*2*de
-                              de = fromIntegral d
+                              de = Literal d
+                              ee = Literal e
+                              op :: (Scalar a, Ord a) => [Exp a] -> Exp Word32 -> TProgram [Exp a]
+                              op [a,b] ix = return [f 0, f 1]
+                                where f i = If ((ix`div`ee)`mod`2==*i)
+                                                (a`mine`b)
+                                                (a`maxe`b)
+
 
 mine :: (Scalar a, Ord a) => Exp a -> Exp a -> Exp a
 mine = BinOp Min
