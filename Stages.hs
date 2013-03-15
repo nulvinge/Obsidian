@@ -364,8 +364,13 @@ main = tb0
    return false
    algorithms:
         scan
-        sort
         pack
         filter
+        other sort function?
+        nesl primitives
+        list ranking
+        segmented matrix vec multiply
+        tree tour
+  
  -}
 
