@@ -357,6 +357,49 @@ maxe = BinOp Max
 tb0 = quickPrint (run bitonic0 512 1024) testInput
 main = tb0
 
+fakeProg' :: (Scalar a, Num (Exp a)) => (Exp Word32 -> Pull (Exp a, Exp a) -> (Exp a, Exp a)) -> FrontStage a ()
+fakeProg' f = undefined
+
+--rankList :: FrontStage (GlobPull (Exp Word32, Exp Word32)) ()
+rankList = do
+    l <- Len
+    fakeProg' $ \k a -> let nc = snd (a!k)
+                        in (If (nc ==* 0) 0 1,nc)
+    rankList' l
+--rankList' :: Word32 -> FrontStage (GlobPull (Exp Word32, Exp Word32)) ()
+rankList' nn =
+    if nn == 0
+        then return ()
+        else do fakeProg' $ \k a -> let nc = snd (a!k)
+                                        r  = If (nc ==* 0)
+                                                (fst (a!k) + fst (a!nc))
+                                                (fst (a!k))
+                                        n  = If (nc ==* 0)
+                                                (snd (a!nc))
+                                                nc
+                                     in (r,n)
+                rankList' (nn`div`2)
+
+                    
+
+
+--run' :: (Vector a)
+--    => FrontStage a () -> Word32 -> Word32
+--    -> a -> GProgram a
+--
+
+run2 :: (Scalar a)
+    => FrontStage a () -> Word32 -> Word32
+    -> GlobPull (Exp Word32, Exp Word32) -> GProgram (GlobPull (Exp Word32, Exp Word32))
+run2 a b n = undefined
+
+
+testInputW :: GlobPull (Exp Word32)
+testInputW = namedGlobal "apa"
+tl0 = quickPrint (run2 rankList 512 1024) (zipG testInputW testInputW)
+
+
+
 {- TODO:
    TProgram with assignments
    runT composings

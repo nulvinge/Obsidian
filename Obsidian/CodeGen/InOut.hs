@@ -29,6 +29,7 @@ import qualified Obsidian.CodeGen.Program as CG
 
 import Data.Word
 import Data.Int
+import Data.Char
       
 ---------------------------------------------------------------------------
 -- New approach (hopefully)
@@ -53,6 +54,42 @@ class ToProgram a b where
 
 typeOf_ a = typeOf (Literal a)
 
+class Vector a where
+  getTypes :: a -> Name -> (a,[(Name,Type)])
+
+instance (Scalar a) => Vector (Exp a) where
+  getTypes a n = (variable n,[(n, typeOf a)])
+
+instance (Scalar a) => Vector (GlobPull (Exp a)) where
+  getTypes a n = (namedGlobal n,[(n, Pointer (typeOf_ (undefined :: a)))])
+
+instance (Scalar a, Scalar b) => Vector (Exp a, Exp b) where
+  getTypes (a,b) n = ((aa,ba),at++bt)
+    where (aa,at) = getTypes a (n++"a")
+          (ba,bt) = getTypes b (n++"b")
+
+zipG :: GlobPull a -> GlobPull b -> GlobPull (a, b)
+zipG arr1 arr2 = GlobPull $ \ix -> (arr1 ! ix, arr2 ! ix)
+
+instance (Scalar a, Scalar b) => Vector (GlobPull (Exp a, Exp b)) where
+  getTypes _ n = (zipG aa ba,at++bt)
+    where (aa,at) = getTypes (undefined :: GlobPull (Exp a)) (n++"a")
+          (ba,bt) = getTypes (undefined :: GlobPull (Exp b)) (n++"b")
+
+instance (Vector a) => ToProgram a (GProgram b) where
+  toProgram i f a = (types, CG.runPrg (f input))
+    where (input,types) = getTypes (undefined :: a) ("input" ++ show i)
+
+instance (Vector a) => ToProgram a (Final (GProgram b)) where
+  toProgram i f a = (types, CG.runPrg (cheat (f input)))
+    where (input,types) = getTypes (undefined :: a) ("input" ++ show i)
+
+instance (Vector a, ToProgram b c) => ToProgram a (b -> c) where
+  toProgram i f (a :-> rest) = (ins ++ types,prg)
+    where (ins,prg) = toProgram (i+1) (f input) rest
+          (input,types) = getTypes (undefined :: a) ("input" ++ show i)
+
+{-
 instance (Scalar t) => ToProgram (Exp t) (GProgram b) where
   toProgram i f a = ([(nom,t)],CG.runPrg (f input))
     where nom = "s" ++ show i
@@ -86,6 +123,7 @@ instance (Scalar t, ToProgram b c) => ToProgram (GlobPull (Exp t)) (b -> c) wher
       nom = "input" ++ show i
       input = namedGlobal nom
       t = typeOf_ (undefined :: t)
+-}
 
 ---------------------------------------------------------------------------
 -- heterogeneous lists of inputs 
