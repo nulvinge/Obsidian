@@ -11,6 +11,7 @@
 
   Notes:
 
+  2013-01-24: Changes with the new Array types in mind
   2013-01-08: Edited
   2012-12-10: Edited
 
@@ -50,8 +51,8 @@ import Data.Char
 type Inputs = [(Name,Type)] 
 
 class ToProgram a b where
-  toProgram :: Int -> (a -> b) -> Ips a b -> (Inputs,CG.Program ())
-
+  toProgram :: Int -> (a -> b) -> Ips a b -> (Inputs,CG.IM)
+  
 typeOf_ a = typeOf (Literal a)
 
 class Vector a where
@@ -60,29 +61,31 @@ class Vector a where
 instance (Scalar a) => Vector (Exp a) where
   getTypes a n = (variable n,[(n, typeOf a)])
 
-instance (Scalar a) => Vector (GlobPull (Exp a)) where
-  getTypes a n = (namedGlobal n,[(n, Pointer (typeOf_ (undefined :: a)))])
+instance (Scalar a) => Vector (Pull (Exp Word32) (Exp a)) where
+  getTypes a n = (input,[(n, Pointer (typeOf_ (undefined :: a))), (nn,Word32)])
+    where nn        = n ++ "n"
+          input = namedGlobal n (variable n)
 
 instance (Scalar a, Scalar b) => Vector (Exp a, Exp b) where
   getTypes (a,b) n = ((aa,ba),at++bt)
     where (aa,at) = getTypes a (n++"a")
           (ba,bt) = getTypes b (n++"b")
 
-zipG :: GlobPull a -> GlobPull b -> GlobPull (a, b)
-zipG arr1 arr2 = GlobPull $ \ix -> (arr1 ! ix, arr2 ! ix)
+zipG :: Pull (Exp Word32) a -> Pull (Exp Word32) b -> Pull (Exp Word32) (a, b)
+zipG arr1 arr2 = Pull (min (len arr1) (len arr2)) $ \ix -> (arr1 ! ix, arr2 ! ix)
 
-instance (Scalar a, Scalar b) => Vector (GlobPull (Exp a, Exp b)) where
+instance (Scalar a, Scalar b) => Vector (Pull (Exp Word32) (Exp a, Exp b)) where
   getTypes _ n = (zipG aa ba,at++bt)
-    where (aa,at) = getTypes (undefined :: GlobPull (Exp a)) (n++"a")
-          (ba,bt) = getTypes (undefined :: GlobPull (Exp b)) (n++"b")
+    where (aa,at) = getTypes (undefined :: Pull (Exp Word32) (Exp a)) (n++"a")
+          (ba,bt) = getTypes (undefined :: Pull (Exp Word32) (Exp b)) (n++"b")
 
 instance (Vector a) => ToProgram a (GProgram b) where
-  toProgram i f a = (types, CG.runPrg (f input))
+  toProgram i f a = (types, CG.compileStep1 (f input))
     where (input,types) = getTypes (undefined :: a) ("input" ++ show i)
 
-instance (Vector a) => ToProgram a (Final (GProgram b)) where
-  toProgram i f a = (types, CG.runPrg (cheat (f input)))
-    where (input,types) = getTypes (undefined :: a) ("input" ++ show i)
+--instance (Vector a) => ToProgram a (Final (GProgram b)) where
+--  toProgram i f a = (types, CG.compileStep1 (cheat (f input)))
+--    where (input,types) = getTypes (undefined :: a) ("input" ++ show i)
 
 instance (Vector a, ToProgram b c) => ToProgram a (b -> c) where
   toProgram i f (a :-> rest) = (ins ++ types,prg)
@@ -91,22 +94,21 @@ instance (Vector a, ToProgram b c) => ToProgram a (b -> c) where
 
 {-
 instance (Scalar t) => ToProgram (Exp t) (GProgram b) where
-  toProgram i f a = ([(nom,t)],CG.runPrg (f input))
+  toProgram i f a = ([(nom,t)],CG.compileStep1 (f input))
     where nom = "s" ++ show i
           input = variable nom
           t = typeOf_ (undefined :: t)
 
-instance (Scalar t) => ToProgram (GlobPull (Exp t)) (GProgram a) where
-  toProgram i f (GlobPull ixf) = ([(nom,Pointer t)],CG.runPrg (f input)) 
-      where nom = "input" ++ show i 
-            input = namedGlobal nom
+
+-- UPDATE THIS: The rest of the code gen will need a length variable
+instance (Scalar t) => ToProgram (Pull (Exp Word32) (Exp t)) (GProgram a) where
+  toProgram i f (Pull n ixf) = ([(nom,Pointer t),(n,Word32)],CG.compileStep1 (f input)) 
+      where nom = "input" ++ show i
+            n   = "n" ++ show i 
+            lengthVar = variable n
+            input = namedGlobal nom lengthVar
             t = typeOf_ (undefined :: t)
 
-instance (Scalar t) => ToProgram (GlobPull (Exp t)) (Final (GProgram a)) where
-  toProgram i f (GlobPull ixf) = ([(nom,Pointer t)],CG.runPrg (cheat (f input))) 
-      where nom = "input" ++ show i 
-            input = namedGlobal nom
-            t = typeOf_ (undefined :: t)
 
 instance (Scalar t, ToProgram b c) => ToProgram (Exp t) (b -> c) where
   toProgram i f (a :-> rest) = ((nom,t):ins,prg)
@@ -116,14 +118,18 @@ instance (Scalar t, ToProgram b c) => ToProgram (Exp t) (b -> c) where
       input = variable nom
       t = typeOf_ (undefined :: t)
 
-instance (Scalar t, ToProgram b c) => ToProgram (GlobPull (Exp t)) (b -> c) where
-  toProgram i f ((GlobPull ixf) :-> rest) = ((nom,Pointer t):ins,prg)
+
+instance (Scalar t, ToProgram b c) => ToProgram (Pull (Exp Word32) (Exp t)) (b -> c) where
+  toProgram i f ((Pull n ixf) :-> rest) = ((nom,Pointer t):(n,Word32):ins,prg)
     where
       (ins,prg) = toProgram (i+1) (f input) rest
       nom = "input" ++ show i
-      input = namedGlobal nom
+      n   = "n" ++ show i
+      lengthVar = variable n
+      input = namedGlobal nom lengthVar
       t = typeOf_ (undefined :: t)
 -}
+
 
 ---------------------------------------------------------------------------
 -- heterogeneous lists of inputs 
@@ -139,14 +145,8 @@ infixr 5 :->
 type family Ips a b
  
 -- type instance Ips a (GlobArray b) = Ips' a -- added Now 26
-type instance Ips a (Final (GProgram b)) = a 
+-- type instance Ips a (Final (GProgram b)) = a 
 type instance Ips a (GProgram b) = a
 type instance Ips a (b -> c) =  a :-> Ips b c
 
-{- TODO:
-    What about Distrib (Array p1 a1, Array p2 a2)
-     (blocks of pairs of arrays) -- limit what can live inside a block  ? 
-
-
--} 
 
