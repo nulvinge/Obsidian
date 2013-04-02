@@ -58,7 +58,7 @@ mkPushArray n p = Push n p
 mkPullArray n p = Pull n p  
 
 class Array a where
-  resize :: s -> a s e -> a s e
+  resize :: r -> a s e -> a r e
   len    :: ASize s => a s e -> s
   aMap   :: (e -> e') -> a s e -> a s e'
   ixMap  :: (Exp Word32 -> Exp Word32)

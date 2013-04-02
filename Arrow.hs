@@ -1,0 +1,200 @@
+{-# LANGUAGE ScopedTypeVariables,
+             GADTs,
+             RankNTypes,
+             ExistentialQuantification,
+             MultiParamTypeClasses,
+             FlexibleInstances,
+             TypeFamilies,
+             TypeOperators,
+             Arrows,
+             FlexibleContexts #-}
+
+module Stages where
+
+import qualified Obsidian.CodeGen.CUDA as CUDA
+
+import Obsidian.Program hiding (Bind,Return,Sync)
+import Obsidian.Exp
+import Obsidian.Types
+import Obsidian.Array
+import Obsidian.Library
+import Obsidian.Force
+import Obsidian.Memory
+import Obsidian.CodeGen.InOut (ToProgram, Ips)
+import Obsidian.Globs
+import Obsidian.Atomic
+import Debug.Trace
+
+import Data.Word
+import Data.Int
+import Data.Bits
+import Data.Maybe
+import Data.List (genericIndex)
+
+import qualified Data.Vector.Storable as V
+
+--import Control.Monad.State
+import Control.Category
+import Control.Arrow
+
+import Prelude hiding (zipWith,sum,replicate,id,(.))
+import qualified Prelude as P
+
+type G b c = (Pull Word32 (Exp b) :-> c)
+
+data a :-> b where
+  Pure :: (a -> b) -> (a :-> b)
+  Sync :: (Scalar b) -- => Forceable (Pull (Exp b))
+          => (a -> (Pull Word32 (Exp b),d))
+          -> ((Pull Word32 (Exp b),d) :-> c)
+          -> (a :-> c)
+
+instance Show (a :-> b) where
+  show (Pure f) = "Pure f"
+  show (Sync f g) = "Sync f (" ++ show g ++ ")"
+
+instance Category (:->) where
+  id = Pure id
+
+  (.) (Pure f) (Pure g)   = Pure (f . g)
+  (.) (Pure f) (Sync h g) = Sync h (Pure f . g)
+  (.) (Sync h g) (Pure f) = Sync (h . f) g
+  (.) o (Sync h g)        = Sync h (o . g)
+
+instance Arrow (:->) where
+  arr = Pure
+  --(***) (Pure f) (Pure g) = Pure $ \(x,y) -> (f x, g y)
+  --(***) (Pure f) (Sync h g) = Sync t (r g)
+  --  where t (a,d) = let (b,d') = h a
+  --                  in (b,(d,d'))
+  --        r = undefined
+  --(***) (Pure f) (Pure g) = Pure $ \(x,y) -> (f x, g y)
+
+  first (Pure f) = Pure (mapFst f)
+    where mapFst f (a,b) = (f a, b)
+  first (Sync h g) = Sync t (r g)
+    where t (a,d) = let (b,d') = h a
+                    in (b,(d,d'))
+          r :: ((Pull Word32 (Exp b),d') :-> c)
+            -> ((Pull Word32 (Exp b),(d,d')) :-> (c,d))
+          r g = first g . (Pure $ \(a,(d,d')) -> ((a,d'),d))
+  --first (Sync h g) = Pure $ \(a,b) -> ((Sync h g,a), b)
+
+{-
+instance ArrowApply (:->) where
+  app = Pure $ (uncurry app')
+    where app' :: (a :-> b) -> a -> b
+          app' arr a =
+            case arr of
+              Pure f   -> f a
+              Sync h g -> app' g (h a)
+-}
+
+instance ArrowChoice (:->) where
+  left (Pure f) = Pure (either (Left . f) (Right . id))
+
+
+
+-- More or less means that only "Exps" are ever allowed..
+-- Try to generalise. Force is to blame for this.. 
+aSync :: (Scalar a) => Pull Word32 (Exp a) :-> Pull Word32 (Exp a)
+aSync = Sync (\a -> (a,())) (Pure (\(a,()) -> a))
+
+liftG :: BProgram a -> GProgram a
+liftG p = do
+  ForAllBlocks 1 $ \bix ->
+    p
+simpleRun :: (a :-> b) -> a -> BProgram b
+simpleRun (Pure f)   a = do
+  return (f a)
+simpleRun (Sync f g) a = do
+  let (a',d) = f a
+  a'' <- force a'
+  simpleRun g (a'',d)
+
+run :: Word32 -> (a :-> b) -> a -> GProgram b
+run bs (Pure f)   a = do
+  --forceG (resize (fromIntegral (len (f a))) (push Grid (f a)))
+  return (f a)
+run bs (Sync f g) a = do
+  n <- uniqueSM
+  let (a',d) = f a
+      p = run bs g (a',d)
+  if runBable a' p n
+    then do
+      (a'',t) <- ForAllBlocks (Literal (len a'+bs-1 `div` bs)) $ \bid -> do
+                --a'' <- force a'
+                --return (a'',id)
+                runB bs a' p n bid
+      t $ run bs g (a'',d)
+    else error "not implemented" {- do
+      a' <- forceG (resize (fromIntegral (len (f a))) (push Grid (f a)))
+      run g a'
+    -}
+
+
+runBable :: Pull Word32 (Exp b) -> GProgram c -> Name -> Bool
+runBable f p n = True
+
+fakeForce :: (Scalar a, Array a1, ASize s)
+          => a1 s e -> Name -> Pull s (Exp a)
+fakeForce a n = namedPull n (len a)
+
+runB :: (Scalar b)
+     => Word32 -> Pull Word32 (Exp b)
+     -> GProgram c -> Name -> Exp Word32 
+     -> BProgram (Pull Word32 (Exp b), (GProgram c -> GProgram c))
+runB bs a p n bid =
+  if runWable a p n
+    then runW a p n bid
+    else do
+      a' <- force a
+      return (a', divide)
+
+runWable :: Pull Word32 (Exp b) -> GProgram c -> Name -> Bool
+runWable a p n = False
+
+runW :: (Scalar b)
+     => (Pull Word32 (Exp b))
+     -> GProgram c -> Name -> Exp Word32 
+     -> BProgram (Pull Word32 (Exp b), (GProgram c -> GProgram c))
+runW a p n bid = do
+    a' <- write a
+    return (a', divide)
+
+divide = id
+
+
+
+quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
+quickPrint prg input =
+  putStrLn $ CUDA.genKernel "kernel" prg input
+
+testInput :: Pull Word32 (Exp Int)
+testInput = namedGlobal "apa" 2048
+
+testInput' :: Pull (Exp Word32) (Exp Int)
+testInput' = namedGlobal "apa" 2048
+
+liftE a = resize (fromIntegral (len a)) a
+
+reduce0 :: (Scalar a, Num (Exp a)) => Word32 -> (Pull Word32 (Exp a) :-> (Pull Word32 (Exp a)))
+reduce0 1 = id
+reduce0 n = reduce0 (n`div`2) <<< aSync <<^ (uncurry (zipWith (+)) <<< halve)
+tr0 = quickPrint t testInput
+  where s a = liftG $ simpleRun (reduce0 (len a)) a
+        t a = run 1024 (reduce0 (len a)) a 
+
+reduce0' :: Word32 -> (Pull Word32 (Exp Int) :-> (Pull Word32 (Exp Int)))
+reduce0' = reduce0
+
+reduce1 :: (Scalar a, Num (Exp a)) => (Pull Word32 (Exp a) :-> (Pull Word32 (Exp a)))
+reduce1 = Pure (halve >>> uncurry (zipWith (+))) >>>
+    Pure (\a' -> trace (show (len a')) a') >>>
+  proc a -> do
+    if len a == 1
+      then returnA -< a
+      else reduce1 <<< aSync -< a
+tr1 = quickPrint (run 1024 reduce1) testInput
+
+

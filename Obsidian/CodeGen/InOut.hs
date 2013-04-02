@@ -62,26 +62,31 @@ instance (Scalar a) => Vector (Exp a) where
   getTypes a n = (variable n,[(n, typeOf a)])
 
 instance (Scalar a) => Vector (Pull (Exp Word32) (Exp a)) where
-  getTypes a n = (input,[(n, Pointer (typeOf_ (undefined :: a))), (nn,Word32)])
+  getTypes _ n = (input,[(n, Pointer (typeOf_ (undefined :: a))), (nn,Word32)])
     where nn        = n ++ "n"
-          input = namedGlobal n (variable n)
+          input = namedGlobal n (variable nn)
+
+instance (Scalar a) => Vector (Pull Word32 (Exp a)) where
+  getTypes a n = (input,[(n, Pointer (typeOf_ (undefined :: a)))])
+    where input = namedGlobal n (len a)
 
 instance (Scalar a, Scalar b) => Vector (Exp a, Exp b) where
   getTypes (a,b) n = ((aa,ba),at++bt)
     where (aa,at) = getTypes a (n++"a")
           (ba,bt) = getTypes b (n++"b")
 
-zipG :: Pull (Exp Word32) a -> Pull (Exp Word32) b -> Pull (Exp Word32) (a, b)
+zipG :: (ASize s) => Pull s a -> Pull s b -> Pull s (a, b)
 zipG arr1 arr2 = Pull (min (len arr1) (len arr2)) $ \ix -> (arr1 ! ix, arr2 ! ix)
 
-instance (Scalar a, Scalar b) => Vector (Pull (Exp Word32) (Exp a, Exp b)) where
-  getTypes _ n = (zipG aa ba,at++bt)
-    where (aa,at) = getTypes (undefined :: Pull (Exp Word32) (Exp a)) (n++"a")
-          (ba,bt) = getTypes (undefined :: Pull (Exp Word32) (Exp b)) (n++"b")
+instance (ASize s, Vector (Pull s (Exp a)), Vector (Pull s (Exp b)))
+      => Vector (Pull s (Exp a, Exp b)) where
+  getTypes a n = (zipG aa ba,at++bt)
+    where (aa,at) = getTypes (Pull (len a) undefined :: Pull s (Exp a)) (n++"a")
+          (ba,bt) = getTypes (Pull (len a) undefined :: Pull s (Exp b)) (n++"b")
 
 instance (Vector a) => ToProgram a (GProgram b) where
   toProgram i f a = (types, CG.compileStep1 (f input))
-    where (input,types) = getTypes (undefined :: a) ("input" ++ show i)
+    where (input,types) = getTypes a ("input" ++ show i)
 
 --instance (Vector a) => ToProgram a (Final (GProgram b)) where
 --  toProgram i f a = (types, CG.compileStep1 (cheat (f input)))
@@ -90,7 +95,7 @@ instance (Vector a) => ToProgram a (GProgram b) where
 instance (Vector a, ToProgram b c) => ToProgram a (b -> c) where
   toProgram i f (a :-> rest) = (ins ++ types,prg)
     where (ins,prg) = toProgram (i+1) (f input) rest
-          (input,types) = getTypes (undefined :: a) ("input" ++ show i)
+          (input,types) = getTypes a ("input" ++ show i)
 
 {-
 instance (Scalar t) => ToProgram (Exp t) (GProgram b) where
