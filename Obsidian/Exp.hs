@@ -176,10 +176,10 @@ data Exp a where
 -- Operations 
 -- TODO: needs conversion operations.. (Int -> Word) etc. 
 data Op a where 
-  Add :: Num a => Op ((a,a) -> a) 
-  Sub :: Num a => Op ((a,a) -> a) 
-  Mul :: Num a => Op ((a,a) -> a) 
-  Div :: Num a => Op ((a,a) -> a) 
+  Add :: Num (Exp a) => Op ((a,a) -> a) 
+  Sub :: Num (Exp a) => Op ((a,a) -> a) 
+  Mul :: Num (Exp a) => Op ((a,a) -> a) 
+  Div :: Integral (Exp a) => Op ((a,a) -> a) 
   -- If  :: Op ((Bool,a,a) -> a) 
   
   Mod :: Integral a => Op ((a,a) -> a)

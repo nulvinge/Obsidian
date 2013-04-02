@@ -7,6 +7,7 @@
              TypeFamilies,
              TypeOperators,
              Arrows,
+             ImpredicativeTypes,
              FlexibleContexts #-}
 
 module Stages where
@@ -20,7 +21,6 @@ import Obsidian.Array
 import Obsidian.Library
 import Obsidian.Force
 import Obsidian.Memory
-import Obsidian.CodeGen.InOut (ToProgram, Ips)
 import Obsidian.Globs
 import Obsidian.Atomic
 import Debug.Trace
@@ -36,6 +36,8 @@ import qualified Data.Vector.Storable as V
 --import Control.Monad.State
 import Control.Category
 import Control.Arrow
+
+import ExpAnalysis
 
 import Prelude hiding (zipWith,sum,replicate,id,(.))
 import qualified Prelude as P
@@ -112,63 +114,91 @@ simpleRun (Sync f g) a = do
   a'' <- force a'
   simpleRun g (a'',d)
 
-run :: Word32 -> (a :-> b) -> a -> GProgram b
-run bs (Pure f)   a = do
+type RunInfo b c d = (Word32, ((Pull Word32 (Exp b),d) :-> c), Pull Word32 (Exp b), d)
+type Transform = forall e. (Scalar e) => (Exp e -> Exp e)
+
+run :: Word32 -> Transform -> (a :-> b) -> a -> GProgram b
+run bs t (Pure f)   a = do
   --forceG (resize (fromIntegral (len (f a))) (push Grid (f a)))
   return (f a)
-run bs (Sync f g) a = do
+run bs t (Sync f g) a = do
   n <- uniqueSM
   let (a',d) = f a
-      p = run bs g (a',d)
-  if runBable a' p n
+      ri = (bs,g,a',d)
+  if runBable ri
     then do
-      (a'',t) <- ForAllBlocks (Literal (len a'+bs-1 `div` bs)) $ \bid -> do
+      (a'',t') <- ForAllBlocks (Literal (len a'+bs-1 `div` bs)) $ \bid -> do
                 --a'' <- force a'
                 --return (a'',id)
-                runB bs a' p n bid
-      t $ run bs g (a'',d)
+                runB bid ri t
+      run bs (t'.t) g (a'',d)
     else error "not implemented" {- do
       a' <- forceG (resize (fromIntegral (len (f a))) (push Grid (f a)))
       run g a'
     -}
 
 
-runBable :: Pull Word32 (Exp b) -> GProgram c -> Name -> Bool
-runBable f p n = True
+runBable :: RunInfo b c d -> Bool
+runBable (bs,g,a,d) = True
 
 fakeForce :: (Scalar a, Array a1, ASize s)
           => a1 s e -> Name -> Pull s (Exp a)
 fakeForce a n = namedPull n (len a)
 
 runB :: (Scalar b)
-     => Word32 -> Pull Word32 (Exp b)
-     -> GProgram c -> Name -> Exp Word32 
-     -> BProgram (Pull Word32 (Exp b), (GProgram c -> GProgram c))
-runB bs a p n bid =
-  if runWable a p n
-    then runW a p n bid
+     => Exp Word32
+     -> RunInfo b c d -> (Exp b -> Exp b)
+     -> BProgram (Pull Word32 (Exp b), Transform)
+runB bid ri@(bs,_,Pull l ixf,_) t =
+  if runWable ri
+    then runW bid ri t
     else do
-      a' <- force a
-      return (a', divide)
+      a'' <- force a'
+      return (a'', divide (getName a'') bs (min bs l))
+  where a' = Push l $ \wf ->
+               ForAll (sizeConv l) $ \tid ->
+                  let gid = bid*(fromIntegral bs)+tid
+                      wid = simplifyMod bs (min bs l) gid
+                  in wf (t (ixf gid)) wid
 
-runWable :: Pull Word32 (Exp b) -> GProgram c -> Name -> Bool
-runWable a p n = False
+getName :: Pull Word32 (Exp a) -> Name
+getName (Pull n ixf) = let Index (n,_) = ixf (Literal 0)
+                       in n
+
+collectRun :: (forall c. Exp c -> [d]) -> Exp Word32 -> (a :-> b) -> a -> [d]
+collectRun cf ix (Pure f)   a = [] --cf (f a)
+collectRun cf ix (Sync f g) a =
+  let (a'@(Pull n ixf),d) = f a
+      e = ixf ix
+      a'' = fakeForce a' "noname"
+  in (cf e) ++ collectRun cf ix g (a'',d)
+
+isDivable m bs n a = (simplifyDiv m bs n a) == (Literal 0)
+
+runWable :: (Scalar b) => RunInfo b c d -> Bool
+runWable ri@(bs,g,a,d) =
+  let n = "target"
+      gid = (BlockIdx X*(fromIntegral bs) +(ThreadIdx X))
+      a' = fakeForce a n
+      accesses = collectRun (collectExp (getIndice n) (++)) gid g (a',d)
+  in all (isDivable 32 bs (len a)) accesses
 
 runW :: (Scalar b)
-     => (Pull Word32 (Exp b))
-     -> GProgram c -> Name -> Exp Word32 
-     -> BProgram (Pull Word32 (Exp b), (GProgram c -> GProgram c))
-runW a p n bid = do
-    a' <- write a
-    return (a', divide)
+     => Exp Word32
+     -> RunInfo b c d -> (Exp b -> Exp b)
+     -> BProgram (Pull Word32 (Exp b), Transform)
+runW bid ri@(bs,_,Pull l ixf,_) t = do
+    a'' <- write a'
+    return (a'', divide (getName a'') 32 (min bs l))
+  where a' = Push l $ \wf ->
+               ForAll (sizeConv l) $ \tid ->
+                  let gid = bid*(fromIntegral bs)+tid
+                      wid = simplifyMod 32 (min bs l) gid
+                  in wf (t (ixf gid)) wid
 
-divide = id
+divide :: (Scalar b) => Name -> Word32 -> Word32 -> Exp b -> Exp b
+divide n m bs = traverseExp (traverseOnIndice n (strace.simplifyMod m bs))
 
-
-
-quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
-quickPrint prg input =
-  putStrLn $ CUDA.genKernel "kernel" prg input
 
 testInput :: Pull Word32 (Exp Int)
 testInput = namedGlobal "apa" 2048
@@ -183,7 +213,7 @@ reduce0 1 = id
 reduce0 n = reduce0 (n`div`2) <<< aSync <<^ (uncurry (zipWith (+)) <<< halve)
 tr0 = quickPrint t testInput
   where s a = liftG $ simpleRun (reduce0 (len a)) a
-        t a = run 1024 (reduce0 (len a)) a 
+        t a = run 1024 id (reduce0 (len a)) a 
 
 reduce0' :: Word32 -> (Pull Word32 (Exp Int) :-> (Pull Word32 (Exp Int)))
 reduce0' = reduce0
@@ -195,6 +225,6 @@ reduce1 = Pure (halve >>> uncurry (zipWith (+))) >>>
     if len a == 1
       then returnA -< a
       else reduce1 <<< aSync -< a
-tr1 = quickPrint (run 1024 reduce1) testInput
+tr1 = quickPrint (run 1024 id reduce1) testInput
 
 
