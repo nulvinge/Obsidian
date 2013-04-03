@@ -29,7 +29,6 @@ import Data.Word
 import Data.Int
 import Data.Bits
 import Data.Maybe
-import Data.List (genericIndex)
 
 import qualified Data.Vector.Storable as V
 
@@ -59,8 +58,8 @@ instance Category (:->) where
   id = Pure id
 
   (.) (Pure f) (Pure g)   = Pure (f . g)
-  (.) (Pure f) (Sync h g) = Sync h (Pure f . g)
   (.) (Sync h g) (Pure f) = Sync (h . f) g
+  --(.) (Pure f) (Sync h g) = Sync h (Pure f . g)
   (.) o (Sync h g)        = Sync h (o . g)
 
 instance Arrow (:->) where
@@ -106,6 +105,7 @@ liftG :: BProgram a -> GProgram a
 liftG p = do
   ForAllBlocks 1 $ \bix ->
     p
+
 simpleRun :: (a :-> b) -> a -> BProgram b
 simpleRun (Pure f)   a = do
   return (f a)
@@ -115,15 +115,30 @@ simpleRun (Sync f g) a = do
   simpleRun g (a'',d)
 
 type RunInfo b c d = (Word32, ((Pull Word32 (Exp b),d) :-> c), Pull Word32 (Exp b), d)
-type Transform = forall e. (Scalar e) => (Word32 -> Exp e -> Exp e)
+type TransformA = forall e. (Scalar e) => (Word32 -> Exp e -> Exp e)
+type Transform e = (Scalar e) => (Word32 -> Exp e -> Exp e)
 
-run :: Word32 -> (a :-> b) -> a -> GProgram b
-run bs a = run' bs (const id) a
 
-run' :: Word32 -> Transform -> (a :-> b) -> a -> GProgram b
+
+run :: (Scalar b) => Word32 -> (a :-> Pull Word32 (Exp b))
+    -> a -> GProgram ()
+run bs g a = do
+  (a',t) <- run' bs (const id) g a
+  forceG $ pushG bs t a'
+  return ()
+
+pushG :: (Scalar a) => Word32 -> Transform a
+      -> Pull Word32 (Exp a) -> Push Grid (Exp Word32) (Exp a)
+pushG bs t (Pull l ixf) = Push (fromIntegral l) $ \wf ->
+  ForAllBlocks (fromIntegral $ (l+bs-1) `div` bs) $ \bid ->
+    ForAll (fromIntegral (min l bs)) $ \tid ->
+      let gid = bid*(fromIntegral bs)+tid
+      in wf (t (min l bs) (ixf gid)) gid
+
+run' :: Word32 -> TransformA -> (a :-> b) -> a -> GProgram (b, TransformA)
 run' bs t (Pure f)   a = do
   --forceG (resize (fromIntegral (len (f a))) (push Grid (f a)))
-  return (f a)
+  return (f a,t)
 run' bs t (Sync f g) a = do
   n <- uniqueSM
   let (a',d) = f a
@@ -152,8 +167,8 @@ fakeForce a n = namedPull n (len a)
 
 runB :: (Scalar b)
      => Exp Word32
-     -> RunInfo b c d -> (Word32 -> Exp b -> Exp b)
-     -> BProgram (Pull Word32 (Exp b), Transform)
+     -> RunInfo b c d -> Transform b
+     -> BProgram (Pull Word32 (Exp b), TransformA)
 runB bid ri@(bs,_,Pull l ixf,_) t =
   if runWable ri
     then runW bid ri t
@@ -190,8 +205,8 @@ runWable ri@(bs,g,a,d) =
 
 runW :: (Scalar b)
      => Exp Word32
-     -> RunInfo b c d -> (Word32 -> Exp b -> Exp b)
-     -> BProgram (Pull Word32 (Exp b), Transform)
+     -> RunInfo b c d -> Transform b
+     -> BProgram (Pull Word32 (Exp b), TransformA)
 runW bid ri@(bs,_,Pull l ixf,_) t = do
     a'' <- write a'
     return (a'', divide (getName a'') 32)
@@ -205,7 +220,7 @@ divide :: (Scalar b)
        => Name -> Word32
        -> Word32 -> Exp b -> Exp b
 divide n m bsl = traverseExp (traverseOnIndice n f)
-  where f = strace.simplifyMod m bsl
+  where f = simplifyMod m bsl
 
 
 testInput :: Pull Word32 (Exp Int)
@@ -217,14 +232,14 @@ testInput' = namedGlobal "apa" 2048
 liftE a = resize (fromIntegral (len a)) a
 
 reduce0 :: (Scalar a, Num (Exp a)) => Word32 -> (Pull Word32 (Exp a) :-> (Pull Word32 (Exp a)))
-reduce0 1 = id
-reduce0 n = reduce0 (n`div`2) <<< aSync <<^ (uncurry (zipWith (+)) <<< halve)
+reduce0 n = (uncurry (zipWith (+)) <<< halve)
+       ^>> if n == 2
+        then id
+        else aSync
+         >>> reduce0 (n`div`2)
 tr0 = quickPrint t testInput
   where s a = liftG $ simpleRun (reduce0 (len a)) a
         t a = run 1024 (reduce0 (len a)) a 
-
-reduce0' :: Word32 -> (Pull Word32 (Exp Int) :-> (Pull Word32 (Exp Int)))
-reduce0' = reduce0
 
 reduce1 :: (Scalar a, Num (Exp a)) => (Pull Word32 (Exp a) :-> (Pull Word32 (Exp a)))
 reduce1 = Pure (halve >>> uncurry (zipWith (+))) >>>
