@@ -115,13 +115,16 @@ simpleRun (Sync f g) a = do
   simpleRun g (a'',d)
 
 type RunInfo b c d = (Word32, ((Pull Word32 (Exp b),d) :-> c), Pull Word32 (Exp b), d)
-type Transform = forall e. (Scalar e) => (Exp e -> Exp e)
+type Transform = forall e. (Scalar e) => (Word32 -> Exp e -> Exp e)
 
-run :: Word32 -> Transform -> (a :-> b) -> a -> GProgram b
-run bs t (Pure f)   a = do
+run :: Word32 -> (a :-> b) -> a -> GProgram b
+run bs a = run' bs (const id) a
+
+run' :: Word32 -> Transform -> (a :-> b) -> a -> GProgram b
+run' bs t (Pure f)   a = do
   --forceG (resize (fromIntegral (len (f a))) (push Grid (f a)))
   return (f a)
-run bs t (Sync f g) a = do
+run' bs t (Sync f g) a = do
   n <- uniqueSM
   let (a',d) = f a
       ri = (bs,g,a',d)
@@ -131,12 +134,14 @@ run bs t (Sync f g) a = do
                 --a'' <- force a'
                 --return (a'',id)
                 runB bid ri t
-      run bs (t'.t) g (a'',d)
+      run' bs (composeT t t') g (a'',d)
     else error "not implemented" {- do
       a' <- forceG (resize (fromIntegral (len (f a))) (push Grid (f a)))
-      run g a'
+      run' g a'
     -}
 
+
+composeT t t' = \bsl -> t bsl . t' bsl
 
 runBable :: RunInfo b c d -> Bool
 runBable (bs,g,a,d) = True
@@ -147,19 +152,19 @@ fakeForce a n = namedPull n (len a)
 
 runB :: (Scalar b)
      => Exp Word32
-     -> RunInfo b c d -> (Exp b -> Exp b)
+     -> RunInfo b c d -> (Word32 -> Exp b -> Exp b)
      -> BProgram (Pull Word32 (Exp b), Transform)
 runB bid ri@(bs,_,Pull l ixf,_) t =
   if runWable ri
     then runW bid ri t
     else do
       a'' <- force a'
-      return (a'', divide (getName a'') bs (min bs l))
+      return (a'', divide (getName a'') bs)
   where a' = Push l $ \wf ->
                ForAll (sizeConv l) $ \tid ->
                   let gid = bid*(fromIntegral bs)+tid
                       wid = simplifyMod bs (min bs l) gid
-                  in wf (t (ixf gid)) wid
+                  in wf (t (min bs l) (ixf gid)) wid
 
 getName :: Pull Word32 (Exp a) -> Name
 getName (Pull n ixf) = let Index (n,_) = ixf (Literal 0)
@@ -185,19 +190,22 @@ runWable ri@(bs,g,a,d) =
 
 runW :: (Scalar b)
      => Exp Word32
-     -> RunInfo b c d -> (Exp b -> Exp b)
+     -> RunInfo b c d -> (Word32 -> Exp b -> Exp b)
      -> BProgram (Pull Word32 (Exp b), Transform)
 runW bid ri@(bs,_,Pull l ixf,_) t = do
     a'' <- write a'
-    return (a'', divide (getName a'') 32 (min bs l))
+    return (a'', divide (getName a'') 32)
   where a' = Push l $ \wf ->
                ForAll (sizeConv l) $ \tid ->
                   let gid = bid*(fromIntegral bs)+tid
                       wid = simplifyMod 32 (min bs l) gid
-                  in wf (t (ixf gid)) wid
+                  in wf (t (min bs l) (ixf gid)) wid
 
-divide :: (Scalar b) => Name -> Word32 -> Word32 -> Exp b -> Exp b
-divide n m bs = traverseExp (traverseOnIndice n (strace.simplifyMod m bs))
+divide :: (Scalar b)
+       => Name -> Word32
+       -> Word32 -> Exp b -> Exp b
+divide n m bsl = traverseExp (traverseOnIndice n f)
+  where f = strace.simplifyMod m bsl
 
 
 testInput :: Pull Word32 (Exp Int)
@@ -213,7 +221,7 @@ reduce0 1 = id
 reduce0 n = reduce0 (n`div`2) <<< aSync <<^ (uncurry (zipWith (+)) <<< halve)
 tr0 = quickPrint t testInput
   where s a = liftG $ simpleRun (reduce0 (len a)) a
-        t a = run 1024 id (reduce0 (len a)) a 
+        t a = run 1024 (reduce0 (len a)) a 
 
 reduce0' :: Word32 -> (Pull Word32 (Exp Int) :-> (Pull Word32 (Exp Int)))
 reduce0' = reduce0
@@ -225,6 +233,6 @@ reduce1 = Pure (halve >>> uncurry (zipWith (+))) >>>
     if len a == 1
       then returnA -< a
       else reduce1 <<< aSync -< a
-tr1 = quickPrint (run 1024 id reduce1) testInput
+tr1 = quickPrint (run 1024 reduce1) testInput
 
 
