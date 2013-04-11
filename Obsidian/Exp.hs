@@ -211,8 +211,8 @@ data Op a where
   ShiftR     :: forall a b .(Num b, Bits a) => Op ((a, b) -> a)  
   
   -- built-ins
-  Min        :: Ord a => Op ((a,a) -> a) 
-  Max        :: Ord a => Op ((a,a) -> a) 
+  Min        :: Ord (Exp a) => Op ((a,a) -> a) 
+  Max        :: Ord (Exp a) => Op ((a,a) -> a) 
 
   -- Floating (different CUDA functions for float and double, issue maybe?) 
   Exp :: Floating a => Op (a -> a) -- "expf" 

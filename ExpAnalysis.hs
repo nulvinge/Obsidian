@@ -38,10 +38,12 @@ import qualified Prelude as P
 
 --simplifying treating i as an integer modulo m
 simplifyMod :: Word32 -> Word32 -> Exp Word32 -> Exp Word32
-simplifyMod m bs = makeExp.(simplifyMod' m bs).snd.(simplifyMod' m bs) --second time to get correct range after simplifications
+simplifyMod m bs a' = (makeExp.(simplifyMod' m bs).snd.(simplifyMod' m bs)) a' --second time to get correct range after simplifications
   where makeExp :: (Maybe (Word32,Word32),Exp Word32) -> Exp Word32
         makeExp (Just (l,h),a) | l>=0 && h<m = a
-        makeExp (Just r,a) = error $ (show a) ++ " not moddable by " ++ (show m) ++ " because it has range " ++ show r
+        makeExp (Just r,a) = error $ (show a) ++ " (originally " ++ (show a')
+                          ++ ") not moddable by " ++ (show m)
+                          ++ " because it has range " ++ show r
         makeExp (Nothing,a) = error $ (show a) ++ " not moddable by " ++ (show m) --a`mod`(Literal m)
 
 t0 = simplifyMod' 512 512 $ (ThreadIdx X)
@@ -49,6 +51,13 @@ t1 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2
 t2 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2 *2
 t3 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2 *2*2
 t4 = simplifyMod' 32 16 $ (ThreadIdx X + 16)
+
+getNext2Powerm :: Bits a => a -> a
+getNext2Powerm v = if v == 0 then 0 else f (v-1) (bitSize v) 1
+  where f v m n =
+          if m < n
+            then v
+            else f (v .|. (v `shiftR` n)) m (n `shiftL` 1)
 
 simplifyMod' :: Word32 -> Word32 -> Exp Word32 -> (Maybe (Word32,Word32),Exp Word32)
 simplifyMod' 0 bs = error "Divzero"
@@ -61,6 +70,9 @@ simplifyMod' m bs = sm
         sm (BinOp Sub a b) = bop a b (-) (\al ah bl bh -> Just (al-bh,ah-bl))
         sm (BinOp Div a b) = let (ab,av) = sm a in (ab,av `div` b)
         sm (BinOp Mod a bb@(Literal b)) = (Just (0,b-1),snd $ newmod b a (`mod`bb))
+        sm (BinOp BitwiseXor a b) = bop a b xor (\al ah bl bh -> do
+          guard $ al >= 0 && bl >= 0
+          return (0,(getNext2Powerm ah `max` getNext2Powerm bh)))
         sm (ThreadIdx X) = (Just (0,bs-1),ThreadIdx X)
         sm a = (Nothing,a)
         bop :: Exp Word32 -> Exp Word32
@@ -127,8 +139,9 @@ traverseExp f d a = f d a
 -}
 
 collectExp :: (forall a. Exp a -> b) -> (b -> b -> b) -> Exp a -> b
-collectExp f c (BinOp op a b) = f a `c` f b `c` collectExp f c a `c` collectExp f c b
-collectExp f c a = f a
+collectExp f c e@(BinOp op a b) = f e  `c` collectExp f c a `c` collectExp f c b
+collectExp f c e@(If p a b) = f e `c` collectExp f c p `c` collectExp f c a `c` collectExp f c b
+collectExp f c e = f e
 
 getIndice :: Name -> Exp a -> [Exp Word32]
 getIndice nn (Index (n,[r])) | n == nn = [r]
@@ -142,10 +155,12 @@ quickPrint prg input =
 strace a = trace (show a) a
 
 traverseExp :: (forall a. Exp a -> Exp a) -> Exp b -> Exp b
-traverseExp f (BinOp Mul a b) = f a * f b
-traverseExp f (BinOp Add a b) = f a + f b
-traverseExp f (BinOp Sub a b) = f a - f b
-traverseExp f (BinOp Div a b) = f a `div` f b
+traverseExp f (BinOp Mul a b) = f $ (traverseExp f a) * (traverseExp f b)
+traverseExp f (BinOp Add a b) = f $ (traverseExp f a) + (traverseExp f b)
+traverseExp f (BinOp Sub a b) = f $ (traverseExp f a) - (traverseExp f b)
+traverseExp f (BinOp Div a b) = f $ (traverseExp f a) `div` (traverseExp f b)
+traverseExp f (BinOp op  a b) = f $ (BinOp op (traverseExp f a) (traverseExp f b))
+traverseExp f (If p a b) = f $ If (traverseExp f p) (traverseExp f a) (traverseExp f b) 
 traverseExp f a = f a
 
 traverseOnIndice :: Name -> (Exp Word32 -> Exp Word32) -> Exp a -> Exp a

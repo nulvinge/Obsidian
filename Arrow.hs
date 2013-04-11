@@ -35,6 +35,7 @@ import qualified Data.Vector.Storable as V
 --import Control.Monad.State
 import Control.Category
 import Control.Arrow
+import Control.Arrow.ApplyUtils
 
 import ExpAnalysis
 
@@ -244,7 +245,17 @@ simpleRun (Apply f g) a = do
   -}
 
 isDivable :: Word32 -> Word32 -> Word32 -> Exp Word32 -> (Word32, Exp Word32) -> Bool
-isDivable m bs ngid gid (na,a) = (simplifyDiv m bs na a) == (simplifyDiv m bs ngid gid) 
+isDivable m bs ngid gid (na,a) =
+  let a' = (simplifyDiv m bs na a)
+      b' = (simplifyDiv m bs ngid gid) 
+  in trace ((show m) ++ " \\ " ++
+            (show a) ++ " -> " ++
+            (show a') ++ " == " ++
+            (show gid) ++ " -> " ++
+            (show b') ++ " = " ++
+            (show (a' == b')) ++ "\n"
+           )
+           $ a' == b'
 
 runAable :: (Scalar b) => (Exp Word32 -> (Word32,Exp Word32) -> Bool) -> RunInfo b c d -> Bool
 runAable f ri@(bs,g,a,d) =
@@ -268,7 +279,7 @@ runW bid ri@(bs,_,Pull l ixf,_) t =
     else do
       a'' <- write a'
       return (a'', divide (getName a'') f)
-  where f = simplifyMod 32
+  where f = simplifyMod bs
         a' = Push l $ \wf ->
                ForAll (sizeConv l) $ \tid ->
                   let gid = bid*(fromIntegral bs)+tid
@@ -286,7 +297,7 @@ runT gid ri@(bs,_,a,_) t = do
   let v = t (min bs (len a)) $ a ! gid
   n <- uniqueSM
   Assign n [] v
-  return (Pull (len a) $ \_ -> Index (n,[]), const id)
+  return (Pull (len a) $ \_ -> variable n, const id)
 
 divide :: (Scalar b)
        => Name -> (Word32 -> Exp Word32 -> Exp Word32)
@@ -299,6 +310,9 @@ testInput = namedGlobal "apa" 2048
 
 testInput' :: Pull (Exp Word32) (Exp Int)
 testInput' = namedGlobal "apa" 2048
+
+testInputS :: Pull Word32 (Exp Int)
+testInputS = namedGlobal "apa" 512
 
 liftE a = resize (fromIntegral (len a)) a
 
@@ -329,11 +343,45 @@ reduce2 = proc a -> do
 tr2 = quickPrint s testInput
   where s a = liftG $ simpleRun reduce2 a
         t a = run 1024 reduce2 a
+
+appl :: ArrowApply a => a b c -> a b c
+appl a = proc b -> do app -< (a,b)
+
+
 reduce3 :: (Scalar a, Num (Exp a)) => (Pull Word32 (Exp a) :-> (Pull Word32 (Exp a)))
 reduce3 = proc a -> do
       let b = uncurry (zipWith (+)) $ halve a
-      c <- app -< (if len b == 1 then id else reduce3 <<< aSync,b)
-      returnA -< c
+      app -< (if len b == 1 then id else reduce3 <<< aSync,b)
 tr3 = quickPrint t testInput
   where s a = liftG $ simpleRun reduce3 a
         t a = run 1024 reduce3 a
+
+reduce4 :: (Scalar a, Num (Exp a)) => Pull Word32 (Exp a) -> ArrowAsMonad (:->) (Pull Word32 (Exp a))
+reduce4 a = do
+  let b = uncurry (zipWith (+)) $ halve a
+  if len b == 1
+    then return b
+    else do (unmonadicA aSync b) >>= reduce4
+tr4 = quickPrint t testInput
+  where s a = liftG $ simpleRun (monadicA reduce4) a
+        t a = run 1024 (monadicA reduce4) a
+
+mine :: (Scalar a, Ord (Exp a)) => Exp a -> Exp a -> Exp a
+mine = BinOp Min
+maxe :: (Scalar a, Ord (Exp a)) => Exp a -> Exp a -> Exp a
+maxe = BinOp Max
+
+bitonicMerge0 :: (Scalar a, Ord (Exp a)) => ((Pull Word32 (Exp a),Word32) :-> Pull Word32 (Exp a))
+bitonicMerge0 = proc (a,s) -> do
+  let s' = fromIntegral s
+      b = Pull (len a) $ \i -> If (i .&. s' ==* 0)
+                                  (mine (a!i) (a!(i `xor` s')))
+                                  (maxe (a!i) (a!(i `xor` s')))
+  app -< (if s == 1 then arr fst else bitonicMerge0 <<< first aSync,(b,s`div`2))
+bitonic0 :: (Scalar a, Ord (Exp a)) => Pull Word32 (Exp a) :-> Pull Word32 (Exp a)
+bitonic0 = proc a -> do
+  bitonicMerge0 -< (a,len a)
+tb0 = quickPrint t testInputS
+  where s a = liftG $ simpleRun bitonicMerge0 (a,len a)
+        t a = run 1024 bitonicMerge0 (a,len a)
+
