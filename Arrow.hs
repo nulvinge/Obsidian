@@ -35,6 +35,8 @@ import qualified Data.Vector.Storable as V
 --import Control.Monad.State
 import Control.Category
 import Control.Arrow
+import Control.Monad
+--import Control.Monad.Loop
 import Control.Arrow.ApplyUtils
 
 import ExpAnalysis
@@ -263,7 +265,7 @@ runAable f ri@(bs,g,a,d) =
       gid = (BlockIdx X*(fromIntegral bs) +(ThreadIdx X))
       a' = fakeForce a n
       accesses = snd $ collectRun (collectExp (getIndice n) (++)) gid g (a',d)
-  in accesses /= [] && all (gid `f`) accesses
+  in strace $ accesses /= [] && all (gid `f`) accesses
 
 runWable :: (Scalar b) => RunInfo b c d -> Bool
 runWable ri@(bs,g,a,d) = runAable (isDivable 32 bs (len a)) ri
@@ -314,6 +316,9 @@ testInput' = namedGlobal "apa" 2048
 testInputS :: Pull Word32 (Exp Int)
 testInputS = namedGlobal "apa" 512
 
+testInputW :: Pull Word32 (Exp Word32)
+testInputW = namedGlobal "apa" 512
+
 liftE a = resize (fromIntegral (len a)) a
 
 reduce0 :: (Scalar a, Num (Exp a)) => Word32 -> (Pull Word32 (Exp a) :-> (Pull Word32 (Exp a)))
@@ -356,12 +361,14 @@ tr3 = quickPrint t testInput
   where s a = liftG $ simpleRun reduce3 a
         t a = run 1024 reduce3 a
 
-reduce4 :: (Scalar a, Num (Exp a)) => Pull Word32 (Exp a) -> ArrowAsMonad (:->) (Pull Word32 (Exp a))
+type a :~> b = a -> ArrowAsMonad (:->) b
+
+reduce4 :: (Scalar a, Num (Exp a)) => Pull Word32 (Exp a) :~> (Pull Word32 (Exp a))
 reduce4 a = do
   let b = uncurry (zipWith (+)) $ halve a
   if len b == 1
     then return b
-    else do (unmonadicA aSync b) >>= reduce4
+    else (unmonadicA aSync >=> reduce4) b
 tr4 = quickPrint t testInput
   where s a = liftG $ simpleRun (monadicA reduce4) a
         t a = run 1024 (monadicA reduce4) a
@@ -385,3 +392,51 @@ tb0 = quickPrint t testInputS
   where s a = liftG $ simpleRun bitonicMerge0 (a,len a)
         t a = run 1024 bitonicMerge0 (a,len a)
 
+
+mSync :: (Scalar a) => Pull Word32 (Exp a) :~> Pull Word32 (Exp a)
+mSync = unmonadicA aSync
+
+type PullC a = Pull Word32 (Exp a)
+
+listRank0 :: (Exp (Word32) -> Exp Bool) -> Pull Word32 (Exp Word32) :~> Pull Word32 (Exp Word32)
+listRank0 isNull nexti = do
+  let ranki :: Pull Word32 (Exp Word32)
+      ranki = fmap (\v -> If (isNull v) 0 1) nexti
+      s = len nexti
+  (nextf,rankf) <- f s (ranki,nexti)
+  --(nextf,rankf) <- concatM (replicate (getNext2Power s) f) (ranki,nexti)
+  return rankf
+    where f :: Word32 -> (PullC Word32, PullC Word32) :~> (PullC Word32, PullC Word32)
+          f n (rank,next) = do
+            let (rankn,nextn) = unzipp $ Pull (len nexti) $ \k ->
+                    let nk = next!k
+                    in ifp (isNull nk)
+                        (rank!k,next!k)
+                        ((rank!k) + (rank!nk), next!nk)
+            ranks <- mSync rankn
+            nexts <- mSync nextn
+            if n == 0
+              then return (ranks,nexts)
+              else f (n`div`2) (ranks,nexts)
+tl0 = quickPrint t testInputW
+  where s a = liftG $ simpleRun (monadicA $ listRank0 p) a
+        t a = run 1024 (monadicA $ listRank0 p) a
+        p v = v ==* 0
+
+concatM :: Monad m => [a -> m a] -> a -> m a
+concatM fs = foldr (>=>) return fs
+
+ifp :: (Scalar a, Scalar b) => (Exp Bool) -> (Exp a, Exp b) -> (Exp a, Exp b) -> (Exp a, Exp b)
+ifp p (a1,a2) (b1,b2) = (If p a1 b1, If p a2 b2)
+
+{-
+
+Todo:
+Strategies:
+  accesses
+  threadids
+  transpose
+Instead of replacing accesses, do it in Pull
+MPI
+
+-}

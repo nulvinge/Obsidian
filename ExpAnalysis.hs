@@ -41,10 +41,13 @@ simplifyMod :: Word32 -> Word32 -> Exp Word32 -> Exp Word32
 simplifyMod m bs a' = (makeExp.(simplifyMod' m bs).snd.(simplifyMod' m bs)) a' --second time to get correct range after simplifications
   where makeExp :: (Maybe (Word32,Word32),Exp Word32) -> Exp Word32
         makeExp (Just (l,h),a) | l>=0 && h<m = a
+        makeExp (_,a) = a`mod`(Literal m)
+        {-
         makeExp (Just r,a) = error $ (show a) ++ " (originally " ++ (show a')
                           ++ ") not moddable by " ++ (show m)
                           ++ " because it has range " ++ show r
         makeExp (Nothing,a) = error $ (show a) ++ " not moddable by " ++ (show m) --a`mod`(Literal m)
+        -}
 
 t0 = simplifyMod' 512 512 $ (ThreadIdx X)
 t1 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2
@@ -58,6 +61,9 @@ getNext2Powerm v = if v == 0 then 0 else f (v-1) (bitSize v) 1
           if m < n
             then v
             else f (v .|. (v `shiftR` n)) m (n `shiftL` 1)
+
+getNext2Power :: Bits a => a -> a
+getNext2Power = (+1).getNext2Powerm
 
 simplifyMod' :: Word32 -> Word32 -> Exp Word32 -> (Maybe (Word32,Word32),Exp Word32)
 simplifyMod' 0 bs = error "Divzero"
