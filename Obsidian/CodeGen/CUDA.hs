@@ -80,7 +80,8 @@ genKernel name kernel a = proto ++ cuda
     (decls,body'') = replacePass em body'
     spdecls = declsToSPMDC decls 
 
-    body = spdecls ++ body''
+    body = body'
+    --body = spdecls ++ body''
               
     swap (x,y) = (y,x)
     inputs = map ((\(t,n) -> (typeToCType t,n)) . swap) ins

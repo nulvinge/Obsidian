@@ -10,7 +10,7 @@
              ImpredicativeTypes,
              FlexibleContexts #-}
 
-module Stages where
+module Arrow where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 
@@ -54,11 +54,13 @@ data a :-> b where
           -> (a :-> c)
   Loop :: ((a,d) :-> (b,d)) -> (a :-> b)
   Apply :: (a -> ((b :-> c, b),d)) -> ((c,d) :-> e) -> (a :-> e)
+  --While :: (d :-> Bool) -> ((a,d) :-> (b,d)) -> (a :-> b)
   --Comp :: (a -> b) (b :-> c) 
 
 instance Show (a :-> b) where
   show (Pure f) = "Pure f"
   show (Sync f g) = "Sync f (" ++ show g ++ ")"
+  show (Apply f g) = "Apply f (" ++ show g ++ ")"
 
 instance Category (:->) where
   id = Pure id
@@ -159,7 +161,7 @@ type Transform e = (Scalar e) => (Word32 -> Exp e -> Exp e)
 run :: (Scalar b) => Word32 -> (a :-> Pull Word32 (Exp b))
     -> a -> GProgram ()
 run bs g a = do
-  (a',t) <- run' bs (const id) g a
+  (a',t) <- run' bs (const id) g id a
   forceG $ pushG bs t a'
 
 pushG :: (Scalar a) => Word32 -> Transform a
@@ -170,29 +172,29 @@ pushG bs t (Pull l ixf) = Push (fromIntegral l) $ \wf ->
       let gid = bid*(fromIntegral bs)+tid
       in wf (t (min l bs) (ixf gid)) gid
 
-run' :: Word32 -> TransformA -> (a :-> b) -> a -> GProgram (b, TransformA)
-run' bs t (Pure f)   a = do
+run' :: Word32 -> TransformA -> (a :-> b) -> (b :-> c) -> a -> GProgram (b, TransformA)
+run' bs t (Pure f)   after a = do
   --forceG (resize (fromIntegral (len (f a))) (push Grid (f a)))
   return (f a,t)
-run' bs t (Sync f g) a = do
+run' bs t (Sync f g) after a = do
   n <- uniqueSM
   let (a',d) = f a
-      ri = (bs,g,a',d)
+      ri = (bs,after.g,a',d)
   if runBable ri
     then do
       (a'',t') <- ForAllBlocks (Literal (len a'+bs-1 `div` bs)) $ \bid -> do
                 --a'' <- force a'
                 --return (a'',id)
                 runB bid ri t
-      run' bs (composeT t t') g (a'',d)
+      run' bs (composeT t t') g after (a'',d)
     else error "not implemented" {- do
       a' <- forceG (resize (fromIntegral (len (f a))) (push Grid (f a)))
       run' g a'
     -}
-run' bs t (Apply f g) a = do
+run' bs t (Apply f g) after a = do
   let ((h,b),d) = f a
-  (a',t') <- run' bs t h b
-  run' bs (composeT t t') g (a',d)
+  (a',t') <- run' bs t h (after.g.arr (\x -> (x,d))) b
+  run' bs (composeT t t') g after (a',d)
 
 
 composeT t t' = \bsl -> t bsl . t' bsl
@@ -227,14 +229,14 @@ getName (Pull n ixf) = let Index (n,_) = ixf (Literal 0)
 
 addTup n ds = map (\d -> (n,d)) ds
 
-collectRun :: (forall c. Exp c -> [d]) -> Exp Word32 -> (a :-> b) -> a -> (b, [(Word32,d)])
-collectRun cf ix (Pure f)   a = (f a, []) -- case f a of Pull n ixf -> addTup n (cf $ ixf ix)
-collectRun cf ix (Sync f g) a =
-  let (a'@(Pull n ixf),d) = f a
-      a'' = fakeForce a' "noname"
+collectRun :: (forall c. Scalar c => Exp c -> [d]) -> Exp Word32 -> (a :-> b) -> a -> (b, [(Word32,d)])
+collectRun cf ix (Pure f)   a = trace "pure" $ (f a, []) -- case f a of Pull n ixf -> addTup n (cf $ ixf ix)
+collectRun cf ix (Sync f g) a = trace ( "sync" ++ show g) $
+  let (a'@(Pull n ixf),d) = trace "f" $ f a
+      a'' = trace "fake" $ fakeForce a' "noname"
       (a''',r) = collectRun cf ix g (a'',d)
   in (a''', addTup n (cf $ ixf ix) ++ r)
-collectRun cf ix (Apply f g) a =
+collectRun cf ix (Apply f g) a = trace "apply" $
   let ((h,b),d) = f a
       (a',r)    = collectRun cf ix h b
       (a'',r2)  = collectRun cf ix g (a',d) 
@@ -262,10 +264,10 @@ isDivable m bs ngid gid (na,a) =
 runAable :: (Scalar b) => (Exp Word32 -> (Word32,Exp Word32) -> Bool) -> RunInfo b c d -> Bool
 runAable f ri@(bs,g,a,d) =
   let n = "target"
-      gid = (BlockIdx X*(fromIntegral bs) +(ThreadIdx X))
       a' = fakeForce a n
+      gid = (BlockIdx X*(fromIntegral bs) +(ThreadIdx X))
       accesses = snd $ collectRun (collectExp (getIndice n) (++)) gid g (a',d)
-  in strace $ accesses /= [] && all (gid `f`) accesses
+  in strace $ (strace accesses) /= [] && all (gid `f`) accesses
 
 runWable :: (Scalar b) => RunInfo b c d -> Bool
 runWable ri@(bs,g,a,d) = runAable (isDivable 32 bs (len a)) ri
@@ -306,128 +308,8 @@ divide :: (Scalar b)
        -> Word32 -> Exp b -> Exp b
 divide n f bsl = traverseExp (traverseOnIndice n (f bsl))
 
+strace a = trace (show a) a
 
-testInput :: Pull Word32 (Exp Int)
-testInput = namedGlobal "apa" 2048
-
-testInput' :: Pull (Exp Word32) (Exp Int)
-testInput' = namedGlobal "apa" 2048
-
-testInputS :: Pull Word32 (Exp Int)
-testInputS = namedGlobal "apa" 512
-
-testInputW :: Pull Word32 (Exp Word32)
-testInputW = namedGlobal "apa" 512
-
-liftE a = resize (fromIntegral (len a)) a
-
-reduce0 :: (Scalar a, Num (Exp a)) => Word32 -> (Pull Word32 (Exp a) :-> (Pull Word32 (Exp a)))
-reduce0 1 = id
-reduce0 n = (uncurry (zipWith (+)) <<< halve)
-       ^>> aSync
-       >>> reduce0 (n`div`2)
-tr0 = quickPrint t testInput
-  where s a = liftG $ simpleRun (reduce0 (len a)) a
-        t a = run 1024 (reduce0 (len a)) a 
-
-reduce1 :: (Scalar a, Num (Exp a)) => Word32 -> (Pull Word32 (Exp a) :-> (Pull Word32 (Exp a)))
-reduce1 n = (uncurry (zipWith (+)) <<< halve)
-       ^>> if n == 2
-        then id
-        else aSync
-         >>> reduce1 (n`div`2)
-tr1 = quickPrint t testInput
-  where t a = run 1024 (reduce1 (len a)) a 
-
-reduce2 :: (Scalar a, Num (Exp a)) => (Pull Word32 (Exp a) :-> (Pull Word32 (Exp a)))
-reduce2 = proc a -> do
-      rec a' <- Pure (halve >>> uncurry (zipWith (+))) -< a
-          b <- aSync -< a'
-          a <- id -< if len a == 1 then b else b
-      returnA -< a
-tr2 = quickPrint s testInput
-  where s a = liftG $ simpleRun reduce2 a
-        t a = run 1024 reduce2 a
-
-appl :: ArrowApply a => a b c -> a b c
-appl a = proc b -> do app -< (a,b)
-
-
-reduce3 :: (Scalar a, Num (Exp a)) => (Pull Word32 (Exp a) :-> (Pull Word32 (Exp a)))
-reduce3 = proc a -> do
-      let b = uncurry (zipWith (+)) $ halve a
-      app -< (if len b == 1 then id else reduce3 <<< aSync,b)
-tr3 = quickPrint t testInput
-  where s a = liftG $ simpleRun reduce3 a
-        t a = run 1024 reduce3 a
-
-type a :~> b = a -> ArrowAsMonad (:->) b
-
-reduce4 :: (Scalar a, Num (Exp a)) => Pull Word32 (Exp a) :~> (Pull Word32 (Exp a))
-reduce4 a = do
-  let b = uncurry (zipWith (+)) $ halve a
-  if len b == 1
-    then return b
-    else (unmonadicA aSync >=> reduce4) b
-tr4 = quickPrint t testInput
-  where s a = liftG $ simpleRun (monadicA reduce4) a
-        t a = run 1024 (monadicA reduce4) a
-
-mine :: (Scalar a, Ord (Exp a)) => Exp a -> Exp a -> Exp a
-mine = BinOp Min
-maxe :: (Scalar a, Ord (Exp a)) => Exp a -> Exp a -> Exp a
-maxe = BinOp Max
-
-bitonicMerge0 :: (Scalar a, Ord (Exp a)) => ((Pull Word32 (Exp a),Word32) :-> Pull Word32 (Exp a))
-bitonicMerge0 = proc (a,s) -> do
-  let s' = fromIntegral s
-      b = Pull (len a) $ \i -> If (i .&. s' ==* 0)
-                                  (mine (a!i) (a!(i `xor` s')))
-                                  (maxe (a!i) (a!(i `xor` s')))
-  app -< (if s == 1 then arr fst else bitonicMerge0 <<< first aSync,(b,s`div`2))
-bitonic0 :: (Scalar a, Ord (Exp a)) => Pull Word32 (Exp a) :-> Pull Word32 (Exp a)
-bitonic0 = proc a -> do
-  bitonicMerge0 -< (a,len a)
-tb0 = quickPrint t testInputS
-  where s a = liftG $ simpleRun bitonicMerge0 (a,len a)
-        t a = run 1024 bitonicMerge0 (a,len a)
-
-
-mSync :: (Scalar a) => Pull Word32 (Exp a) :~> Pull Word32 (Exp a)
-mSync = unmonadicA aSync
-
-type PullC a = Pull Word32 (Exp a)
-
-listRank0 :: (Exp (Word32) -> Exp Bool) -> Pull Word32 (Exp Word32) :~> Pull Word32 (Exp Word32)
-listRank0 isNull nexti = do
-  let ranki :: Pull Word32 (Exp Word32)
-      ranki = fmap (\v -> If (isNull v) 0 1) nexti
-      s = len nexti
-  (nextf,rankf) <- f s (ranki,nexti)
-  --(nextf,rankf) <- concatM (replicate (getNext2Power s) f) (ranki,nexti)
-  return rankf
-    where f :: Word32 -> (PullC Word32, PullC Word32) :~> (PullC Word32, PullC Word32)
-          f n (rank,next) = do
-            let (rankn,nextn) = unzipp $ Pull (len nexti) $ \k ->
-                    let nk = next!k
-                    in ifp (isNull nk)
-                        (rank!k,next!k)
-                        ((rank!k) + (rank!nk), next!nk)
-            ranks <- mSync rankn
-            nexts <- mSync nextn
-            if n == 0
-              then return (ranks,nexts)
-              else f (n`div`2) (ranks,nexts)
-tl0 = quickPrint t testInputW
-  where s a = liftG $ simpleRun (monadicA $ listRank0 p) a
-        t a = run 1024 (monadicA $ listRank0 p) a
-        p v = v ==* 0
-
-concatM :: Monad m => [a -> m a] -> a -> m a
-concatM fs = foldr (>=>) return fs
-
-ifp :: (Scalar a, Scalar b) => (Exp Bool) -> (Exp a, Exp b) -> (Exp a, Exp b) -> (Exp a, Exp b)
-ifp p (a1,a2) (b1,b2) = (If p a1 b1, If p a2 b2)
 
 {-
 
@@ -437,6 +319,7 @@ Strategies:
   threadids
   transpose
 Instead of replacing accesses, do it in Pull
+  where do we get size?
 MPI
 
 -}

@@ -1,0 +1,86 @@
+{-# LANGUAGE ScopedTypeVariables,
+             GADTs,
+             RankNTypes,
+             ExistentialQuantification,
+             MultiParamTypeClasses,
+             FlexibleInstances,
+             TypeFamilies,
+             TypeOperators,
+             Arrows,
+             ImpredicativeTypes,
+             FlexibleContexts #-}
+
+module ArrowLib where
+
+import qualified Obsidian.CodeGen.CUDA as CUDA
+import Obsidian.CodeGen.InOut
+
+import Obsidian.Exp
+import Obsidian.Array
+import Obsidian.Library
+
+import Debug.Trace
+
+import Data.Word
+import Data.Bits
+
+import Control.Category
+import Control.Arrow
+import Control.Monad
+import Control.Arrow.ApplyUtils
+
+import Arrow
+
+import Prelude hiding (zipWith,sum,replicate,id,(.))
+import qualified Prelude as P
+
+mSync :: (Scalar a) => Pull Word32 (Exp a) :~> Pull Word32 (Exp a)
+mSync = unmonadicA aSync
+
+type PullC a = Pull Word32 (Exp a)
+
+
+concatM :: Monad m => [a -> m a] -> a -> m a
+concatM fs = foldr (>=>) return fs
+
+ifp :: (Scalar a, Scalar b) => (Exp Bool) -> (Exp a, Exp b) -> (Exp a, Exp b) -> (Exp a, Exp b)
+ifp p (a1,a2) (b1,b2) = (If p a1 b1, If p a2 b2)
+
+pSync (a,b) = do
+  a' <- mSync a
+  b' <- mSync b
+  return (a',b')
+  
+psSync i = do
+  let (a,b) = unzipp i
+  a' <- mSync a
+  b' <- mSync b
+  return $ zipp (a',b')
+
+arrSync i = do
+  let (a,b) = unzipp i
+  s <- mSync (a`conc`b)
+  return $ zipp $ halve s
+
+arrSync2 i = do
+  let (a,b) = unzipp i
+  s <- mSync (interleave a b)
+  return $ zipp $ evenOdds s
+
+interleave a b = Pull (len a + len b) $ \ix ->
+                    If (ix .&. 1 ==* 0) (a!(ix`div`2)) (b!(ix`div`2))
+
+
+mine :: (Scalar a, Ord (Exp a)) => Exp a -> Exp a -> Exp a
+mine = BinOp Min
+maxe :: (Scalar a, Ord (Exp a)) => Exp a -> Exp a -> Exp a
+maxe = BinOp Max
+
+type a :~> b = a -> ArrowAsMonad (Arrow.:->) b
+
+liftE a = resize (fromIntegral (len a)) a
+
+quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
+quickPrint prg input =
+  putStrLn $ CUDA.genKernel "kernel" prg input
+

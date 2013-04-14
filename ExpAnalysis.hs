@@ -17,9 +17,9 @@ import Obsidian.Types
 import Obsidian.Array
 import Obsidian.Library
 import Obsidian.Force
-import Obsidian.CodeGen.InOut
 import Obsidian.Atomic
 import Obsidian.Globs
+
 import Debug.Trace
 
 import Data.Word
@@ -42,12 +42,11 @@ simplifyMod m bs a' = (makeExp.(simplifyMod' m bs).snd.(simplifyMod' m bs)) a' -
   where makeExp :: (Maybe (Word32,Word32),Exp Word32) -> Exp Word32
         makeExp (Just (l,h),a) | l>=0 && h<m = a
         makeExp (_,a) = a`mod`(Literal m)
-        {-
         makeExp (Just r,a) = error $ (show a) ++ " (originally " ++ (show a')
                           ++ ") not moddable by " ++ (show m)
                           ++ " because it has range " ++ show r
+                          ++ " in size " ++ show bs
         makeExp (Nothing,a) = error $ (show a) ++ " not moddable by " ++ (show m) --a`mod`(Literal m)
-        -}
 
 t0 = simplifyMod' 512 512 $ (ThreadIdx X)
 t1 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2
@@ -64,6 +63,8 @@ getNext2Powerm v = if v == 0 then 0 else f (v-1) (bitSize v) 1
 
 getNext2Power :: Bits a => a -> a
 getNext2Power = (+1).getNext2Powerm
+
+is2Power x = x .&. (x-1) == 0
 
 simplifyMod' :: Word32 -> Word32 -> Exp Word32 -> (Maybe (Word32,Word32),Exp Word32)
 simplifyMod' 0 bs = error "Divzero"
@@ -112,11 +113,17 @@ simplifyDiv :: Word32 -> Word32 -> Word32 -> Exp Word32 -> Exp Word32
 simplifyDiv m bs n = sd
   where sd :: Exp Word32 -> Exp Word32
         sd (Literal a) = Literal (a `div` m)
-        sd (BinOp Mul a b) = sd a * b
+        sd (BinOp Mul a (Literal b)) = case gcd b m of
+            d | d==b -> simplifyDiv (m`div`d) bs n a
+            d | m==b -> simplifyDiv 1 bs n a
+            d        -> ((fromIntegral (b`div`d)) * simplifyDiv 1 bs n a) `div` (fromIntegral (m`div`d))
+        sd (BinOp Mul (Literal b) a) = sd (BinOp Mul a (Literal b))
+        --sd (BinOp Mul a b) = error (show a ++ "*" ++ show b) -- sd a * b
         sd (BinOp Add a b) = sd a + sd b
         sd (BinOp Sub a b) = sd a - sd b
         sd (BinOp Div a (Literal b)) = simplifyDiv (m*b) bs n a
         sd (BinOp Div a b) = sd a `div` b
+        sd (BinOp BitwiseXor a b) | is2Power m = sd a `xor` sd b
         sd (ThreadIdx X) | (min bs n) <= m = Literal 0
         sd (BlockIdx X)  | (n`div`bs) <= m = Literal 0
         sd a = a `div` Literal m
@@ -144,21 +151,16 @@ traverseExp f d (BinOp Sub a b) = traverseBin f d a b (-)
 traverseExp f d a = f d a
 -}
 
-collectExp :: (forall a. Exp a -> b) -> (b -> b -> b) -> Exp a -> b
+collectExp :: (Scalar a) => (forall a. Exp a -> b) -> (b -> b -> b) -> Exp a -> b
 collectExp f c e@(BinOp op a b) = f e  `c` collectExp f c a `c` collectExp f c b
+collectExp f c e@(UnOp op a) = f e  `c` collectExp f c a
 collectExp f c e@(If p a b) = f e `c` collectExp f c p `c` collectExp f c a `c` collectExp f c b
+collectExp f c e@(Index (n,es)) = f e `c` foldr1 c (map (collectExp f c) es)
 collectExp f c e = f e
 
 getIndice :: Name -> Exp a -> [Exp Word32]
 getIndice nn (Index (n,[r])) | n == nn = [r]
 getIndice _ _ = []
-
---helpers
-quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
-quickPrint prg input =
-  putStrLn $ CUDA.genKernel "kernel" prg input
-
-strace a = trace (show a) a
 
 traverseExp :: (forall a. Exp a -> Exp a) -> Exp b -> Exp b
 traverseExp f (BinOp Mul a b) = f $ (traverseExp f a) * (traverseExp f b)
@@ -166,7 +168,9 @@ traverseExp f (BinOp Add a b) = f $ (traverseExp f a) + (traverseExp f b)
 traverseExp f (BinOp Sub a b) = f $ (traverseExp f a) - (traverseExp f b)
 traverseExp f (BinOp Div a b) = f $ (traverseExp f a) `div` (traverseExp f b)
 traverseExp f (BinOp op  a b) = f $ (BinOp op (traverseExp f a) (traverseExp f b))
+traverseExp f (UnOp  op  a)   = f $ (UnOp  op (traverseExp f a))
 traverseExp f (If p a b) = f $ If (traverseExp f p) (traverseExp f a) (traverseExp f b) 
+traverseExp f (Index (n,es)) = f $ Index (n,map (traverseExp f) es)
 traverseExp f a = f a
 
 traverseOnIndice :: Name -> (Exp Word32 -> Exp Word32) -> Exp a -> Exp a

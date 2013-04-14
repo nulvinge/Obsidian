@@ -238,6 +238,7 @@ data Op a where
 
   Int32ToWord32 :: Op (Int32 -> Word32)
   Word32ToInt32 :: Op (Word32 -> Int32) 
+  Word32ToFloat :: Op (Word32 -> Float) 
   
 
 ---------------------------------------------------------------------------
@@ -281,6 +282,7 @@ collectArrayIndexPairs (If b e1 e2) = collectArrayIndexPairs b ++
 ---------------------------------------------------------------------------
 int32ToWord32 = UnOp Int32ToWord32
 word32ToInt32 = UnOp Word32ToInt32
+word32ToFloat = UnOp Word32ToFloat
 
 ---------------------------------------------------------------------------
 -- 
@@ -335,7 +337,9 @@ instance Bits (Exp Int) where
   (.|.) (Literal a) (Literal b) = Literal (a .|. b)
   (.|.) a b = BinOp BitwiseOr  a b
   xor (Literal a) (Literal b) = Literal (a `xor` b) 
-  xor   a b = BinOp BitwiseXor a b 
+  xor a (Literal 0) = a
+  xor (Literal 0) b = b
+  xor a b = BinOp BitwiseXor a b 
   
   --TODO: See that this is not breaking something (32/64 bit, CUDA/Haskell)
   complement (Literal i) = Literal (complement i)
@@ -400,6 +404,8 @@ instance Bits (Exp Int32) where
   (.|.) (Literal a) (Literal b) = Literal (a .|. b)
   (.|.) a b = BinOp BitwiseOr  a b
   xor (Literal a) (Literal b) = Literal (a `xor` b) 
+  xor a (Literal 0) = a
+  xor (Literal 0) b = b
   xor   a b = BinOp BitwiseXor a b 
   
   --TODO: See that this is not breaking something (32/64 bit, CUDA/Haskell)
@@ -486,6 +492,8 @@ instance Bits (Exp Word32) where
   (.|.) (Literal a) (Literal b) = Literal (a .|. b) 
   (.|.) a b = BinOp BitwiseOr  a b
   xor (Literal a) (Literal b) = Literal (a `xor` b) 
+  xor a (Literal 0) = a
+  xor (Literal 0) b = b
   xor   a b = BinOp BitwiseXor a b 
   complement (Literal i) = Literal (complement i) 
   complement a = UnOp BitwiseNeg a
@@ -747,6 +755,7 @@ expToCExpGeneral e@(If b e1 e2)      = cCond  (expToCExp b) (expToCExp e1) (expT
 
 expToCExpGeneral (UnOp Word32ToInt32 e) = cCast (expToCExp e) CInt32
 expToCExpGeneral (UnOp Int32ToWord32 e) = cCast (expToCExp e) CWord32
+expToCExpGeneral (UnOp Word32ToFloat e) = cCast (expToCExp e) CFloat
 
 expToCExpGeneral e@(BinOp Min e1 e2) = cFuncExpr "min" [expToCExp e1, expToCExp e2] (typeToCType (typeOf e)) 
 expToCExpGeneral e@(BinOp Max e1 e2) = cFuncExpr "max" [expToCExp e1, expToCExp e2] (typeToCType (typeOf e)) 
