@@ -97,15 +97,16 @@ tr4 = quickPrint t testInput
   where s a = liftG $ simpleRun (monadicA reduce4) a
         t a = run 1024 (monadicA reduce4) a
 
-rreduce4 :: (Scalar a, Num (Exp a)) => Pull Word32 (Exp a) :~> (Pull Word32 (Exp a))
-rreduce4 a = do
-  let b = uncurry (zipWith (+)) $ halve a
-  if len b == 1
+rreduce4 :: (Scalar a, Num (Exp a)) => Word32 -> Pull Word32 (Exp a) :~> (Pull Word32 (Exp a))
+rreduce4 m a = do
+  let b = uncurry (zipWith (+)) $ evenOddParts m a
+  if m == 1
     then return b
-    else (mSync >=> reduce4) b
+    else do b' <- mSync b
+            rreduce4 (m`div`2) b
 trr4 = quickPrint t testInput
-  where s a = liftG $ simpleRun (monadicA rreduce4) a
-        t a = run 1024 (monadicA rreduce4) a
+  where s a = liftG $ simpleRun (monadicA (rreduce4 (len a`div`2))) a
+        t a = run 1024 (monadicA (rreduce4 (len a`div`2))) a
 
 
 bitonicMerge0 :: (Scalar a, Ord (Exp a)) => ((Pull Word32 (Exp a),Word32) :-> Pull Word32 (Exp a))
@@ -122,22 +123,25 @@ tb0 = quickPrint t testInputS
   where s a = liftG $ simpleRun bitonic0 a
         t a = run 512 bitonic0 a
 
-bitonicMerge1 :: (Scalar a, Ord (Exp a)) => Word32 -> (Pull Word32 (Exp a) :~> Pull Word32 (Exp a))
-bitonicMerge1 s a = do
+bitonicMerge1 :: (Scalar a, Ord (Exp a)) => Word32 -> Word32 -> (Pull Word32 (Exp a) :~> Pull Word32 (Exp a))
+bitonicMerge1 s m a = do
   let s' = fromIntegral s
-      b = Pull (len a) $ \i -> If (i .&. s' ==* 0)
+      m' = fromIntegral m
+      b = Pull (len a) $ \i -> If ((i .&. s' ==* 0) /=* (i .&. m' ==* 0))
                                   (mine (a!i) (a!(i `xor` s')))
                                   (maxe (a!i) (a!(i `xor` s')))
   if s <= 1
     then return b
     else do b' <- mSync b
-            bitonicMerge1 (s`div`2) b'
-bitonic1 :: (Scalar a, Ord (Exp a)) => Pull Word32 (Exp a) :~> Pull Word32 (Exp a)
-bitonic1 a = do
-  bitonicMerge1 (len a`div`2) a
+            bitonicMerge1 (s`div`2) m b'
+bitonicSort1 :: (Scalar a, Ord a) => Pull Word32 (Exp a) :~> Pull Word32 (Exp a)
+bitonicSort1 a = f 2 a
+  where f m a | m >= len a = return a
+        f m a              = do b <- bitonicMerge1 m (2*m) a
+                                f (m*2) b
 tb1 = quickPrint t testInputS
-  where s a = liftG $ simpleRun (monadicA bitonic1) a
-        t a = run 512 (monadicA bitonic1) a
+  where s a = liftG $ simpleRun (monadicA bitonicSort1) a
+        t a = run 512 (monadicA bitonicSort1) a
 
 sctfftR1 :: Word32 -> Pull Word32 (Exp Float, Exp Float) :~> Pull Word32 (Exp Float, Exp Float)
 sctfftR1 s c = if s <= 1 then return c else do
@@ -167,27 +171,55 @@ tf1 = quickPrint t testInputS
   where s a = liftG $ simpleRun (monadicA sctfft1) a
         t a = run 512 (monadicA sctfft1) a
 
+
+listScan0 :: (a ~ Word32) => (Exp (Word32) -> Exp Bool) -> (Exp a -> Exp a -> Exp a) -> Word32
+          -> (PullC a, PullC Word32) :~> (PullC a)
+listScan0 isNull op n (rank,next) = do
+  let r = Pull (len next) $ \k ->
+          let nk = next!k
+          in ifp (isNull nk)
+              (rank!k,next!k)
+              ((rank!k) `op` (rank!nk), next!nk)
+  r' <- arrSync2 r
+  if strace n <= 1
+    then return $ fmap fst r'
+    else listScan0 isNull op (n`div`2) (unzipp r')
+
 listRank0 :: (Exp (Word32) -> Exp Bool) -> Pull Word32 (Exp Word32) :~> Pull Word32 (Exp Word32)
 listRank0 isNull nexti = do
   let ranki :: Pull Word32 (Exp Word32)
       ranki = fmap (\v -> If (isNull v) 0 1) nexti
       s = len nexti
-  (nextf,rankf) <- f s (ranki,nexti)
-  --(nextf,rankf) <- concatM (replicate (getNext2Power s) f) (ranki,nexti)
-  return rankf
-    where f :: Word32 -> (PullC Word32, PullC Word32) :~> (PullC Word32, PullC Word32)
-          f n (rank,next) = do
-            let r = Pull (len nexti) $ \k ->
-                    let nk = next!k
-                    in ifp (isNull nk)
-                        (rank!k,next!k)
-                        ((rank!k) + (rank!nk), next!nk)
-            r' <- arrSync2 r
-            if strace n <= 1
-              then return (unzipp r')
-              else f (n`div`2) (unzipp r')
-tl0 = quickPrint s testInputW
+  listScan0 isNull (+) s (ranki,nexti)
+tl0 = quickPrint t testInputW
   where s a = liftG $ simpleRun (monadicA $ listRank0 p) a
         t a = run 1024 (monadicA $ listRank0 p) a
         p v = v ==* 0
+
+sortList0 :: (Exp (Word32) -> Exp Bool) -> PullC2 Word32 Word32 :~> PullC Word32
+sortList0 p a = do
+  let (next,vals) = unzipp a
+  rank <- listRank0 p next
+  return $ ixMap (rank!) vals
+ts0 = quickPrint t input
+  where s a = liftG $ simpleRun (monadicA $ sortList0 p) a
+        t a = run 1024 (monadicA $ sortList0 p) a
+        input = zipp (testInputW,testInputW)
+        p v = v ==* 0
+
+constructTour0 :: PullC2 Word32 Word32 :~> PullC Word32
+constructTour0 a = do
+  b <- mSync $ interleave (merge a) (merge $ (fmap (\(a,b) -> (b,a))) a)
+  c <- bitonicSort1 b
+  return $ c
+  where merge :: PullC2 Word32 Word32 -> PullC Word32
+        merge arr   = fmap (\(a,b) -> a*elen arr+b) arr
+        unmerge arr = fmap (\a -> a`divMod`elen arr) arr
+tt0 = quickPrint t input
+  where s a = liftG $ simpleRun (monadicA $ constructTour0) a
+        t a = run 1024 (monadicA $ constructTour0) a
+        input = zipp (testInputW,testInputW)
+        p v = v ==* 0
+
+
 

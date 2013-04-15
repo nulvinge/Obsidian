@@ -18,7 +18,8 @@
 --  write_ should be internal use only
 module Obsidian.Force (write,
                        force,
-                       forceG
+                       forceG,
+                       forceG'
                       ) where
 
 
@@ -68,3 +69,18 @@ forceG (Push _ p)  =
     return ()
     where
       assignTo nom a ix = Assign nom [ix] a 
+
+-- Experimental general forceG
+forceG' :: forall a. MemoryOps a
+          => Push Grid Word32 a
+          -> GProgram () -- Really to something else (named output ?)
+forceG' a@(Push s p)  =
+  do
+    let v = (undefined :: a)
+    n <- names v
+    output <- allocateArray n v s
+    p (assignArray n)
+    return ()
+    where
+      assignTo nom a ix = Assign nom [ix] a 
+

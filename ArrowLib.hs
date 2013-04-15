@@ -38,6 +38,7 @@ mSync :: (Scalar a) => Pull Word32 (Exp a) :~> Pull Word32 (Exp a)
 mSync = unmonadicA aSync
 
 type PullC a = Pull Word32 (Exp a)
+type PullC2 a b = Pull Word32 (Exp a, Exp b)
 
 
 concatM :: Monad m => [a -> m a] -> a -> m a
@@ -70,6 +71,13 @@ arrSync2 i = do
 interleave a b = Pull (len a + len b) $ \ix ->
                     If (ix .&. 1 ==* 0) (a!(ix`div`2)) (b!(ix`div`2))
 
+evenOddParts :: ASize l => l -> Pull l a -> (Pull l a, Pull l a)
+evenOddParts m' arr = (mkPullArray (n-n2) (\ix -> arr ! (2*(ix`div`m)*m + (ix`mod`m)))
+                      ,mkPullArray n2     (\ix -> arr ! (2*(ix`div`m)*m + m + (ix`mod`m)))
+                      )
+  where n  = len arr
+        n2 = n`div`2
+        m = fromIntegral m'
 
 mine :: (Scalar a, Ord (Exp a)) => Exp a -> Exp a -> Exp a
 mine = BinOp Min
@@ -83,4 +91,12 @@ liftE a = resize (fromIntegral (len a)) a
 quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
 quickPrint prg input =
   putStrLn $ CUDA.genKernel "kernel" prg input
+
+
+elen :: (Array a, ASize s) => a s e -> Exp Word32
+elen = fromIntegral.len
+
+
+
+
 

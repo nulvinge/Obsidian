@@ -19,6 +19,7 @@ import Obsidian.Library
 import Obsidian.Force
 import Obsidian.Atomic
 import Obsidian.Globs
+import Obsidian.Memory
 
 import Debug.Trace
 
@@ -151,29 +152,32 @@ traverseExp f d (BinOp Sub a b) = traverseBin f d a b (-)
 traverseExp f d a = f d a
 -}
 
-collectExp :: (Scalar a) => (forall a. Exp a -> b) -> (b -> b -> b) -> Exp a -> b
-collectExp f c e@(BinOp op a b) = f e  `c` collectExp f c a `c` collectExp f c b
-collectExp f c e@(UnOp op a) = f e  `c` collectExp f c a
-collectExp f c e@(If p a b) = f e `c` collectExp f c p `c` collectExp f c a `c` collectExp f c b
-collectExp f c e@(Index (n,es)) = f e `c` foldr1 c (map (collectExp f c) es)
-collectExp f c e = f e
+class (MemoryOps a) => TraverseExp a where
+  collectExp :: (forall e. Exp e -> b) -> (b -> b -> b) -> a -> b
+  traverseExp :: (forall e. Exp e -> Exp e) -> a -> a
 
-getIndice :: Name -> Exp a -> [Exp Word32]
-getIndice nn (Index (n,[r])) | n == nn = [r]
+instance (Scalar a) => TraverseExp (Exp a) where
+  collectExp f c e@(BinOp op a b) = f e  `c` collectExp f c a `c` collectExp f c b
+  collectExp f c e@(UnOp op a) = f e  `c` collectExp f c a
+  collectExp f c e@(If p a b) = f e `c` collectExp f c p `c` collectExp f c a `c` collectExp f c b
+  collectExp f c e@(Index (n,es)) = f e `c` foldr1 c (map (collectExp f c) es)
+  collectExp f c e = f e
+
+  traverseExp f (BinOp Mul a b) = f $ (traverseExp f a) * (traverseExp f b)
+  traverseExp f (BinOp Add a b) = f $ (traverseExp f a) + (traverseExp f b)
+  traverseExp f (BinOp Sub a b) = f $ (traverseExp f a) - (traverseExp f b)
+  traverseExp f (BinOp Div a b) = f $ (traverseExp f a) `div` (traverseExp f b)
+  traverseExp f (BinOp op  a b) = f $ (BinOp op (traverseExp f a) (traverseExp f b))
+  traverseExp f (UnOp  op  a)   = f $ (UnOp  op (traverseExp f a))
+  traverseExp f (If p a b) = f $ If (traverseExp f p) (traverseExp f a) (traverseExp f b) 
+  traverseExp f (Index (n,es)) = f $ Index (n,map (traverseExp f) es)
+  traverseExp f a = f a
+
+getIndice :: Names -> Exp a -> [Exp Word32]
+getIndice nn (Index (n,[r])) | n `inNames` nn = [r]
 getIndice _ _ = []
 
-traverseExp :: (forall a. Exp a -> Exp a) -> Exp b -> Exp b
-traverseExp f (BinOp Mul a b) = f $ (traverseExp f a) * (traverseExp f b)
-traverseExp f (BinOp Add a b) = f $ (traverseExp f a) + (traverseExp f b)
-traverseExp f (BinOp Sub a b) = f $ (traverseExp f a) - (traverseExp f b)
-traverseExp f (BinOp Div a b) = f $ (traverseExp f a) `div` (traverseExp f b)
-traverseExp f (BinOp op  a b) = f $ (BinOp op (traverseExp f a) (traverseExp f b))
-traverseExp f (UnOp  op  a)   = f $ (UnOp  op (traverseExp f a))
-traverseExp f (If p a b) = f $ If (traverseExp f p) (traverseExp f a) (traverseExp f b) 
-traverseExp f (Index (n,es)) = f $ Index (n,map (traverseExp f) es)
-traverseExp f a = f a
-
-traverseOnIndice :: Name -> (Exp Word32 -> Exp Word32) -> Exp a -> Exp a
-traverseOnIndice nn f (Index (n,[r])) | n == nn = Index (n,[f r])
+traverseOnIndice :: Names -> (Exp Word32 -> Exp Word32) -> Exp a -> Exp a
+traverseOnIndice nn f (Index (n,[r])) | n `inNames` nn = Index (n,[f r])
 traverseOnIndice _ _ a = a
 
