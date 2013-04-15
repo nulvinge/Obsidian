@@ -1,13 +1,14 @@
 
 {- Joel Svensson 2013 -} 
 
-module Obsidian.Memory (MemoryOps(..), Names, inNames)  where
+module Obsidian.Memory (MemoryOps(..), Names, names, typesArray, inNames)  where
 
 
 import Obsidian.Program
 import Obsidian.Exp
 import Obsidian.Types
 import Obsidian.Globs
+import Obsidian.Types
 import Obsidian.Array -- Importing this feels a bit strange. 
 
 import Data.Word
@@ -20,21 +21,26 @@ inNames n (Single name) = n == name
 inNames n (Tuple names) = any (inNames n) names
 
 class MemoryOps a where
-  names          :: a -> Program t Names 
-  names a = do
-    n <- uniqueSM
-    return $ createNames a n
   createNames    :: a -> Name -> Names
+  typesScalar    :: Names -> a -> [(Name,Type)]
   allocateArray  :: Names -> a -> Word32 -> Program t ()
   allocateScalar :: Names -> a -> Program t () 
   assignArray    :: Names -> a -> Exp Word32 -> TProgram ()
   assignScalar   :: Names -> a -> TProgram () 
-  pullFrom       :: Names -> Word32 -> Pull Word32 a
+  pullFrom       :: (ASize s) => Names -> s -> Pull s a
   readFrom       :: Names -> a
 
 
+names :: (MemoryOps a) => a -> Program t Names 
+names a = do
+  n <- uniqueSM
+  return $ createNames a n
+
+typesArray ns a = map (\(n,t) -> (n,Pointer t)) (typesScalar ns a)
+
 instance Scalar a => MemoryOps (Exp a) where
   createNames a n = Single n
+  typesScalar (Single n) a = [(n, typeOf a)]
   allocateArray (Single name) a n = 
     Allocate name (n * fromIntegral (sizeOf a))
                   (Pointer (typeOf a))
@@ -48,6 +54,7 @@ instance Scalar a => MemoryOps (Exp a) where
 instance (MemoryOps a, MemoryOps b) => MemoryOps (a, b) where
   createNames (a,b) n = Tuple [createNames a (n++"a")
                               ,createNames b (n++"b")]
+  typesScalar (Tuple [na,nb]) (a,b) = typesScalar na a ++ typesScalar nb b
   allocateArray (Tuple [ns1,ns2]) (a,b) n =
     do 
       allocateArray ns1 a n
@@ -72,3 +79,4 @@ instance (MemoryOps a, MemoryOps b) => MemoryOps (a, b) where
     let p1 = readFrom ns1
         p2 = readFrom ns2
     in (p1,p2) 
+

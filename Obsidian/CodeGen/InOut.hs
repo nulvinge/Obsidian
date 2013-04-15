@@ -26,6 +26,7 @@ import Obsidian.Array
 import Obsidian.Types
 import Obsidian.Globs 
 import Obsidian.Program
+import Obsidian.Memory
 import qualified Obsidian.CodeGen.Program as CG 
 
 import Data.Word
@@ -52,88 +53,38 @@ type Inputs = [(Name,Type)]
 
 class ToProgram a b where
   toProgram :: Int -> (a -> b) -> Ips a b -> (Inputs,CG.IM)
-  
-typeOf_ a = typeOf (Literal a)
 
-class Vector a where
-  getTypes :: a -> Name -> (a,[(Name,Type)])
+class GetTypes a where
+  getTypes :: a -> Name -> (Inputs,a)
 
-instance (Scalar a) => Vector (Exp a) where
-  getTypes a n = (variable n,[(n, typeOf a)])
+instance (MemoryOps a) => GetTypes (Pull Word32 a) where
+  getTypes a name = (typesArray names aa
+                    ,pullFrom names (len a))
+      where aa = (a!0)
+            names = createNames aa name
 
-instance (Scalar a) => Vector (Pull (Exp Word32) (Exp a)) where
-  getTypes _ n = (input,[(n, Pointer (typeOf_ (undefined :: a))), (nn,Word32)])
-    where nn        = n ++ "n"
-          input = namedGlobal n (variable nn)
+instance (MemoryOps a) => GetTypes (Pull (Exp Word32) a) where
+  getTypes a name = ((namen, Word32) : typesArray names aa
+                    ,pullFrom names (variable namen))
+      where aa = (a!0)
+            namen = name ++ "n"
+            names = createNames aa name
 
-instance (Scalar a) => Vector (Pull Word32 (Exp a)) where
-  getTypes a n = (input,[(n, Pointer (typeOf_ (undefined :: a)))])
-    where input = namedGlobal n (len a)
+instance (Scalar a) => GetTypes (Exp a) where
+  getTypes a name = (typesScalar names a
+                    ,readFrom names)
+      where namen = name ++ "n"
+            names = createNames a name
 
-instance (Scalar a, Scalar b) => Vector (Exp a, Exp b) where
-  getTypes (a,b) n = ((aa,ba),at++bt)
-    where (aa,at) = getTypes a (n++"a")
-          (ba,bt) = getTypes b (n++"b")
-
-zipG :: (ASize s) => Pull s a -> Pull s b -> Pull s (a, b)
-zipG arr1 arr2 = Pull (min (len arr1) (len arr2)) $ \ix -> (arr1 ! ix, arr2 ! ix)
-
-instance (ASize s, Vector (Pull s (Exp a)), Vector (Pull s (Exp b)))
-      => Vector (Pull s (Exp a, Exp b)) where
-  getTypes a n = (zipG aa ba,at++bt)
-    where (aa,at) = getTypes (Pull (len a) undefined :: Pull s (Exp a)) (n++"a")
-          (ba,bt) = getTypes (Pull (len a) undefined :: Pull s (Exp b)) (n++"b")
-
-instance (Vector a) => ToProgram a (GProgram b) where
+instance (GetTypes a) => ToProgram a (GProgram b) where
   toProgram i f a = (types, CG.compileStep1 (f input))
-    where (input,types) = getTypes a ("input" ++ show i)
+    where (types,input) = getTypes a ("input" ++ show i)
 
---instance (Vector a) => ToProgram a (Final (GProgram b)) where
---  toProgram i f a = (types, CG.compileStep1 (cheat (f input)))
---    where (input,types) = getTypes (undefined :: a) ("input" ++ show i)
+instance (GetTypes a, ToProgram b c) => ToProgram a (b -> c) where
+  toProgram i f (a :-> rest) = (ins ++ types, prg)
+    where (ins,prg)     = toProgram (i+1) (f input) rest
+          (types,input) = getTypes a ("input" ++ show i)
 
-instance (Vector a, ToProgram b c) => ToProgram a (b -> c) where
-  toProgram i f (a :-> rest) = (ins ++ types,prg)
-    where (ins,prg) = toProgram (i+1) (f input) rest
-          (input,types) = getTypes a ("input" ++ show i)
-
-{-
-instance (Scalar t) => ToProgram (Exp t) (GProgram b) where
-  toProgram i f a = ([(nom,t)],CG.compileStep1 (f input))
-    where nom = "s" ++ show i
-          input = variable nom
-          t = typeOf_ (undefined :: t)
-
-
--- UPDATE THIS: The rest of the code gen will need a length variable
-instance (Scalar t) => ToProgram (Pull (Exp Word32) (Exp t)) (GProgram a) where
-  toProgram i f (Pull n ixf) = ([(nom,Pointer t),(n,Word32)],CG.compileStep1 (f input)) 
-      where nom = "input" ++ show i
-            n   = "n" ++ show i 
-            lengthVar = variable n
-            input = namedGlobal nom lengthVar
-            t = typeOf_ (undefined :: t)
-
-
-instance (Scalar t, ToProgram b c) => ToProgram (Exp t) (b -> c) where
-  toProgram i f (a :-> rest) = ((nom,t):ins,prg)
-    where
-      (ins,prg) = toProgram (i+1) (f input) rest
-      nom = "s" ++ show i
-      input = variable nom
-      t = typeOf_ (undefined :: t)
-
-
-instance (Scalar t, ToProgram b c) => ToProgram (Pull (Exp Word32) (Exp t)) (b -> c) where
-  toProgram i f ((Pull n ixf) :-> rest) = ((nom,Pointer t):(n,Word32):ins,prg)
-    where
-      (ins,prg) = toProgram (i+1) (f input) rest
-      nom = "input" ++ show i
-      n   = "n" ++ show i
-      lengthVar = variable n
-      input = namedGlobal nom lengthVar
-      t = typeOf_ (undefined :: t)
--}
 
 
 ---------------------------------------------------------------------------
