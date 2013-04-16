@@ -128,7 +128,7 @@ instance ArrowLoop (:->) where
 
 -- More or less means that only "Exps" are ever allowed..
 -- Try to generalise. Force is to blame for this.. 
-aSync :: (Scalar a) => Pull Word32 (Exp a) :-> Pull Word32 (Exp a)
+aSync :: (TraverseExp a) => Pull Word32 a :-> Pull Word32 a
 aSync = Sync (\a -> (a,())) (Pure (\(a,()) -> a))
 
 liftG :: BProgram a -> GProgram a
@@ -300,9 +300,9 @@ fakeForce a n = pullFrom n (len a)
 nameWrite :: forall a p. (Array p, Pushable p, MemoryOps a)
           => p Word32 a -> BProgram (Pull Word32 a, Names)
 nameWrite arr = do
-  snames <- names (undefined :: (MemoryOps a) => a)
+  snames <- names (trace "nn" (undefined :: a) :: (MemoryOps a) => a)
   let n = len arr
-  allocateArray snames (undefined :: a) n
+  allocateArray snames (trace "nw" (undefined :: a)) n
   let (Push m p) = push Block arr
   p (assignArray snames)
   return $ (pullFrom snames n, snames)

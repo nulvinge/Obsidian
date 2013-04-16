@@ -1,3 +1,5 @@
+{-# LANGUAGE ScopedTypeVariables  #-}
+
 
 {- Joel Svensson 2013 -} 
 
@@ -52,25 +54,26 @@ instance Scalar a => MemoryOps (Exp a) where
   readFrom (Single name) = variable name
 
 instance (MemoryOps a, MemoryOps b) => MemoryOps (a, b) where
-  createNames (a,b) n = Tuple [createNames a (n++"a")
-                              ,createNames b (n++"b")]
-  typesScalar (Tuple [na,nb]) (a,b) = typesScalar na a ++ typesScalar nb b
-  allocateArray (Tuple [ns1,ns2]) (a,b) n =
+  createNames _ n = Tuple [createNames (undefined :: a) (n++"a")
+                          ,createNames (undefined :: b) (n++"b")]
+  typesScalar (Tuple [na,nb]) _ = typesScalar na (undefined :: a)
+                               ++ typesScalar nb (undefined :: b)
+  allocateArray (Tuple [ns1,ns2]) _ n =
     do 
-      allocateArray ns1 a n
-      allocateArray ns2 b n
-  allocateScalar (Tuple [ns1,ns2]) (a,b) =
+      allocateArray ns1 (undefined :: a) n
+      allocateArray ns2 (undefined :: b) n
+  allocateScalar (Tuple [ns1,ns2]) _ =
     do
-      allocateScalar ns1 a
-      allocateScalar ns2 b 
+      allocateScalar ns1 (undefined :: a)
+      allocateScalar ns2 (undefined :: b) 
   assignArray (Tuple [ns1,ns2]) (a,b) ix =
     do
       assignArray ns1 a ix 
       assignArray ns2 b ix 
   assignScalar (Tuple [ns1,ns2]) (a,b) =
     do
-      assignScalar ns1 a 
-      assignScalar ns2 b  
+      assignScalar ns1 a
+      assignScalar ns2 b 
   pullFrom (Tuple [ns1,ns2]) n =
     let p1 = pullFrom ns1 n
         p2 = pullFrom ns2 n

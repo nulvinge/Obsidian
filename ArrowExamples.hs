@@ -161,7 +161,7 @@ sctfftR1 s c = if s <= 1 then return c else do
             ((a!i) `sub` (twiddle `mul` (a!(i `xor` sw))))
   if s == len c`div`2
     then return b
-    else arrSync2 b
+    else mSync b
 sctfft1 :: Pull Word32 (Exp Float) :~> Pull Word32 (Exp Float)
 sctfft1 a = do
   let b = fmap (\x -> (x,0)) a
@@ -180,7 +180,7 @@ listScan0 isNull op n (rank,next) = do
           in ifp (isNull nk)
               (rank!k,next!k)
               ((rank!k) `op` (rank!nk), next!nk)
-  r' <- arrSync2 r
+  r' <- mSync r
   if strace n <= 1
     then return $ fmap fst r'
     else listScan0 isNull op (n`div`2) (unzipp r')

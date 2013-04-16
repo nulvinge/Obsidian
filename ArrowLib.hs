@@ -18,6 +18,7 @@ import Obsidian.CodeGen.InOut
 import Obsidian.Exp
 import Obsidian.Array
 import Obsidian.Library
+import Obsidian.Memory
 
 import Debug.Trace
 
@@ -30,11 +31,12 @@ import Control.Monad
 import Control.Arrow.ApplyUtils
 
 import Arrow
+import ExpAnalysis
 
 import Prelude hiding (zipWith,sum,replicate,id,(.))
 import qualified Prelude as P
 
-mSync :: (Scalar a) => Pull Word32 (Exp a) :~> Pull Word32 (Exp a)
+mSync :: (TraverseExp a) => Pull Word32 a :~> Pull Word32 a
 mSync = unmonadicA aSync
 
 type PullC a = Pull Word32 (Exp a)
@@ -47,6 +49,7 @@ concatM fs = foldr (>=>) return fs
 ifp :: (Scalar a, Scalar b) => (Exp Bool) -> (Exp a, Exp b) -> (Exp a, Exp b) -> (Exp a, Exp b)
 ifp p (a1,a2) (b1,b2) = (If p a1 b1, If p a2 b2)
 
+{-
 pSync (a,b) = do
   a' <- mSync a
   b' <- mSync b
@@ -67,6 +70,8 @@ arrSync2 i = do
   let (a,b) = unzipp i
   s <- mSync (interleave a b)
   return $ zipp $ evenOdds s
+
+-}
 
 interleave a b = Pull (len a + len b) $ \ix ->
                     If (ix .&. 1 ==* 0) (a!(ix`div`2)) (b!(ix`div`2))

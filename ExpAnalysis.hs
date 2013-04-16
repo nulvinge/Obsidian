@@ -173,6 +173,11 @@ instance (Scalar a) => TraverseExp (Exp a) where
   traverseExp f (Index (n,es)) = f $ Index (n,map (traverseExp f) es)
   traverseExp f a = f a
 
+instance (TraverseExp a, TraverseExp b) => TraverseExp (a,b) where
+  collectExp f c (a,b) = collectExp f c a `c` collectExp f c b
+  traverseExp f (a,b) = (traverseExp f a, traverseExp f b)
+
+
 getIndice :: Names -> Exp a -> [Exp Word32]
 getIndice nn (Index (n,[r])) | n `inNames` nn = [r]
 getIndice _ _ = []
