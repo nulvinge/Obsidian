@@ -10,7 +10,7 @@
              ImpredicativeTypes,
              FlexibleContexts #-}
 
-module Arrow where
+module Arrow (run,simpleRun,TraverseExp,aSync,(:->),liftG) where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 
@@ -167,7 +167,7 @@ runTrans t bs l a = traverseExp (t (min bs l)) a
 run :: (TraverseExp b) => Word32 -> (a :-> Pull Word32 b)
     -> a -> GProgram ()
 run bs g a = do
-  (a',t) <- run' bs (const id) g id a
+  (a',t) <- run' bs (const id) g aSync a
   forceG' $ pushG bs t a'
 
 run' :: Word32 -> TransformA -> (a :-> b) -> (b :-> c) -> a -> GProgram (b, TransformA)
@@ -291,7 +291,9 @@ runAable f ri@(bs,g,a,d) =
       a' = fakeForce a ns
       gid = (BlockIdx X*(fromIntegral bs) +(ThreadIdx X))
       accesses = snd $ collectRun (collectExp (getIndice ns) (++)) gid g (a',d)
-  in strace $ (strace accesses) /= [] && all (gid `f`) accesses
+  in strace $ if accesses /= []
+      then all (gid `f`) accesses
+      else error ("No uses of this array: " ++ show accesses)
 
 fakeForce :: (Array a1, MemoryOps e)
           => a1 Word32 e -> Names -> Pull Word32 e

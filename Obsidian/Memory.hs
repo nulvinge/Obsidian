@@ -17,6 +17,7 @@ import Data.Word
 
 data Names = Single Name
            | Tuple [Names]
+  deriving (Show,Eq)
 
 inNames :: Name -> Names -> Bool
 inNames n (Single name) = n == name

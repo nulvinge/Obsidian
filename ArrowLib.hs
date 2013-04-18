@@ -46,9 +46,6 @@ type PullC2 a b = Pull Word32 (Exp a, Exp b)
 concatM :: Monad m => [a -> m a] -> a -> m a
 concatM fs = foldr (>=>) return fs
 
-ifp :: (Scalar a, Scalar b) => (Exp Bool) -> (Exp a, Exp b) -> (Exp a, Exp b) -> (Exp a, Exp b)
-ifp p (a1,a2) (b1,b2) = (If p a1 b1, If p a2 b2)
-
 {-
 pSync (a,b) = do
   a' <- mSync a
@@ -83,11 +80,6 @@ evenOddParts m' arr = (mkPullArray (n-n2) (\ix -> arr ! (2*(ix`div`m)*m + (ix`mo
   where n  = len arr
         n2 = n`div`2
         m = fromIntegral m'
-
-mine :: (Scalar a, Ord (Exp a)) => Exp a -> Exp a -> Exp a
-mine = BinOp Min
-maxe :: (Scalar a, Ord (Exp a)) => Exp a -> Exp a -> Exp a
-maxe = BinOp Max
 
 type a :~> b = a -> ArrowAsMonad (Arrow.:->) b
 

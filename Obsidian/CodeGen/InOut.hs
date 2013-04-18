@@ -76,6 +76,11 @@ instance (Scalar a) => GetTypes (Exp a) where
       where namen = name ++ "n"
             names = createNames a name
 
+instance (GetTypes a, GetTypes b) => GetTypes (a,b) where
+  getTypes a name = (i1++i2, (a,b))
+    where (i1,a) = getTypes a (name ++ "a")
+          (i2,b) = getTypes b (name ++ "b")
+
 instance (GetTypes a) => ToProgram a (GProgram b) where
   toProgram i f a = (types, CG.compileStep1 (f input))
     where (types,input) = getTypes a ("input" ++ show i)
