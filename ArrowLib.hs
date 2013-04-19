@@ -8,6 +8,7 @@
              TypeOperators,
              Arrows,
              ImpredicativeTypes,
+             UndecidableInstances,
              FlexibleContexts #-}
 
 module ArrowLib where
@@ -36,7 +37,7 @@ import ExpAnalysis
 import Prelude hiding (zipWith,sum,replicate,id,(.))
 import qualified Prelude as P
 
-mSync :: (TraverseExp a) => Pull Word32 a :~> Pull Word32 a
+mSync :: (MemoryOps a, TraverseExp a) => Pull Word32 a :~> Pull Word32 a
 mSync = unmonadicA aSync
 
 type PullC a = Pull Word32 (Exp a)
@@ -45,6 +46,20 @@ type PullC2 a b = Pull Word32 (Exp a, Exp b)
 
 concatM :: Monad m => [a -> m a] -> a -> m a
 concatM fs = foldr (>=>) return fs
+
+--bad name and semi-ugly helper
+class (MemoryOps a, TraverseExp a, Choice a) => Value a
+
+instance (MemoryOps a, TraverseExp a, Choice a) => Value a
+
+ttrav1 :: (TraverseExp a) => a -> a
+ttrav1 = id
+ttrav2 :: (MemoryOps a) => a -> a
+ttrav2 = id
+ttrav3 :: (Choice a) => a -> a
+ttrav3 = id
+ttrav4 :: (Value a) => a -> a
+ttrav4 = id
 
 {-
 pSync (a,b) = do

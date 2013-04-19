@@ -19,7 +19,8 @@
 module Obsidian.Force (write,
                        force,
                        forceG,
-                       forceG'
+                       forceG',
+                       idSync
                       ) where
 
 
@@ -50,13 +51,12 @@ write arr = do
       
   return $ pullFrom snames n
 
+idSync a = do
+  Sync
+  return a
   
 force :: forall p a. (Array p, Pushable p, MemoryOps a) =>  p Word32 a -> BProgram (Pull Word32 a)
-force arr = do
-  rval <- write arr
-  Sync
-  return rval
-
+force arr = write arr >>= idSync
 
 -- Experimental forceG  (Generalize!) 
 forceG :: forall a. Scalar a

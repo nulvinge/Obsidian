@@ -75,7 +75,6 @@ instance Array (Push t) where
   len      (Push s _) = s
   aMap   f (Push s p) = Push s $ \wf -> p (\e ix -> wf (f e) ix)
   ixMap  f (Push s p) = Push s $ \wf -> p (\e ix -> wf e (f ix))
-  
 
 class Indexible a where 
   access :: a s e -> Exp Word32 -> e 

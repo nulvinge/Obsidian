@@ -42,16 +42,15 @@ import Control.Monad
 import Control.Arrow.ApplyUtils
 
 import ExpAnalysis
+import Inplace
 
 import Prelude hiding (zipWith,sum,replicate,id,(.))
 import qualified Prelude as P
 
-type G b c = (Pull Word32 (Exp b) :-> c)
-
 data a :-> b where
   Pure :: (a -> b) -> (a :-> b)
-  Sync :: (TraverseExp b) -- => Forceable (Pull (Exp b))
-          => (a -> (Pull Word32 b,d))
+  Sync :: (Array p, APushable p, MemoryOps b, TraverseExp b) -- => Forceable (Pull (Exp b))
+          => (a -> (p Word32 b,d))
           -> ((Pull Word32 b,d) :-> c)
           -> (a :-> c)
   Loop :: ((a,d) :-> (b,d)) -> (a :-> b)
@@ -128,7 +127,7 @@ instance ArrowLoop (:->) where
 
 -- More or less means that only "Exps" are ever allowed..
 -- Try to generalise. Force is to blame for this.. 
-aSync :: (TraverseExp a) => Pull Word32 a :-> Pull Word32 a
+aSync :: (Array p, APushable p, MemoryOps a, TraverseExp a) => p Word32 a :-> Pull Word32 a
 aSync = Sync (\a -> (a,())) (Pure (\(a,()) -> a))
 
 liftG :: BProgram a -> GProgram a
@@ -141,7 +140,7 @@ simpleRun (Pure f)   a = do
   return (f a)
 simpleRun (Sync f g) a = do
   let (a',d) = f a
-  a'' <- force a'
+  a'' <- force (apush a')
   simpleRun g (a'',d)
 simpleRun (Apply f g) a = do
   let ((h,b),d) = f a
@@ -154,21 +153,20 @@ simpleRun (Apply f g) a = do
 --              Assign n d
 --              return b
 
-type RunInfo b c d = (Word32, ((Pull Word32 b,d) :-> c), Pull Word32 b, d)
+type RunInfo b c d = (Word32, ((Pull Word32 b,d) :-> c), APush Word32 b, d)
 type TransformA = forall e. Transform e
 type Transform e = (Word32 -> Exp e -> Exp e)
 
 composeT t t' = \bsl -> t bsl . t' bsl
 
-runTrans :: (TraverseExp a)
-         => TransformA -> Word32 -> Word32 -> a -> a
-runTrans t bs l a = traverseExp (t (min bs l)) a
+runTrans :: TransformA -> Word32 -> Word32 -> TProgram () -> TProgram ()
+runTrans t bs l = traverseExp (t (min bs l))
 
-run :: (TraverseExp b) => Word32 -> (a :-> Pull Word32 b)
+run :: (MemoryOps b, TraverseExp b) => Word32 -> (a :-> Pull Word32 b)
     -> a -> GProgram ()
 run bs g a = do
   (a',t) <- run' bs (const id) g aSync a
-  forceG' $ pushG bs t a'
+  forceG' $ pushG bs t (apush a')
 
 run' :: Word32 -> TransformA -> (a :-> b) -> (b :-> c) -> a -> GProgram (b, TransformA)
 run' bs t (Pure f)   after a = do
@@ -178,7 +176,7 @@ run' bs t (Sync f g) after a = do
   n <- uniqueSM
   let (a',d) = f a
       --ri :: RunInfo b c d
-      ri = (bs,after.g,a',d)
+      ri = (bs,after.g,apush a',d)
   if runBable ri
     then do
       (a'',t') <- ForAllBlocks (Literal (len a'+bs-1 `div` bs)) $ \bid -> do
@@ -199,11 +197,11 @@ run' bs t (Apply f g) after a = do
 runBable :: RunInfo b c d -> Bool
 runBable (bs,g,a,d) = True
 
-runB :: (TraverseExp b)
+runB :: (MemoryOps b, TraverseExp b)
      => Exp Word32
      -> RunInfo b c d -> TransformA
      -> BProgram (Pull Word32 b, TransformA)
-runB bid ri@(bs,_,Pull l ixf,_) t =
+runB bid ri@(bs,_,APush l ixf,_) t =
   if runWable ri
     then runW bid ri t
     else do
@@ -215,17 +213,20 @@ runB bid ri@(bs,_,Pull l ixf,_) t =
                ForAll (sizeConv l) $ \tid ->
                   let gid = bid*(fromIntegral bs)+tid
                       wid = f (min bs l) gid
-                  in wf (runTrans t bs l (ixf gid)) wid
+                  in runTrans t bs l (ixf wf gid)
 
-collectRun :: (forall c. TraverseExp c => c -> [d]) -> Exp Word32 -> (a :-> b) -> a -> (b, [(Word32,d)])
+collectRun :: (TProgram () -> [d]) -> Exp Word32 -> (a :-> b) -> a -> (b, [(Word32,d)])
 collectRun cf ix (Pure f)   a = (f a, []) -- case f a of Pull n ixf -> addTup n (cf $ ixf ix)
 collectRun cf ix (Sync f g) a = 
-  let (a'@(Pull n ixf),d) = f a
-      ns = createNames (a'!0) "noname"
-      a'' = fakeForce a' ns
-      (a''',r) = collectRun cf ix g (a'',d)
-  in (a''', addTup n (cf $ ixf ix) ++ r)
+  let (a1,d) = f a
+      a2@(APush n ixf) = apush a1
+      ns = createNames (valType a2) "noname"
+      a3 = fakeForce a2 ns
+      (a4,r) = collectRun cf ix g (a3,d)
+  in (a4, addTup n (cf $ ixf (dummyWrite ns) ix) ++ r)
   where addTup n ds = map (\d -> (n,d)) ds
+        dummyWrite :: (MemoryOps a) => Names -> a -> Exp Word32 -> TProgram ()
+        dummyWrite ns = (\v i -> assignArray ns v i)
 collectRun cf ix (Apply f g) a =
   let ((h,b),d) = f a
       (a',r)    = collectRun cf ix h b
@@ -233,39 +234,43 @@ collectRun cf ix (Apply f g) a =
   in (a'', r ++ r2)
 
 
-runWable :: (TraverseExp b) => RunInfo b c d -> Bool
+runWable :: (MemoryOps b, TraverseExp b) => RunInfo b c d -> Bool
 runWable ri@(bs,g,a,d) = runAable (isDivable 32 bs (len a)) ri
 
-runW :: (TraverseExp b)
+runW :: (MemoryOps b, TraverseExp b)
      => Exp Word32
      -> RunInfo b c d -> TransformA
      -> BProgram (Pull Word32 b, TransformA)
-runW bid ri@(bs,_,Pull l ixf,_) t =
+runW bid ri@(bs,_,APush l ixf,_) t =
   if runTable ri
     then ForAll (fromIntegral bs) $ \tid -> 
           runT (bid*(fromIntegral bs)+tid) ri t
     else do
-      (a'',ns) <- nameWrite a'
-      return (a'', divide ns f)
+      (a''',ns) <- nameWrite a''
+      return (a''', divide ns f)
   where f = simplifyMod bs
         a' = Push l $ \wf ->
                ForAll (sizeConv l) $ \tid ->
                   let gid = bid*(fromIntegral bs)+tid
-                      wid = f (min bs l) gid
-                  in wf (runTrans t bs l (ixf gid)) wid
+                  in runTrans t bs l (ixf wf gid)
+        a'' = ixMap (f (min bs l)) a'
 
-runTable :: (TraverseExp b) => RunInfo b c d -> Bool
+runTable :: (MemoryOps b, TraverseExp b) => RunInfo b c d -> Bool
 runTable ri@(bs,g,a,d) = runAable (\gid (n,a) -> (gid==a)) ri
 
-runT :: (TraverseExp b)
+valType :: a b m -> m
+valType = (undefined :: m)
+
+runT :: (MemoryOps b, TraverseExp b)
      => Exp Word32
      -> RunInfo b c d -> TransformA
      -> TProgram (Pull Word32 b, TransformA)
-runT gid ri@(bs,_,a,_) t = do
-  let v = traverseExp (t (min bs (len a))) $ a ! gid
+runT gid ri@(bs,_,a@(APush l ixf),_) t = do
+  let v = valType a
   n <- names v
   allocateScalar n v
-  assignScalar n v
+  let p = ixf (\v _ -> assignScalar n v) gid
+  runTrans t bs (len a) p
   return (Pull (len a) $ \_ -> readFrom n, const id)
 
 divide :: Names -> (Word32 -> Exp Word32 -> Exp Word32)
@@ -285,9 +290,9 @@ isDivable m bs ngid gid (na,a) =
            )
            $ a' == b'
 
-runAable :: (TraverseExp b) => (Exp Word32 -> (Word32,Exp Word32) -> Bool) -> RunInfo b c d -> Bool
+runAable :: (MemoryOps b, TraverseExp b) => (Exp Word32 -> (Word32,Exp Word32) -> Bool) -> RunInfo b c d -> Bool
 runAable f ri@(bs,g,a,d) =
-  let ns = createNames (a!0) "target"
+  let ns = createNames (valType a) "target"
       a' = fakeForce a ns
       gid = (BlockIdx X*(fromIntegral bs) +(ThreadIdx X))
       accesses = snd $ collectRun (collectExp (getIndice ns) (++)) gid g (a',d)
@@ -299,23 +304,13 @@ fakeForce :: (Array a1, MemoryOps e)
           => a1 Word32 e -> Names -> Pull Word32 e
 fakeForce a n = pullFrom n (len a)
 
-nameWrite :: forall a p. (Array p, Pushable p, MemoryOps a)
-          => p Word32 a -> BProgram (Pull Word32 a, Names)
-nameWrite arr = do
-  snames <- names (trace "nn" (undefined :: a) :: (MemoryOps a) => a)
-  let n = len arr
-  allocateArray snames (trace "nw" (undefined :: a)) n
-  let (Push m p) = push Block arr
-  p (assignArray snames)
-  return $ (pullFrom snames n, snames)
-
 pushG :: (TraverseExp a, ASize s) => Word32 -> TransformA
-      -> Pull Word32 a -> Push Grid s a
-pushG bs t (Pull l ixf) = Push (fromIntegral l) $ \wf ->
+      -> APush Word32 a -> Push Grid s a
+pushG bs t (APush l ixf) = Push (fromIntegral l) $ \wf ->
   ForAllBlocks (fromIntegral $ (l+bs-1) `div` bs) $ \bid ->
     ForAll (fromIntegral (min l bs)) $ \tid ->
       let gid = bid*(fromIntegral bs)+tid
-      in wf (runTrans t bs l (ixf gid)) gid
+      in runTrans t bs l (ixf wf gid)
 
 strace a = trace (show a) a
 

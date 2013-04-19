@@ -31,6 +31,7 @@ import Obsidian.Program
 
 import Arrow
 import ArrowLib
+import Inplace
 
 import Prelude hiding (zipWith,sum,replicate,id,(.))
 import qualified Prelude as P
@@ -103,7 +104,7 @@ tr4 = quickPrint t testInput
   where s a = liftG $ simpleRun (monadicA reduce4) a
         t a = run 1024 (monadicA reduce4) a
 
-rreduce4 :: (TraverseExp a, Num a) => Word32 -> Pull Word32 a :~> (Pull Word32 a)
+rreduce4 :: (Value a, Num a) => Word32 -> Pull Word32 a :~> (Pull Word32 a)
 rreduce4 m a = do
   let b = uncurry (zipWith (+)) $ evenOddParts m a
   if m == 1
@@ -115,21 +116,21 @@ trr4 = quickPrint t testInput
         t a = run 1024 (monadicA (rreduce4 (len a`div`2))) a
 
 
-bitonicMerge0 :: (TraverseExp a, Ord a, Choice a) => ((Pull Word32 a,Word32) :-> Pull Word32 a)
+bitonicMerge0 :: (Value a, Ord a) => ((Pull Word32 a,Word32) :-> Pull Word32 a)
 bitonicMerge0 = proc (a,s) -> do
   let s' = fromIntegral s
       b = Pull (len a) $ \i -> ifThenElse (i .&. s' ==* 0)
                                   (min (a!i) (a!(i `xor` s')))
                                   (max (a!i) (a!(i `xor` s')))
   app -< (if s == 1 then arr fst else bitonicMerge0 <<< first aSync,(b,s`div`2))
-bitonic0 :: (TraverseExp a, Ord a, Choice a) => Pull Word32 a :-> Pull Word32 a
+bitonic0 :: (Value a, Ord a) => Pull Word32 a :-> Pull Word32 a
 bitonic0 = proc a -> do
   bitonicMerge0 -< (a,len a`div`2)
 tb0 = quickPrint t testInputS
   where s a = liftG $ simpleRun bitonic0 a
         t a = run 512 bitonic0 a
 
-bitonicMerge1 :: (TraverseExp a, Ord a, Choice a) => Word32 -> Word32 -> (Pull Word32 a :~> Pull Word32 a)
+bitonicMerge1 :: (Value a, Ord a) => Word32 -> Word32 -> (Pull Word32 a :~> Pull Word32 a)
 bitonicMerge1 s m a = do
   let s' = fromIntegral s
       m' = fromIntegral m
@@ -140,7 +141,7 @@ bitonicMerge1 s m a = do
     then return b
     else do b' <- mSync b
             bitonicMerge1 (s`div`2) m b'
-bitonicSort1 :: (TraverseExp a, Ord a, Choice a) => Pull Word32 a :~> Pull Word32 a
+bitonicSort1 :: (Value a, Ord a) => Pull Word32 a :~> Pull Word32 a
 bitonicSort1 a = f 2 a
   where f m a | m >= len a = return a
         f m a              = do b <- bitonicMerge1 m (2*m) a
@@ -216,8 +217,6 @@ ts0 = quickPrint t input
         input = zipp (testInputW,testInputW)
         p v = v ==* 0
 
-scatter = undefined
-
 {-
 constructTour0 :: PullC2 Word32 Word32 :~> PullC Word32
 constructTour0 a = do
@@ -237,10 +236,10 @@ tt0 = quickPrint t $ resize 4 input
 
 -}
 
-scan0 :: (TraverseExp a, Choice a) => (a -> a -> a) -> Pull Word32 a :~> (Pull Word32 a)
+scan0 :: (Value a) => (a -> a -> a) -> Pull Word32 a :~> (Pull Word32 a)
 scan0 = scan0' 1
 
-scan0' :: (TraverseExp a, Choice a) => Word32 -> (a -> a -> a) -> Pull Word32 a :~> (Pull Word32 a)
+scan0' :: (Value a) => Word32 -> (a -> a -> a) -> Pull Word32 a :~> (Pull Word32 a)
 scan0' s' f a = if 2*s' >= len a then return a else do
   let s = fromIntegral s'
   b <- mSync $ Pull (len a) $ \i ->
@@ -256,7 +255,7 @@ tss0 = quickPrint t testInput
   where s a = liftG $ simpleRun (monadicA (scan0 (+))) a
         t a = run 1024 (monadicA (scan0 (+))) a
 
-segScan0 :: (TraverseExp a, Choice a)
+segScan0 :: (Value a)
          => (a -> a -> a)
          -> Pull Word32 (a,Exp Bool) :~> Pull Word32 (a, Exp Bool)
 segScan0 op = scan0 f

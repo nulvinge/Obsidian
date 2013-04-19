@@ -11,7 +11,7 @@ module ExpAnalysis where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 
-import Obsidian.Program hiding (Bind,Return)
+import Obsidian.Program --hiding (Bind,Return)
 import Obsidian.Exp
 import Obsidian.Types
 import Obsidian.Array
@@ -154,15 +154,18 @@ traverseExp f d (BinOp Sub a b) = traverseBin f d a b (-)
 traverseExp f d a = f d a
 -}
 
-class (MemoryOps a) => TraverseExp a where
+class TraverseExp a where
   collectExp :: (forall e. Exp e -> b) -> (b -> b -> b) -> a -> b
   traverseExp :: (forall e. Exp e -> Exp e) -> a -> a
+
+foldCollect :: TraverseExp a => (forall e. Exp e -> b) -> (b -> b -> b) -> [a] -> b
+foldCollect f c l = foldr1 c (map (collectExp f c) l)
 
 instance (Scalar a) => TraverseExp (Exp a) where
   collectExp f c e@(BinOp op a b) = f e  `c` collectExp f c a `c` collectExp f c b
   collectExp f c e@(UnOp op a) = f e  `c` collectExp f c a
   collectExp f c e@(If p a b) = f e `c` collectExp f c p `c` collectExp f c a `c` collectExp f c b
-  collectExp f c e@(Index (n,es)) = f e `c` foldr1 c (map (collectExp f c) es)
+  collectExp f c e@(Index (n,l)) = f e `c` foldCollect f c l
   collectExp f c e = f e
 
   traverseExp f (BinOp Mul a b) = f $ (traverseExp f a) * (traverseExp f b)
@@ -174,6 +177,17 @@ instance (Scalar a) => TraverseExp (Exp a) where
   traverseExp f (If p a b) = f $ If (traverseExp f p) (traverseExp f a) (traverseExp f b) 
   traverseExp f (Index (n,es)) = f $ Index (n,map (traverseExp f) es)
   traverseExp f a = f a
+
+instance TraverseExp (TProgram a) where
+  collectExp f c e@(Assign _ l a) = foldCollect f c l `c` collectExp f c a
+  collectExp f c e@(Cond a b) = collectExp f c a `c` collectExp f c b
+  collectExp f c e@(SeqFor n l) = collectExp f c n `c` collectExp f c (l 0)
+  collectExp f c e@(Bind a g) = collectExp f c a `c` error "bind not working" --`c` collectExp f c (g 0)
+
+  traverseExp f (Assign n l a) = Assign n (map (traverseExp f) l) (traverseExp f a)
+  traverseExp f (Cond a b) = Cond (traverseExp f a) (traverseExp f b)
+  traverseExp f (SeqFor n l) = SeqFor (traverseExp f n) (\i -> traverseExp f (l i))
+  traverseExp f (Bind a g) = Bind (traverseExp f a) (\b -> traverseExp f (g b))
 
 instance (TraverseExp a, TraverseExp b) => TraverseExp (a,b) where
   collectExp f c (a,b) = collectExp f c a `c` collectExp f c b
