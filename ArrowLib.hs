@@ -15,6 +15,7 @@ module ArrowLib where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import Obsidian.CodeGen.InOut
+import Obsidian.Program
 
 import Obsidian.Exp
 import Obsidian.Array
@@ -25,6 +26,7 @@ import Debug.Trace
 
 import Data.Word
 import Data.Bits
+import qualified Data.Text.IO as T
 
 import Control.Category
 import Control.Arrow
@@ -32,12 +34,13 @@ import Control.Monad
 import Control.Arrow.ApplyUtils
 
 import Arrow
+import Inplace
 import ExpAnalysis
 
 import Prelude hiding (zipWith,sum,replicate,id,(.))
 import qualified Prelude as P
 
-mSync :: (MemoryOps a, TraverseExp a) => Pull Word32 a :~> Pull Word32 a
+mSync :: (Array p, APushable p, MemoryOps a, TraverseExp a) => p Word32 a :~> Pull Word32 a
 mSync = unmonadicA aSync
 
 type PullC a = Pull Word32 (Exp a)
@@ -104,11 +107,11 @@ quickPrint :: ToProgram a b => (a -> b) -> Ips a b -> IO ()
 quickPrint prg input =
   putStrLn $ CUDA.genKernel "kernel" prg input
 
+fastPrint :: (a -> Program t b) -> a -> IO ()
+fastPrint prg input = T.putStrLn $ printPrg (prg input)
 
 elen :: (Array a, ASize s) => a s e -> Exp Word32
 elen = fromIntegral.len
-
-
 
 
 

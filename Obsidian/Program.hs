@@ -23,6 +23,8 @@ import Obsidian.Atomic
 import Data.Supply
 import System.IO.Unsafe
 
+import Data.Text
+
 ---------------------------------------------------------------------------
 -- Thread/Block/Grid 
 ---------------------------------------------------------------------------
@@ -210,50 +212,53 @@ runPrg i (AtomicOp _ _ _) = (variable ("new"++show i),i+1)
 ---------------------------------------------------------------------------
 printPrg prg = (\(_,x,_) -> x) $ printPrg' 0 prg
 
-printPrg' :: Int -> Program t a -> (a,String,Int)
-printPrg' i Identifier = (i,"getId;\n",i+1) 
+printPrg' :: Int -> Program t a -> (a,Text,Int)
+printPrg' i Identifier = (i,pack "getId;\n",i+1) 
 -- printPrg' i Skip = ((),";\n", i)
 printPrg' i (Assign n ix e) =
-  ((),n ++ "[" ++ show ix ++ "] = " ++ show e ++ ";\n", i) 
+  ((),pack $ n ++ "[" ++ show ix ++ "] = " ++ show e ++ ";\n", i) 
 printPrg' i (AtomicOp n ix e) =
   let newname = "r" ++ show i
-  in (variable newname,
+  in (variable newname, pack $
       newname ++ " = " ++ printAtomic e ++
       "( " ++ n ++ "[" ++ show ix ++ "])\n",i+1)
 printPrg' i (Allocate id n t) =
   let newname = id -- "arr" ++ show id
-  in ((),newname ++ " = malloc(" ++ show n ++ ");\n",i+1)
+  in ((),pack $ newname ++ " = malloc(" ++ show n ++ ");\n",i+1)
 printPrg' i (Declare id t) =
   let newname = id -- "arr" ++ show id
-  in ((),show t ++ " " ++ newname ++ "\n",i+1)
+  in ((),pack $ show t ++ " " ++ newname ++ "\n",i+1)
 printPrg' i (Output t) =
   let newname = "globalOut" ++ show i
-  in (newname,newname ++ " = new Global output;\n",i+1)
+  in (newname,pack $ newname ++ " = new Global output;\n",i+1)
+printPrg' i (Cond p f) =
+  let (a,prg2,i') = printPrg' i f
+  in ( a,pack ("if (" ++ show p ++  ")" ++ "{\n")
+         `append` prg2
+         `append` pack "\n}",
+       i')
 printPrg' i (SeqFor n f) =
   let (a,prg2,i') = printPrg' i (f (variable "i"))
-      
-  in ( a,  
-       "for (i in 0.." ++ show n ++ ")" ++
-       "{\n" ++ prg2 ++ "\n}",
+  in ( a, pack ("for (i in 0.." ++ show n ++ ")" ++ "{\n")
+          `append` prg2
+          `append` pack "\n}",
        i')
-     
 printPrg' i (ForAll n f) =
   let (a,prg2,i') = printPrg' i (f (variable "i"))
-      
-  in ( a,  
-       "par (i in 0.." ++ show n ++ ")" ++
-       "{\n" ++ prg2 ++ "\n}",
+  in ( a, pack ("par (i in 0.." ++ show n ++ ")" ++ "{\n")
+          `append` prg2
+          `append` pack "\n}",
        i')
 printPrg' i (ForAllBlocks n f) =
   let (d,prg2,i') = printPrg' i (f (variable "BIX"))
-  in (d, 
-      "blocks (i)" ++
-      "{\n" ++ prg2 ++ "\n}",
+  in (d, pack ("blocks (i)" ++ "{\n")
+         `append` prg2
+         `append` pack "\n}",
       i')
-printPrg' i (Return a) = (a,"MonadReturn;\n",i)
+printPrg' i (Return a) = (a,pack "MonadReturn;\n",i)
 printPrg' i (Bind m f) =
   let (a1, str1,i1) = printPrg' i m
       (a2,str2,i2) = printPrg' i1 (f a1)
-  in (a2,str1 ++ str2, i2)
-printPrg' i Sync = ((),"Sync;\n",i)
+  in (a2,str1 `append` str2, i2)
+printPrg' i Sync = ((),pack "Sync;\n",i)
 

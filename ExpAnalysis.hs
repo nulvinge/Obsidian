@@ -155,18 +155,15 @@ traverseExp f d a = f d a
 -}
 
 class TraverseExp a where
-  collectExp :: (forall e. Exp e -> b) -> (b -> b -> b) -> a -> b
+  collectExp :: (forall e. Exp e -> [b]) -> a -> [b]
   traverseExp :: (forall e. Exp e -> Exp e) -> a -> a
 
-foldCollect :: TraverseExp a => (forall e. Exp e -> b) -> (b -> b -> b) -> [a] -> b
-foldCollect f c l = foldr1 c (map (collectExp f c) l)
-
 instance (Scalar a) => TraverseExp (Exp a) where
-  collectExp f c e@(BinOp op a b) = f e  `c` collectExp f c a `c` collectExp f c b
-  collectExp f c e@(UnOp op a) = f e  `c` collectExp f c a
-  collectExp f c e@(If p a b) = f e `c` collectExp f c p `c` collectExp f c a `c` collectExp f c b
-  collectExp f c e@(Index (n,l)) = f e `c` foldCollect f c l
-  collectExp f c e = f e
+  collectExp f e@(BinOp op a b) = f e ++ collectExp f a ++ collectExp f b
+  collectExp f e@(UnOp op a)    = f e ++ collectExp f a
+  collectExp f e@(If p a b)     = f e ++ collectExp f p ++ collectExp f a ++ collectExp f b
+  collectExp f e@(Index (n,l))  = f e ++ concatMap (collectExp f) l
+  collectExp f e = f e
 
   traverseExp f (BinOp Mul a b) = f $ (traverseExp f a) * (traverseExp f b)
   traverseExp f (BinOp Add a b) = f $ (traverseExp f a) + (traverseExp f b)
@@ -178,11 +175,19 @@ instance (Scalar a) => TraverseExp (Exp a) where
   traverseExp f (Index (n,es)) = f $ Index (n,map (traverseExp f) es)
   traverseExp f a = f a
 
+collectProg :: (forall e. Exp e -> [b]) -> TProgram a -> (a,[b])
+collectProg f e@(Assign _ l a)= ((),  concatMap (collectExp f) l ++ collectExp f a)
+collectProg f e@(Cond a b)    = let (v',b') = collectProg f b
+                                in  (v', collectExp f a ++ b')
+collectProg f e@(SeqFor n l)  = let (v',b') = collectProg f (l 0)
+                                in  (v', collectExp f n ++ b')
+collectProg f e@(Bind a g)    = let (v1,b1) = collectProg f a
+                                    (v2,b2) = collectProg f (g v1)
+                                in  (v2,b1 ++ b2)
+collectProg f e@(Return a)    = (a,[])
+
 instance TraverseExp (TProgram a) where
-  collectExp f c e@(Assign _ l a) = foldCollect f c l `c` collectExp f c a
-  collectExp f c e@(Cond a b) = collectExp f c a `c` collectExp f c b
-  collectExp f c e@(SeqFor n l) = collectExp f c n `c` collectExp f c (l 0)
-  collectExp f c e@(Bind a g) = collectExp f c a `c` error "bind not working" --`c` collectExp f c (g 0)
+  collectExp = error "no collectExp for TProgram"
 
   traverseExp f (Assign n l a) = Assign n (map (traverseExp f) l) (traverseExp f a)
   traverseExp f (Cond a b) = Cond (traverseExp f a) (traverseExp f b)
@@ -190,7 +195,7 @@ instance TraverseExp (TProgram a) where
   traverseExp f (Bind a g) = Bind (traverseExp f a) (\b -> traverseExp f (g b))
 
 instance (TraverseExp a, TraverseExp b) => TraverseExp (a,b) where
-  collectExp f c (a,b) = collectExp f c a `c` collectExp f c b
+  collectExp f (a,b) = collectExp f a ++ collectExp f b
   traverseExp f (a,b) = (traverseExp f a, traverseExp f b)
 
 
@@ -201,4 +206,11 @@ getIndice _ _ = []
 traverseOnIndice :: Names -> (Exp Word32 -> Exp Word32) -> Exp a -> Exp a
 traverseOnIndice nn f (Index (n,[r])) | n `inNames` nn = Index (n,[f r])
 traverseOnIndice _ _ a = a
+
+instance Choice (TProgram ()) where  
+  ifThenElse (Literal False) e1 e2 = e2
+  ifThenElse (Literal True)  e1 e2 = e1
+  ifThenElse b e1 e2 = do
+    Cond b e1
+    Cond (notE b) e2
 

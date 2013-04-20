@@ -116,42 +116,48 @@ trr4 = quickPrint t testInput
         t a = run 1024 (monadicA (rreduce4 (len a`div`2))) a
 
 
-bitonicMerge0 :: (Value a, Ord a) => ((Pull Word32 a,Word32) :-> Pull Word32 a)
+bitonicMerge0 :: (Value a, OrdE a) => ((Pull Word32 a,Word32) :-> Pull Word32 a)
 bitonicMerge0 = proc (a,s) -> do
   let s' = fromIntegral s
       b = Pull (len a) $ \i -> ifThenElse (i .&. s' ==* 0)
-                                  (min (a!i) (a!(i `xor` s')))
-                                  (max (a!i) (a!(i `xor` s')))
+                                  (minE (a!i) (a!(i `xor` s')))
+                                  (maxE (a!i) (a!(i `xor` s')))
   app -< (if s == 1 then arr fst else bitonicMerge0 <<< first aSync,(b,s`div`2))
-bitonic0 :: (Value a, Ord a) => Pull Word32 a :-> Pull Word32 a
+bitonic0 :: (Value a, OrdE a) => Pull Word32 a :-> Pull Word32 a
 bitonic0 = proc a -> do
   bitonicMerge0 -< (a,len a`div`2)
 tb0 = quickPrint t testInputS
   where s a = liftG $ simpleRun bitonic0 a
         t a = run 512 bitonic0 a
 
-bitonicMerge1 :: (Value a, Ord a) => Word32 -> Word32 -> (Pull Word32 a :~> Pull Word32 a)
+bitonicMerge1 :: (Value a, OrdE a) => Word32 -> Word32 -> (Pull Word32 a :~> Pull Word32 a)
 bitonicMerge1 s m a = do
   let s' = fromIntegral s
       m' = fromIntegral m
-      b = Pull (len a) $ \i -> ifThenElse ((i .&. s' ==* 0) /=* (i .&. m' ==* 0))
-                                  (min (a!i) (a!(i `xor` s')))
-                                  (max (a!i) (a!(i `xor` s')))
+      b = APush (len a) $ \wf i -> ifThenElse ((i .&. s' ==* 0) /=* (i .&. m' ==* 0))
+                                  (wf (minE (a!i) (a!(i `xor` s'))) i)
+                                  (wf (maxE (a!i) (a!(i `xor` s'))) i)
   if s <= 1
-    then return b
+    then mSync b
     else do b' <- mSync b
             bitonicMerge1 (s`div`2) m b'
-bitonicSort1 :: (Value a, Ord a) => Pull Word32 a :~> Pull Word32 a
+bitonicSort1 :: (Value a, OrdE a) => Pull Word32 a :~> Pull Word32 a
 bitonicSort1 a = f 2 a
   where f m a | m >= len a = return a
         f m a              = do b <- bitonicMerge1 m (2*m) a
-                                f (m*2) a
-tb1 = quickPrint t $ resize 64 testInputS
+                                f (m*2) b
+tb1 = quickPrint t $ (zipp (testInputS,testInputS))
+  where s a = liftG $ simpleRun (monadicA (bitonicMerge1 (len a`div`2) (len a))) a
+        t a = run 512 (monadicA (bitonicMerge1 (len a`div`2) (len a))) a
+tb2 = quickPrint t $ resize 64 testInputS
   where s a = liftG $ simpleRun (monadicA bitonicSort1) a
         t a = run 512 (monadicA bitonicSort1) a
-tb2 = quickPrint s $ resize 4 (zipp (testInputS,testInputS))
-  where s a = liftG $ simpleRun (bitonic0) a
-        t a = run 512 (bitonic0) a
+tb3 = quickPrint t $ resize 64 (zipp (testInputS,testInputS))
+  where s a = liftG $ simpleRun (monadicA bitonicSort1) a
+        t a = run 512 (monadicA bitonicSort1) a
+tb4 = fastPrint t $ resize 64 (zipp (testInputS,testInputS))
+  where s a = liftG $ simpleRun (monadicA bitonicSort1) a
+        t a = run 512 (monadicA bitonicSort1) a
 
 sctfftR1 :: Word32 -> Pull Word32 (Exp Float, Exp Float) :~> Pull Word32 (Exp Float, Exp Float)
 sctfftR1 s c = if s <= 1 then return c else do

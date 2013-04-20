@@ -199,6 +199,7 @@ data Op a where
   -- Boolean 
   And :: Op ((Bool,Bool) -> Bool) 
   Or  :: Op ((Bool,Bool) -> Bool)
+  Not :: Op (Bool -> Bool)
   
   -- Bitwise 
   BitwiseAnd :: Bits a => Op ((a,a) -> a) 
@@ -296,10 +297,6 @@ instance (Eq a, Scalar a) => Eq (Exp a) where
     expToCExp a == expToCExp b
     -- Maybe not efficient! But simple.
 
-  
-instance (Scalar a, Ord a) => Ord (Exp a) where 
-    min a b = BinOp Min a b
-    max a b = BinOp Max a b
 
 ---------------------------------------------------------------------------
 -- INT Instances
@@ -601,21 +598,51 @@ instance Floating (Exp Float) where
 ---------------------------------------------------------------------------
   
 infix 4 ==*, /=*, <*, >*, >=*, <=* 
-  
-(==*) (Literal a) (Literal b) = Literal (a == b) 
-(==*) a b = BinOp Eq a b
-(/=*) a b = BinOp NotEq a b 
-(<*)  (Literal a) (Literal b) = Literal (a < b) 
-(<*)  a b = BinOp Lt a b
-(<=*) (Literal a) (Literal b) = Literal (a <= b) 
-(<=*) a b = BinOp LEq a b
-(>*)  a b = BinOp Gt  a b
-(>=*) a b = BinOp GEq a b
+
+class (Choice a) => OrdE a where
+  (==*), (/=*), (<*), (<=*), (>*), (>=*) :: a -> a -> Exp Bool
+  maxE,minE :: a -> a -> a
+
+  maxE a b = ifThenElse (a <=* b) b a
+  minE a b = ifThenElse (a <=* b) a b
+
+instance (Scalar a, Ord a) => OrdE (Exp a) where
+  (==*) (Literal a) (Literal b) = Literal (a == b) 
+  (==*) a b = BinOp Eq a b
+  (/=*) a b = BinOp NotEq a b 
+  (<*)  (Literal a) (Literal b) = Literal (a < b) 
+  (<*)  a b = BinOp Lt a b
+  (<=*) (Literal a) (Literal b) = Literal (a <= b) 
+  (<=*) a b = BinOp LEq a b
+  (>*)  a b = BinOp Gt  a b
+  (>=*) a b = BinOp GEq a b
+  maxE a b = BinOp Max a b
+  minE a b = BinOp Min a b
+
+instance (OrdE (Exp a), Scalar a) => Ord (Exp a) where
+  compare = error "Ord not working"
+  --max = maxE
+  --min = minE
+
+instance (OrdE a, OrdE b) => OrdE (a,b) where
+  (==*) (a1,a2) (b1,b2) = (a1 ==* b1) &&* (a2 ==* b2)
+  (/=*) (a1,a2) (b1,b2) = (a1 /=* b1) ||* (a2 /=* b2)
+  (<*)  (a1,a2) (b1,b2) = (a1 <* b1) ||* (a1 ==* b1 &&* a2 <* b2)
+  (<=*) (a1,a2) (b1,b2) = (a1 <* b1) ||* (a1 ==* b1 &&* a2 <=* b2)
+  (>*)  (a1,a2) (b1,b2) = (a1 >* b1) ||* (a1 ==* b1 &&* a2 >* b2)
+  (>=*) (a1,a2) (b1,b2) = (a1 >* b1) ||* (a1 ==* b1 &&* a2 >=* b2)
+
+--instance (Ord a, Ord b, Scalar a, Scalar b) => Ord (Exp a, Exp b) where
+--  max = maxE
+--  min = minE
 
 infixr 3 &&*
 infixr 2 ||* 
+(&&*), (||*) :: Exp Bool -> Exp Bool -> Exp Bool
 (&&*) a b = BinOp And a b 
 (||*) a b = BinOp Or a b 
+
+notE a = UnOp Not a
 
 class Choice a where 
   ifThenElse :: Exp Bool -> a -> a -> a 
@@ -628,7 +655,6 @@ instance Scalar a => Choice (Exp a) where
 instance (Choice a, Choice b) => Choice (a,b) where
   ifThenElse b (e1,e1') (e2,e2') = (ifThenElse b e1 e2,
                                     ifThenElse b e1' e2') 
-  
 
 ---------------------------------------------------------------------------
 -- Built-ins
@@ -668,6 +694,7 @@ printOp GEq = " >= "
 
 printOp And = " && "
 printOp Or  = " || " 
+printOp Not = " ! " 
 
 printOp Min = " Min "
 printOp Max = " Max " 
@@ -828,4 +855,5 @@ binOpToCBinOp ShiftR     = CShiftR
 -- notice min and max is not here ! 
 
 unOpToCUnOp   BitwiseNeg = CBitwiseNeg
+unOpToCUnOp   Not = CNot
   

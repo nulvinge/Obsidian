@@ -55,7 +55,9 @@ data a :-> b where
           -> (a :-> c)
   Loop :: ((a,d) :-> (b,d)) -> (a :-> b)
   Apply :: (a -> ((b :-> c, b),d)) -> ((c,d) :-> e) -> (a :-> e)
+  --For :: (MemoryOps a) => (a :-> (a,c,Bool)) -> a -> (a :-> c)
   --While :: (d :-> Bool) -> ((a,d) :-> (b,d)) -> (a :-> b)
+  --While :: (a :-> Bool) -> (a :-> a) -> (a :-> a)
   --Comp :: (a -> b) (b :-> c) 
 
 instance Show (a :-> b) where
@@ -295,7 +297,7 @@ runAable f ri@(bs,g,a,d) =
   let ns = createNames (valType a) "target"
       a' = fakeForce a ns
       gid = (BlockIdx X*(fromIntegral bs) +(ThreadIdx X))
-      accesses = snd $ collectRun (collectExp (getIndice ns) (++)) gid g (a',d)
+      accesses = snd $ collectRun (snd.collectProg (getIndice ns)) gid g (a',d)
   in strace $ if accesses /= []
       then all (gid `f`) accesses
       else error ("No uses of this array: " ++ show accesses)

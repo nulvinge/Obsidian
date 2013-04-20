@@ -101,7 +101,7 @@ data CBinOp = CAdd | CSub | CMul | CDiv | CMod
             | CShiftL | CShiftR 
             deriving (Eq,Ord,Show) 
                      
-data CUnOp = CBitwiseNeg
+data CUnOp = CBitwiseNeg | CNot
            deriving (Eq,Ord,Show)
 
 data CAtomicOp = CAtomicAdd | CAtomicInc
@@ -267,6 +267,7 @@ ppBinOp CShiftL     = line$ "<<"
 ppBinOp CShiftR     = line$ ">>"
                      
 ppUnOp CBitwiseNeg = line$ "~"       
+ppUnOp CNot = line$ "!"       
 -- May be incorrect.
 --ppUnOp CInt32ToWord32 = line$ "(uint32_t)"
 --ppUnOp CWord32ToInt32 = line$ "(int32_t)" 
