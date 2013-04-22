@@ -135,8 +135,8 @@ bitonicMerge1 s m a = do
   let s' = fromIntegral s
       m' = fromIntegral m
       b = APush (len a) $ \wf i -> ifThenElse ((i .&. s' ==* 0) /=* (i .&. m' ==* 0))
-                                  (wf (minE (a!i) (a!(i `xor` s'))) i)
-                                  (wf (maxE (a!i) (a!(i `xor` s'))) i)
+                                  (wf i (minE (a!i) (a!(i `xor` s'))))
+                                  (wf i (maxE (a!i) (a!(i `xor` s'))))
   if s <= 1
     then mSync b
     else do b' <- mSync b
@@ -257,9 +257,37 @@ scan0' s' f a = if 2*s' >= len a then return a else do
         ifThenElse ((i >=* 2*s) &&* (i .&. (s-1) ==* (s-1)))
           ((c!i) `f` (c!(i-s)))
           (c!i)
-tss0 = quickPrint t testInput
+
+tss0 = quickPrint s $ resize 64 testInput
   where s a = liftG $ simpleRun (monadicA (scan0 (+))) a
         t a = run 1024 (monadicA (scan0 (+))) a
+
+scan1 :: (Value a) => (a -> a -> a) -> Pull Word32 a :~> Pull Word32 a
+scan1 f a = do a' <- (unmonadicA aSyncInplace) a
+               scan1' f 1 a'
+               return $ pullInplace a'
+scan1' :: (Value a) => (a -> a -> a) -> Word32 -> Inplace Word32 a :~> ()
+scan1' f s' ai = do
+  let s = fromIntegral s'
+      s2 = 2*s'
+      a = pullInplace ai
+  if s2 >= len a
+    then 
+      mInplaceSync ai $ APush (len a`div`s2) $ \wf i -> do
+        let j = 2*s*i+2*s-1
+        wf j $ (ai!j) `f` (ai!(j-s))
+    else do
+      mInplaceSync ai $ APush (len a`div`s2) $ \wf i -> do
+        let j = 2*s*i+2*s-1
+        wf j $ (ai!j) `f` (ai!(j-s))
+      scan1' f s2 ai
+      mInplaceSync ai $ APush (len a`div`s2-1) $ \wf i -> do
+        let j = 2*s*i+2*s-1
+        wf j $ (ai!(j+s)) `f` (ai!j)
+
+tss1 = quickPrint t $ resize 64 testInput
+  where s a = liftG $ simpleRun (monadicA (scan1 (+))) a
+        t a = run 1024 (monadicA (scan1 (+))) a
 
 segScan0 :: (Value a)
          => (a -> a -> a)
@@ -268,7 +296,7 @@ segScan0 op = scan0 f
   where (a1,f1) `f` (a2,f2) =
           (ifThenElse f2 a2 (a1 `op` a2)
           ,(f1 ||* f2))
-tss1 = quickPrint t (zipp (testInputS,testInputB))
+tss2 = quickPrint t $ resize 64 (zipp (testInputS,testInputB))
   where s a = liftG $ simpleRun (monadicA (segScan0 (+))) a
         t a = run 1024 (monadicA (segScan0 (+))) a
 

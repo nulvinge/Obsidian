@@ -10,7 +10,8 @@
              ImpredicativeTypes,
              FlexibleContexts #-}
 
-module Arrow (run,simpleRun,TraverseExp,aSync,(:->),liftG) where
+module Arrow (run,simpleRun,TraverseExp,(:->)
+             ,aSync,aSyncInplace,aInplaceSync,liftG) where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 
@@ -48,38 +49,39 @@ import Prelude hiding (zipWith,sum,replicate,id,(.))
 import qualified Prelude as P
 
 data a :-> b where
+  First  :: (a :-> b) -> ((a,d) :-> (b,d))
   Pure :: (a -> b) -> (a :-> b)
+  Comb :: (a :-> b) -> (b :-> c) -> (a :-> c)
+  --Pure :: (a -> b) -> (a :-> b)
   Sync :: (Array p, APushable p, MemoryOps b, TraverseExp b) -- => Forceable (Pull (Exp b))
-          => (a -> (p Word32 b,d))
-          -> ((Pull Word32 b,d) :-> c)
-          -> (a :-> c)
+       => (p Word32 b) :-> (Inplace Word32 b)
+  InplaceSync :: (Array p, APushable p, MemoryOps b, TraverseExp b)
+              => (Inplace Word32 b,p Word32 b) :-> ()
+  Apply :: (b :-> c, b) :-> c
   Loop :: ((a,d) :-> (b,d)) -> (a :-> b)
-  Apply :: (a -> ((b :-> c, b),d)) -> ((c,d) :-> e) -> (a :-> e)
   --For :: (MemoryOps a) => (a :-> (a,c,Bool)) -> a -> (a :-> c)
   --While :: (d :-> Bool) -> ((a,d) :-> (b,d)) -> (a :-> b)
   --While :: (a :-> Bool) -> (a :-> a) -> (a :-> a)
-  --Comp :: (a -> b) (b :-> c) 
 
+{-
 instance Show (a :-> b) where
   show (Pure f) = "Pure f"
   show (Sync f g) = "Sync f (" ++ show g ++ ")"
   show (Apply f g) = "Apply f (" ++ show g ++ ")"
+-}
 
 instance Category (:->) where
   id = Pure id
 
-  (.) (Pure f) (Pure g)    = Pure (f . g)
-  (.) (Sync h g) (Pure f)  = Sync (h . f) g
-  --(.) (Pure f) (Sync h g) = Sync h (Pure f . g)
-  (.) o (Sync h g) = Sync h (o . g)
+  --(.) (Comb f g h) (Fst f') = Comb (fst.f) (g.f') h
+  (.) o (Comb h g)    = Comb h (o . g)
   (.) o (Loop l)   = Loop (first o.l)
   (.) (Loop l) o   = Loop (l.first o)
-  (.) (Apply h g) (Pure f) = Apply (h . f) g
-  (.) o (Apply h g) = Apply h (o . g)
-  --(.) a b = error $ show a " " ++ show b
+  (.) a b = Comb b a
 
 instance Arrow (:->) where
   arr = Pure
+  --Comb (\a -> (f a,())) id (arr fst)
   --(***) (Pure f) (Pure g) = Pure $ \(x,y) -> (f x, g y)
   --(***) (Pure f) (Sync h g) = Sync t (r g)
   --  where t (a,d) = let (b,d') = h a
@@ -87,6 +89,9 @@ instance Arrow (:->) where
   --        r = undefined
   --(***) (Pure f) (Pure g) = Pure $ \(x,y) -> (f x, g y)
 
+  first = First
+
+{-
   first (Pure f)   = Pure (mapFst f)
   first (Sync h g) = Sync (assoc.mapFst h) $ first g . arr unassoc
   first (Loop l)   = loop $ arr unassoc2 . first l . arr assoc2
@@ -94,6 +99,7 @@ instance Arrow (:->) where
   --  where t (a,d') = assoc (h a,d')
   --        r g = first g . arr unassoc
   first (Apply h g) = Apply (assoc.mapFst h) $ first g . arr unassoc
+-}
 
 mapFst f (a,b) = (f a, b)
 assoc ((a,d),d') = (a,(d,d'))
@@ -103,7 +109,7 @@ unassoc2 ((a,d'),d) = ((a,d),d')
 
 instance ArrowApply (:->) where
   --app = Apply id id
-  app = Apply (\a -> (a,())) (Pure (\(a,()) -> a))
+  app = Apply -- (\a -> (a,())) (arr (\(a,()) -> a))
 {-
   app = Pure $ (uncurry app')
     where app' :: (a :-> b) -> a -> b
@@ -127,10 +133,17 @@ instance ArrowLoop (:->) where
   loop = Loop
 
 
--- More or less means that only "Exps" are ever allowed..
--- Try to generalise. Force is to blame for this.. 
-aSync :: (Array p, APushable p, MemoryOps a, TraverseExp a) => p Word32 a :-> Pull Word32 a
-aSync = Sync (\a -> (a,())) (Pure (\(a,()) -> a))
+aSync :: (Array p, APushable p, MemoryOps a, TraverseExp a)
+      => p Word32 a :-> Pull Word32 a
+aSync = arr pullInplace . Sync -- (\a -> (a,())) (arr (\(a,()) -> pullInplace a))
+
+aSyncInplace :: (Array p, APushable p, MemoryOps a, TraverseExp a)
+      => p Word32 a :-> Inplace Word32 a
+aSyncInplace = Sync
+
+aInplaceSync :: (Array p, APushable p, MemoryOps a, TraverseExp a)
+            => (Inplace Word32 a,p Word32 a) :-> ()
+aInplaceSync = InplaceSync
 
 liftG :: BProgram a -> GProgram a
 liftG p = do
@@ -138,16 +151,19 @@ liftG p = do
     p
 
 simpleRun :: (a :-> b) -> a -> BProgram b
-simpleRun (Pure f)   a = do
-  return (f a)
-simpleRun (Sync f g) a = do
-  let (a',d) = f a
-  a'' <- force (apush a')
-  simpleRun g (a'',d)
-simpleRun (Apply f g) a = do
-  let ((h,b),d) = f a
-  a' <- simpleRun h b
-  simpleRun g (a',d)
+simpleRun (Pure f)     a = return $ f a
+simpleRun (First f) (a,d) = do
+  b <- simpleRun f a
+  return (b,d)
+simpleRun (Comb g h) a = do
+  b <- simpleRun g a
+  simpleRun h b
+simpleRun Sync a = do
+  forceInplace (apush a)
+simpleRun InplaceSync (i,a) = do
+  inplaceWrite i (apush a)
+simpleRun Apply (h,a) = do
+  simpleRun h a
 --simpleRun (Loop l) a = do
 --  n <- uniqueSM
 --  SeqFor 10 $ \i -> do
@@ -155,7 +171,7 @@ simpleRun (Apply f g) a = do
 --              Assign n d
 --              return b
 
-type RunInfo b c d = (Word32, ((Pull Word32 b,d) :-> c), APush Word32 b, d)
+type RunInfo b c = (Word32, Inplace Word32 b :-> c, APush Word32 b)
 type TransformA = forall e. Transform e
 type Transform e = (Word32 -> Exp e -> Exp e)
 
@@ -171,43 +187,56 @@ run bs g a = do
   forceG' $ pushG bs t (apush a')
 
 run' :: Word32 -> TransformA -> (a :-> b) -> (b :-> c) -> a -> GProgram (b, TransformA)
-run' bs t (Pure f)   after a = do
-  --forceG (resize (fromIntegral (len (f a))) (push Grid (f a)))
-  return (f a,t)
-run' bs t (Sync f g) after a = do
+run' bs t (Pure f)  after a = return (f a,const id)
+run' bs t (First f) after (a,d) = do
+  (b,t') <- run' bs t f (after.arr (\a -> (a,d))) a
+  return ((b,d),t')
+run' bs t (Comb g h) after a = do
+  (b,t1) <- run' bs t g (after.h) a
+  let t2 :: TransformA
+      t2 = (composeT t t1)
+  (c,t3) <- run' bs t2 h after b
+  return (c,composeT t2 t3)
+run' bs t Sync after a = do
   n <- uniqueSM
-  let (a',d) = f a
-      --ri :: RunInfo b c d
-      ri = (bs,after.g,apush a',d)
+  let ri = (bs,after,apush a)
   if runBable ri
     then do
-      (a'',t') <- ForAllBlocks (Literal (len a'+bs-1 `div` bs)) $ \bid -> do
+      ForAllBlocks (Literal (len a+bs-1 `div` bs)) $ \bid -> do
                 --a'' <- force a'
                 --return (a'',id)
                 runB bid ri t
-      run' bs (composeT t t') g after (a'',d)
+      --run' bs (composeT t t') g after a''
     else error "not implemented" {- do
       a' <- forceG (resize (fromIntegral (len (f a))) (push Grid (f a)))
       run' g a'
     -}
-run' bs t (Apply f g) after a = do
-  let ((h,b),d) = f a
-  (a',t') <- run' bs t h (after.g.arr (\x -> (x,d))) b
-  run' bs (composeT t t') g after (a',d)
+run' bs t InplaceSync after (i,a) = do
+  let a'@(APush n wf) = apush a
+      Inplace _ w r  = i
+      bs' = fromIntegral bs
+  ForAllBlocks (fromIntegral (n+bs-1 `div` bs)) $ \bid -> do
+    ForAll (fromIntegral (min bs n)) $ \tid -> do
+      wf w (bid*bs'+tid)
+    P.Sync --keep some anlysis since we have already done this
+  return ((),const id)
 
 
-runBable :: RunInfo b c d -> Bool
-runBable (bs,g,a,d) = True
+run' bs t Apply after (h,a) = do
+  run' bs t h after a
+
+runBable :: RunInfo b c -> Bool
+runBable (bs,g,a) = True
 
 runB :: (MemoryOps b, TraverseExp b)
      => Exp Word32
-     -> RunInfo b c d -> TransformA
-     -> BProgram (Pull Word32 b, TransformA)
-runB bid ri@(bs,_,APush l ixf,_) t =
-  if runWable ri
+     -> RunInfo b c -> TransformA
+     -> BProgram (Inplace Word32 b, TransformA)
+runB bid ri@(bs,_,APush l ixf) t =
+  if False --runWable ri
     then runW bid ri t
     else do
-      (a'',ns) <- nameWrite a'
+      (a'',ns) <- nameInplaceWrite a'
       P.Sync
       return (a'', divide ns f)
   where f = simplifyMod bs
@@ -215,65 +244,70 @@ runB bid ri@(bs,_,APush l ixf,_) t =
                ForAll (sizeConv l) $ \tid ->
                   let gid = bid*(fromIntegral bs)+tid
                       wid = f (min bs l) gid
-                  in runTrans t bs l (ixf wf gid)
+                  in runTrans t bs l (ixf (flip wf) gid)
 
 collectRun :: (TProgram () -> [d]) -> Exp Word32 -> (a :-> b) -> a -> (b, [(Word32,d)])
-collectRun cf ix (Pure f)   a = (f a, []) -- case f a of Pull n ixf -> addTup n (cf $ ixf ix)
-collectRun cf ix (Sync f g) a = 
-  let (a1,d) = f a
-      a2@(APush n ixf) = apush a1
-      ns = createNames (valType a2) "noname"
-      a3 = fakeForce a2 ns
-      (a4,r) = collectRun cf ix g (a3,d)
-  in (a4, addTup n (cf $ ixf (dummyWrite ns) ix) ++ r)
+collectRun cf ix (Pure f)  a = (f a, [])
+collectRun cf ix (First f) (a,d) =
+  let (b,r) = collectRun cf ix f a
+  in ((b,d),r)
+collectRun cf ix (Comb g h) a = 
+  let (a1,r1) = collectRun cf ix g a
+      (a2,r2) = collectRun cf ix h a1
+  in (a2, r1 ++ r2)
+collectRun cf ix Sync a = 
+  let a1@(APush n ixf) = apush a
+      ns = createNames (valType a1) "noname"
+      a2 = fakeForce a1 ns
+  in (a2, addTup n (cf $ ixf (dummyWrite ns) ix))
   where addTup n ds = map (\d -> (n,d)) ds
-        dummyWrite :: (MemoryOps a) => Names -> a -> Exp Word32 -> TProgram ()
-        dummyWrite ns = (\v i -> assignArray ns v i)
-collectRun cf ix (Apply f g) a =
-  let ((h,b),d) = f a
-      (a',r)    = collectRun cf ix h b
-      (a'',r2)  = collectRun cf ix g (a',d) 
-  in (a'', r ++ r2)
+        dummyWrite :: (MemoryOps a) => Names -> Exp Word32 -> a -> TProgram ()
+        dummyWrite ns = (\i v -> assignArray ns v i)
+collectRun cf ix InplaceSync (i,a) =
+  let a1@(APush n ixf) = apush a
+      (Inplace n' w r)    = i
+  in ((), addTup n (cf $ ixf w ix))
+  where addTup n ds = map (\d -> (n,d)) ds
+collectRun cf ix Apply (h,a) = collectRun cf ix h a
 
-
-runWable :: (MemoryOps b, TraverseExp b) => RunInfo b c d -> Bool
-runWable ri@(bs,g,a,d) = runAable (isDivable 32 bs (len a)) ri
+runWable :: (MemoryOps b, TraverseExp b) => RunInfo b c -> Bool
+runWable ri@(bs,g,a) = runAable (isDivable 32 bs (len a)) ri
 
 runW :: (MemoryOps b, TraverseExp b)
      => Exp Word32
-     -> RunInfo b c d -> TransformA
-     -> BProgram (Pull Word32 b, TransformA)
-runW bid ri@(bs,_,APush l ixf,_) t =
+     -> RunInfo b c -> TransformA
+     -> BProgram (Inplace Word32 b, TransformA)
+runW bid ri@(bs,_,APush l ixf) t =
   if runTable ri
     then ForAll (fromIntegral bs) $ \tid -> 
           runT (bid*(fromIntegral bs)+tid) ri t
     else do
-      (a''',ns) <- nameWrite a''
+      (a''',ns) <- nameInplaceWrite a''
       return (a''', divide ns f)
   where f = simplifyMod bs
         a' = Push l $ \wf ->
                ForAll (sizeConv l) $ \tid ->
                   let gid = bid*(fromIntegral bs)+tid
-                  in runTrans t bs l (ixf wf gid)
+                  in runTrans t bs l (ixf (flip wf) gid)
         a'' = ixMap (f (min bs l)) a'
 
-runTable :: (MemoryOps b, TraverseExp b) => RunInfo b c d -> Bool
-runTable ri@(bs,g,a,d) = runAable (\gid (n,a) -> (gid==a)) ri
+runTable :: (MemoryOps b, TraverseExp b) => RunInfo b c -> Bool
+runTable ri@(bs,g,a) = runAable (\gid (n,a) -> (gid==a)) ri
 
 valType :: a b m -> m
 valType = (undefined :: m)
 
 runT :: (MemoryOps b, TraverseExp b)
      => Exp Word32
-     -> RunInfo b c d -> TransformA
-     -> TProgram (Pull Word32 b, TransformA)
-runT gid ri@(bs,_,a@(APush l ixf),_) t = do
+     -> RunInfo b c -> TransformA
+     -> TProgram (Inplace Word32 b, TransformA)
+runT gid ri@(bs,_,a@(APush l ixf)) t = do
   let v = valType a
   n <- names v
   allocateScalar n v
-  let p = ixf (\v _ -> assignScalar n v) gid
+  let p = ixf (\_ v -> assignScalar n v) gid
   runTrans t bs (len a) p
-  return (Pull (len a) $ \_ -> readFrom n, const id)
+  return (inplaceVariable (len a) n, const id)  --(Pull (len a) $ \_ -> readFrom n, const id)
 
 divide :: Names -> (Word32 -> Exp Word32 -> Exp Word32)
        -> Transform b
@@ -292,19 +326,21 @@ isDivable m bs ngid gid (na,a) =
            )
            $ a' == b'
 
-runAable :: (MemoryOps b, TraverseExp b) => (Exp Word32 -> (Word32,Exp Word32) -> Bool) -> RunInfo b c d -> Bool
-runAable f ri@(bs,g,a,d) =
+runAable :: (MemoryOps b, TraverseExp b)
+         => (Exp Word32 -> (Word32,Exp Word32) -> Bool)
+         -> RunInfo b c -> Bool
+runAable f ri@(bs,g,a) = 
   let ns = createNames (valType a) "target"
       a' = fakeForce a ns
       gid = (BlockIdx X*(fromIntegral bs) +(ThreadIdx X))
-      accesses = snd $ collectRun (snd.collectProg (getIndice ns)) gid g (a',d)
+      accesses = snd $ collectRun (snd.collectProg (getIndice ns)) gid g a'
   in strace $ if accesses /= []
       then all (gid `f`) accesses
       else error ("No uses of this array: " ++ show accesses)
 
 fakeForce :: (Array a1, MemoryOps e)
-          => a1 Word32 e -> Names -> Pull Word32 e
-fakeForce a n = pullFrom n (len a)
+          => a1 Word32 e -> Names -> Inplace Word32 e
+fakeForce a ns = inplace (len a) ns
 
 pushG :: (TraverseExp a, ASize s) => Word32 -> TransformA
       -> APush Word32 a -> Push Grid s a
@@ -312,7 +348,7 @@ pushG bs t (APush l ixf) = Push (fromIntegral l) $ \wf ->
   ForAllBlocks (fromIntegral $ (l+bs-1) `div` bs) $ \bid ->
     ForAll (fromIntegral (min l bs)) $ \tid ->
       let gid = bid*(fromIntegral bs)+tid
-      in runTrans t bs l (ixf wf gid)
+      in runTrans t bs l (ixf (flip wf) gid)
 
 strace a = trace (show a) a
 

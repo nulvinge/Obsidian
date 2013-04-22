@@ -40,8 +40,17 @@ import ExpAnalysis
 import Prelude hiding (zipWith,sum,replicate,id,(.))
 import qualified Prelude as P
 
-mSync :: (Array p, APushable p, MemoryOps a, TraverseExp a) => p Word32 a :~> Pull Word32 a
+mSync :: (Array p, APushable p, MemoryOps a, TraverseExp a)
+      => p Word32 a :~> Pull Word32 a
 mSync = unmonadicA aSync
+
+mSyncInplace :: (Array p, APushable p, MemoryOps a, TraverseExp a)
+             => p Word32 a :~> Inplace Word32 a
+mSyncInplace = unmonadicA aSyncInplace
+
+mInplaceSync :: (Array p, APushable p, MemoryOps a, TraverseExp a)
+             => Inplace Word32 a -> p Word32 a :~> ()
+mInplaceSync = curry (unmonadicA aInplaceSync)
 
 type PullC a = Pull Word32 (Exp a)
 type PullC2 a b = Pull Word32 (Exp a, Exp b)
