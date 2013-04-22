@@ -25,6 +25,12 @@ inplace s ns =
 
 inplaceVariable s ns = Inplace s (const $ assignScalar ns) (const $ readFrom ns)
 
+instance Array Inplace where
+  resize m (Inplace _ w r) = Inplace m w r
+  len      (Inplace s _ r) = s
+  aMap   f (Inplace s w r) = error "Cannot amap Inplace"
+  ixMap  f (Inplace s w r) = Inplace s (w.f) (r.f)
+
 instance Indexible Inplace where
   access = access.pullInplace
 
@@ -82,7 +88,7 @@ nameInplaceWrite arr = do
 
 data APush s a = APush s ((Exp Word32 -> a -> TProgram ()) -> Exp Word32 -> TProgram ())
 
-instance Array (APush) where
+instance Array APush where
   resize m (APush _ p) = APush m p
   len      (APush s _) = s
   aMap   f (APush s p) = APush s $ \wf i -> p (\ix e -> wf ix (f e)) i

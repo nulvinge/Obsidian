@@ -267,23 +267,22 @@ scan1 f a = do a' <- (unmonadicA aSyncInplace) a
                scan1' f 1 a'
                return $ pullInplace a'
 scan1' :: (Value a) => (a -> a -> a) -> Word32 -> Inplace Word32 a :~> ()
-scan1' f s' ai = do
+scan1' f s' a = do
   let s = fromIntegral s'
       s2 = 2*s'
-      a = pullInplace ai
   if s2 >= len a
     then 
-      mInplaceSync ai $ APush (len a`div`s2) $ \wf i -> do
+      mInplaceSync a $ APush (len a`div`s2) $ \wf i -> do
         let j = 2*s*i+2*s-1
-        wf j $ (ai!j) `f` (ai!(j-s))
+        wf j $ (a!j) `f` (a!(j-s))
     else do
-      mInplaceSync ai $ APush (len a`div`s2) $ \wf i -> do
+      mInplaceSync a $ APush (len a`div`s2) $ \wf i -> do
         let j = 2*s*i+2*s-1
-        wf j $ (ai!j) `f` (ai!(j-s))
-      scan1' f s2 ai
-      mInplaceSync ai $ APush (len a`div`s2-1) $ \wf i -> do
+        wf j $ (a!j) `f` (a!(j-s))
+      scan1' f s2 a
+      mInplaceSync a $ APush (len a`div`s2-1) $ \wf i -> do
         let j = 2*s*i+2*s-1
-        wf j $ (ai!(j+s)) `f` (ai!j)
+        wf j $ (a!(j+s)) `f` (a!j)
 
 tss1 = quickPrint t $ resize 64 testInput
   where s a = liftG $ simpleRun (monadicA (scan1 (+))) a
