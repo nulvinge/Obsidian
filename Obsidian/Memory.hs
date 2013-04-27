@@ -1,9 +1,13 @@
-{-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE ScopedTypeVariables, TypeFamilies  #-}
 
 
 {- Joel Svensson 2013 -} 
 
-module Obsidian.Memory (MemoryOps(..), Names, names, typesArray, inNames)  where
+module Obsidian.Memory (MemoryOps(..), Names,
+  typesScalar, typesArray,
+  allocateScalar, allocateArray, outputArray,
+  names, inNames, valType, atomicArray
+  )  where
 
 
 import Obsidian.Program
@@ -12,69 +16,42 @@ import Obsidian.Types
 import Obsidian.Globs
 import Obsidian.Types
 import Obsidian.Array -- Importing this feels a bit strange. 
+import Obsidian.Atomic
 
 import Data.Word
 
-data Names = Single Name
+data Names = Single Name Type Int
            | Tuple [Names]
   deriving (Show,Eq)
 
 inNames :: Name -> Names -> Bool
-inNames n (Single name) = n == name
+inNames n (Single name _ _) = n == name
 inNames n (Tuple names) = any (inNames n) names
 
 class MemoryOps a where
   createNames    :: a -> Name -> Names
-  typesScalar    :: Names -> a -> [(Name,Type)]
-  allocateArray  :: Names -> a -> Word32 -> Program t ()
-  allocateScalar :: Names -> a -> Program t () 
   assignArray    :: Names -> a -> Exp Word32 -> TProgram ()
   assignScalar   :: Names -> a -> TProgram () 
   pullFrom       :: (ASize s) => Names -> s -> Pull s a
   readFrom       :: Names -> a
 
 
-names :: (MemoryOps a) => a -> Program t Names 
-names a = do
-  n <- uniqueSM
-  return $ createNames a n
-
-typesArray ns a = map (\(n,t) -> (n,Pointer t)) (typesScalar ns a)
-
 instance Scalar a => MemoryOps (Exp a) where
-  createNames a n = Single n
-  typesScalar (Single n) a = [(n, typeOf a)]
-  allocateArray (Single name) a n = 
-    Allocate name (n * fromIntegral (sizeOf a))
-                  (Pointer (typeOf a))
-  allocateScalar (Single name) a =
-    Declare name (typeOf a) 
-  assignArray  (Single name) a ix = Assign name [ix] a
-  assignScalar (Single name) a    = Assign name [] a  
-  pullFrom (Single name) n = Pull n (\i -> index name i) 
-  readFrom (Single name) = variable name
+  createNames a n = Single n (typeOf a) (sizeOf a)
+  assignArray  (Single name t s) a ix   = Assign name [ix] a
+  assignScalar (Single name t s) a      = Assign name [] a  
+  pullFrom (Single name t s) n = Pull n (\i -> index name i) 
+  readFrom (Single name t s) = variable name
 
 instance (MemoryOps a, MemoryOps b) => MemoryOps (a, b) where
   createNames _ n = Tuple [createNames (undefined :: a) (n++"a")
                           ,createNames (undefined :: b) (n++"b")]
-  typesScalar (Tuple [na,nb]) _ = typesScalar na (undefined :: a)
-                               ++ typesScalar nb (undefined :: b)
-  allocateArray (Tuple [ns1,ns2]) _ n =
-    do 
-      allocateArray ns1 (undefined :: a) n
-      allocateArray ns2 (undefined :: b) n
-  allocateScalar (Tuple [ns1,ns2]) _ =
-    do
-      allocateScalar ns1 (undefined :: a)
-      allocateScalar ns2 (undefined :: b) 
-  assignArray (Tuple [ns1,ns2]) (a,b) ix =
-    do
-      assignArray ns1 a ix 
-      assignArray ns2 b ix 
-  assignScalar (Tuple [ns1,ns2]) (a,b) =
-    do
-      assignScalar ns1 a
-      assignScalar ns2 b 
+  assignArray (Tuple [ns1,ns2]) (a,b) ix = do
+    assignArray ns1 a ix 
+    assignArray ns2 b ix 
+  assignScalar (Tuple [ns1,ns2]) (a,b) = do
+    assignScalar ns1 a
+    assignScalar ns2 b 
   pullFrom (Tuple [ns1,ns2]) n =
     let p1 = pullFrom ns1 n
         p2 = pullFrom ns2 n
@@ -83,4 +60,44 @@ instance (MemoryOps a, MemoryOps b) => MemoryOps (a, b) where
     let p1 = readFrom ns1
         p2 = readFrom ns2
     in (p1,p2) 
+
+atomicArray  (Single name t s) ix f = AtomicOp name ix f --what about a?
+
+valType :: a b m -> m
+valType = (undefined :: m)
+
+names :: (MemoryOps a) => a -> Program t Names 
+names a = do
+  n <- uniqueSM
+  return $ createNames a n
+
+typesScalar :: Names -> [(Name,Type)]
+typesScalar (Single n t s) = [(n,t)]
+typesScalar (Tuple ns) = concat $ map typesScalar ns
+
+typesArray ns = map (\(n,t) -> (n,Pointer t))
+                    (typesScalar ns)
+
+allocateScalar :: Names -> Program t () 
+allocateScalar (Single name t s) =
+  Declare name t
+allocateScalar (Tuple ns) =
+  mapM_ (allocateScalar) ns
+
+allocateArray  :: Names -> Word32 -> Program t ()
+allocateArray (Single name t s) n = 
+  Allocate name (n * fromIntegral s) (Pointer t)
+allocateArray (Tuple ns) n =
+  mapM_ (\a -> allocateArray a n) ns
+
+outputArray :: (MemoryOps a) => p s a -> Program Grid Names
+outputArray a = do
+  let ns = createNames (valType a) "dummyOutput"
+  outputArray' ns
+outputArray' (Single name t s) = do
+  name' <- Output (Pointer t)
+  return $ Single name' t s
+outputArray' (Tuple ns) = do
+  ns' <- mapM outputArray' ns
+  return $ Tuple ns'
 

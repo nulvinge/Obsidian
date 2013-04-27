@@ -28,6 +28,7 @@ import Obsidian.Exp
 import Obsidian.Array
 import Obsidian.Library
 import Obsidian.Program
+import Obsidian.Atomic
 
 import Arrow
 import ArrowLib
@@ -100,7 +101,7 @@ reduce4 a = do
   if len b == 1
     then return b
     else (mSync >=> reduce4) b
-tr4 = quickPrint t testInput
+tr4 = quickPrint t $ resize 256 testInput
   where s a = liftG $ simpleRun (monadicA reduce4) a
         t a = run 1024 (monadicA reduce4) a
 
@@ -115,6 +116,14 @@ trr4 = quickPrint t testInput
   where s a = liftG $ simpleRun (monadicA (rreduce4 (len a`div`2))) a
         t a = run 1024 (monadicA (rreduce4 (len a`div`2))) a
 
+reduce5 :: (Value a, Num a) => Pull Word32 a :~> (Pull Word32 a)
+reduce5 a | len a == 1 = return a
+reduce5 a = do
+  b <- mSync $ uncurry (zipWith (+)) $ halve a
+  reduce5 b
+tr5 = quickPrint t $ resize 256 testInput
+  where s a = liftG $ simpleRun (monadicA reduce5) a
+        t a = run 1024 (monadicA reduce5) a
 
 bitonicMerge0 :: (Value a, OrdE a) => ((Pull Word32 a,Word32) :-> Pull Word32 a)
 bitonicMerge0 = proc (a,s) -> do
@@ -269,20 +278,15 @@ scan1 f a = do a' <- (unmonadicA aSyncInplace) a
 scan1' :: (Value a) => (a -> a -> a) -> Word32 -> Inplace Word32 a :~> ()
 scan1' f s' a = do
   let s = fromIntegral s'
-      s2 = 2*s'
-  if s2 >= len a
-    then 
-      mInplaceSync a $ APush (len a`div`s2) $ \wf i -> do
-        let j = 2*s*i+2*s-1
-        wf j $ (a!j) `f` (a!(j-s))
-    else do
-      mInplaceSync a $ APush (len a`div`s2) $ \wf i -> do
-        let j = 2*s*i+2*s-1
-        wf j $ (a!j) `f` (a!(j-s))
-      scan1' f s2 a
-      mInplaceSync a $ APush (len a`div`s2-1) $ \wf i -> do
-        let j = 2*s*i+2*s-1
-        wf j $ (a!(j+s)) `f` (a!j)
+  when (s' < len a) $ do
+    mInplaceSync a $ APush (len a`div`(s'*2)) $ \wf i -> do
+      let j = 2*s*i+2*s-1
+      wf j $ (a!j) `f` (a!(j-s))
+  when (s'*2 < len a) $ do
+    scan1' f (s'*2) a
+    mInplaceSync a $ APush (len a`div`(s'*2)-1) $ \wf i -> do
+      let j = 2*s*i+2*s-1
+      wf j $ (a!(j+s)) `f` (a!j)
 
 tss1 = quickPrint t $ resize 64 testInput
   where s a = liftG $ simpleRun (monadicA (scan1 (+))) a
@@ -291,7 +295,7 @@ tss1 = quickPrint t $ resize 64 testInput
 segScan0 :: (Value a)
          => (a -> a -> a)
          -> Pull Word32 (a,Exp Bool) :~> Pull Word32 (a, Exp Bool)
-segScan0 op = scan0 f
+segScan0 op = scan1 f
   where (a1,f1) `f` (a2,f2) =
           (ifThenElse f2 a2 (a1 `op` a2)
           ,(f1 ||* f2))
@@ -308,4 +312,11 @@ tmvms0 = quickPrint t (testInputS,(zipp (testInputW,zipp (testInputS,testInputB)
   where s a = liftG $ simpleRun (monadicA matvecmulseg0) a
         t a = run 1024 (monadicA matvecmulseg0) a
 
+hist0 :: (Pushable p, Array p)
+      => p Word32 (Exp Word32) -> Program Block (Pull Word32 (Exp Word32))
+hist0 a = do
+  hist <- forceInplaceAtomic AtomicInc (Pull 256 (const 0))
+  inplaceForce hist a
+  return $ pullInplace hist
+--th0 = quickPrint hist0 $ testInputW
 

@@ -43,7 +43,7 @@ write arr = do
   -- Here i know that this pattern match will succeed
   let n = len arr
   
-  allocateArray snames (undefined :: a) n
+  allocateArray snames n
 
   let (Push m p) = push Block arr
 
@@ -76,10 +76,9 @@ forceG' :: forall a. MemoryOps a
           -> GProgram () -- Really to something else (named output ?)
 forceG' a@(Push s p)  =
   do
-    let v = (undefined :: a)
-    n <- names v
-    output <- allocateArray n v s
-    p (assignArray n)
+    output <- outputArray a
+    --output <- allocateArray n v s
+    p (assignArray output)
     return ()
     where
       assignTo nom a ix = Assign nom [ix] a 

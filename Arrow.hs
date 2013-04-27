@@ -53,7 +53,7 @@ data a :-> b where
   Pure :: (a -> b) -> (a :-> b)
   Comb :: (a :-> b) -> (b :-> c) -> (a :-> c)
   --Pure :: (a -> b) -> (a :-> b)
-  Sync :: (Array p, APushable p, MemoryOps b, TraverseExp b) -- => Forceable (Pull (Exp b))
+  Sync :: (Array p, APushable p, MemoryOps b, TraverseExp b) --Forceable
        => (p Word32 b) :-> (Inplace Word32 b)
   InplaceSync :: (Array p, APushable p, MemoryOps b, TraverseExp b)
               => (Inplace Word32 b,p Word32 b) :-> ()
@@ -217,7 +217,7 @@ run' bs t InplaceSync after (i,a) = do
       bs' = fromIntegral bs
   ForAllBlocks (fromIntegral (n+bs-1 `div` bs)) $ \bid -> do
     ForAll (fromIntegral (min bs n)) $ \tid -> do
-      wf w (bid*bs'+tid)
+      wf (\i a -> w i a >> return ()) (bid*bs'+tid)
     P.Sync --keep some anlysis since we have already done this
   return ((),const id)
 
@@ -233,7 +233,7 @@ runB :: (MemoryOps b, TraverseExp b)
      -> RunInfo b c -> TransformA
      -> BProgram (Inplace Word32 b, TransformA)
 runB bid ri@(bs,_,APush l ixf) t =
-  if False --runWable ri
+  if runWable ri
     then runW bid ri t
     else do
       (a'',ns) <- nameInplaceWrite a'
@@ -294,9 +294,6 @@ runW bid ri@(bs,_,APush l ixf) t =
 runTable :: (MemoryOps b, TraverseExp b) => RunInfo b c -> Bool
 runTable ri@(bs,g,a) = runAable (\gid (n,a) -> (gid==a)) ri
 
-valType :: a b m -> m
-valType = (undefined :: m)
-
 runT :: (MemoryOps b, TraverseExp b)
      => Exp Word32
      -> RunInfo b c -> TransformA
@@ -304,7 +301,7 @@ runT :: (MemoryOps b, TraverseExp b)
 runT gid ri@(bs,_,a@(APush l ixf)) t = do
   let v = valType a
   n <- names v
-  allocateScalar n v
+  allocateScalar n
   let p = ixf (\_ v -> assignScalar n v) gid
   runTrans t bs (len a) p
   return (inplaceVariable (len a) n, const id)  --(Pull (len a) $ \_ -> readFrom n, const id)
@@ -318,10 +315,10 @@ isDivable m bs ngid gid (na,a) =
   let a' = (simplifyDiv m bs na a)
       b' = (simplifyDiv m bs ngid gid) 
   in trace ((show m) ++ " \\ " ++
-            (show a) ++ " -> " ++
-            (show a') ++ " == " ++
-            (show gid) ++ " -> " ++
-            (show b') ++ " = " ++
+            (show a) ++ "\t-> " ++
+            (show a') ++ "\n ==  " ++
+            (show gid) ++ "\t-> " ++
+            (show b') ++ "\n = " ++
             (show (a' == b')) ++ "\n"
            )
            $ a' == b'
@@ -333,10 +330,14 @@ runAable f ri@(bs,g,a) =
   let ns = createNames (valType a) "target"
       a' = fakeForce a ns
       gid = (BlockIdx X*(fromIntegral bs) +(ThreadIdx X))
+      APush s apushf = apush a
+      assigns = map (\e -> ((len a),e)) $ snd $ collectAssign ns $
+                    apushf (flip $ assignArray ns) gid
       accesses = snd $ collectRun (snd.collectProg (getIndice ns)) gid g a'
-  in strace $ if accesses /= []
-      then all (gid `f`) accesses
-      else error ("No uses of this array: " ++ show accesses)
+  in strace $ if accesses /= [] || assigns /= []
+      then all (gid `f`) (accesses ++ assigns)
+      else error ("No uses of this array: " ++ show accesses
+               ++ "\nAssigns: " ++ show assigns)
 
 fakeForce :: (Array a1, MemoryOps e)
           => a1 Word32 e -> Names -> Inplace Word32 e

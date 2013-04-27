@@ -186,6 +186,27 @@ collectProg f e@(Bind a g)    = let (v1,b1) = collectProg f a
                                 in  (v2,b1 ++ b2)
 collectProg f e@(Return a)    = (a,[])
 
+
+collectAssign :: Names -> TProgram a -> (a,[Exp Word32])
+collectAssign ns e@(Assign n [l] a) | n`inNames`ns = ((), [l])
+                                    | otherwise    = ((), [])
+collectAssign ns e@(Cond a b)  = collectAssign ns b
+collectAssign ns e@(SeqFor n l)= collectAssign ns (l 0)
+collectAssign ns e@(Bind a g)  = let (v1,b1) = collectAssign ns a
+                                     (v2,b2) = collectAssign ns (g v1)
+                                 in  (v2,b1 ++ b2)
+collectAssign ns e@(Return a)  = (a,[])
+
+
+
+
+
+
+
+
+
+
+
 instance TraverseExp (TProgram a) where
   collectExp = error "no collectExp for TProgram"
 
