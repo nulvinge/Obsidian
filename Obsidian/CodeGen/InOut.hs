@@ -58,20 +58,18 @@ class GetTypes a where
   getTypes :: a -> Name -> (Inputs,a)
 
 instance (MemoryOps a) => GetTypes (Pull Word32 a) where
-  getTypes a name = (typesArray names aa
+  getTypes a name = (typesArray names
                     ,pullFrom names (len a))
-      where aa = (a!0)
-            names = createNames aa name
+      where names = createNames (valType a) name
 
 instance (MemoryOps a) => GetTypes (Pull (Exp Word32) a) where
-  getTypes a name = ((namen, Word32) : typesArray names aa
+  getTypes a name = ((namen, Word32) : typesArray names
                     ,pullFrom names (variable namen))
-      where aa = (a!0)
-            namen = name ++ "n"
-            names = createNames aa name
+      where namen = name ++ "n"
+            names = createNames (valType a) name
 
 instance (Scalar a) => GetTypes (Exp a) where
-  getTypes a name = (typesScalar names a
+  getTypes a name = (typesScalar names
                     ,readFrom names)
       where namen = name ++ "n"
             names = createNames a name
