@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-} 
+
 {-
 
    sequential loops with state
@@ -13,57 +14,127 @@ import Obsidian.Program
 import Obsidian.Exp
 import Obsidian.Array
 import Obsidian.Memory
+import Obsidian.Names
 
--- TODO: Add suitable allocs
+import Data.Word
+
 -- TODO: Rename module to something better
 
 ---------------------------------------------------------------------------
--- seqFold (actually reduce) 
+-- seqReduce (actually reduce) 
 ---------------------------------------------------------------------------
-
-seqFold :: forall l a. (ASize l, MemoryOps a)
+seqReduce :: (ASize l, MemoryOps a)
            => (a -> a -> a)
-           -> a
            -> Pull l a
-           -> Program Thread a
-seqFold op init arr = do
-  ns  <- names (undefined :: a) 
-  allocateScalar ns (undefined :: a)
+           -> Push Thread l a
+seqReduce op arr =
+  Push 1 $ \wf -> 
+  do
+    ns <- names (valType arr)
+    allocateScalar ns 
 
-  assignScalar ns init  
-  -- Assign nom [] init  
-  SeqFor n $ (\ ix ->
-      assignScalar ns (readFrom ns `op`  (arr ! ix))) 
-
+    assignScalar ns init  
+ 
+    SeqFor (n-1) $ \ ix ->
+      do
+        assignScalar ns (readFrom ns `op`  (arr ! (ix + 1)))
     
-  return $ readFrom ns
+    wf (readFrom ns) 0 
   where 
     n = sizeConv$ len arr
+    init = arr ! 0 
 
+-- TODO: This is dangerous when array lengths are unknown! 
+
+---------------------------------------------------------------------------
+-- Iterate
+---------------------------------------------------------------------------
+seqIterate :: (ASize l, MemoryOps a)
+              => EWord32
+              -> (EWord32 -> a -> a)
+              -> a
+              -> Push Thread l a
+seqIterate n f init =
+  Push 1 $  \wf -> 
+  do
+    ns <- names init
+    allocateScalar ns 
+
+    assignScalar ns init
+    SeqFor n $ \ix ->
+      do
+        assignScalar ns $ f ix (readFrom ns)
+
+    wf (readFrom ns) 0 
+
+---------------------------------------------------------------------------
+-- 
+---------------------------------------------------------------------------    
+-- seqUntil :: MemoryOps a
+--                  => (a -> a)
+--                  -> (a -> EBool)
+--                  -> a
+--                  -> Program Thread a
+-- seqUntil f p init =
+--   do 
+--     (ns :: Names a) <- names "v" 
+--     allocateScalar ns 
+
+--     assignScalar ns init
+--     SeqWhile (p (readFrom ns)) $ 
+--       do
+--         (tmp :: Names a) <- names "t"
+--         allocateScalar tmp
+--         assignScalar tmp (readFrom ns) 
+--         assignScalar ns $ f (readFrom tmp)
+    
+--     return $ readFrom ns
+
+
+seqUntil :: (ASize l, MemoryOps a) 
+            => (a -> a)
+            -> (a -> EBool)
+            -> a
+            -> Push Thread l a
+seqUntil f p (init :: a) =
+  Push 1 $ \wf -> 
+  do 
+    ns <- names init
+    allocateScalar ns 
+
+    assignScalar ns init
+    SeqWhile (p (readFrom ns)) $ 
+      do
+        tmp <- names init
+        allocateScalar tmp
+        assignScalar tmp ((readFrom ns) :: a)
+        assignScalar ns $ f (readFrom tmp)
+    wf (readFrom ns) 0 
 
 ---------------------------------------------------------------------------
 -- Sequential scan
 ---------------------------------------------------------------------------
 
-seqScan :: forall l a. (ASize l, MemoryOps a)
+seqScan :: (ASize l, MemoryOps a)
            => (a -> a -> a)
            -> Pull l a
            -> Push Thread l a
-seqScan op (Pull n ixf)  =
+seqScan op arr@(Pull n ixf)  =
   Push n $ \wf -> do
-    ns <- names (undefined :: a) 
-    allocateScalar ns (undefined :: a)
+    ns <- names (valType arr)
+    allocateScalar ns -- (ixf 0)
     assignScalar ns (ixf 0)
     wf (readFrom ns) 0 
     SeqFor (sizeConv (n-1)) $ \ix -> do
       wf (readFrom ns) ix                  
       assignScalar ns  $ readFrom ns `op` (ixf (ix + 1))
+     
                  
 ---------------------------------------------------------------------------
 -- Sequential Map (here for uniformity) 
 ---------------------------------------------------------------------------
 
-seqMap :: forall l a b. ASize l
+seqMap :: ASize l
           => (a -> b)
           -> Pull l a
           -> Push Thread l b
@@ -73,25 +144,3 @@ seqMap f arr =
       wf (f (arr ! ix)) ix 
 
 
----------------------------------------------------------------------------
--- Sequential Map and scan (generalisation of map + accum) 
----------------------------------------------------------------------------
-
-seqMapScan :: forall l a b acc. (ASize l, MemoryOps acc, MemoryOps b)
-              => (acc -> a -> (acc,b))
-              -> acc 
-              -> Pull l a
-              -> Push Thread l (acc,b)
-seqMapScan op acc (Pull n ixf)  =
-  Push n $ \wf -> do
-    ns <- names (undefined :: b) 
-    allocateScalar ns (undefined :: b)
-    nacc <- names (undefined :: acc)
-    allocateScalar nacc (undefined :: acc)
-    
-    assignScalar nacc acc
-
-    SeqFor (sizeConv n) $ \ix -> do
-      let (a,b) = op (readFrom nacc) (ixf ix)
-      wf (a,b) ix                  
-      assignScalar nacc a

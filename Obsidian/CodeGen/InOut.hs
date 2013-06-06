@@ -1,4 +1,6 @@
-{-# LANGUAGE FlexibleInstances, 
+{-# LANGUAGE FlexibleInstances,
+             OverlappingInstances,
+             UndecidableInstances,
              FlexibleContexts,
              MultiParamTypeClasses,
              TypeOperators,
@@ -10,6 +12,10 @@
    Niklas Ulvinge 2013
 
   Notes:
+
+  2013-04-28: Big Changes. Allows empty lists of inputs
+              that are represented by ().
+              TODO: Add Niklas modifications that allow tuples in input arrays.
 
   2013-01-24: Changes with the new Array types in mind
   2013-01-08: Edited
@@ -26,7 +32,11 @@ import Obsidian.Array
 import Obsidian.Types
 import Obsidian.Globs 
 import Obsidian.Program
+import Obsidian.Force
 import Obsidian.Memory
+
+import Obsidian.Names -- PHASE OUT! 
+
 import qualified Obsidian.CodeGen.Program as CG 
 
 import Data.Word
@@ -49,10 +59,10 @@ import Data.Char
 
 -} 
   
-type Inputs = [(Name,Type)] 
+type Inputs = [(Name,Type)]
 
-class ToProgram a b where
-  toProgram :: Int -> (a -> b) -> Ips a b -> (Inputs,CG.IM)
+class ToProgram a where
+  toProgram :: Int -> a -> InputList a -> (Inputs,CG.IM)
 
 class GetTypes a where
   getTypes :: a -> Name -> (Inputs,a)
@@ -79,33 +89,36 @@ instance (GetTypes a, GetTypes b) => GetTypes (a,b) where
     where (i1,a) = getTypes a (name ++ "a")
           (i2,b) = getTypes b (name ++ "b")
 
-instance (GetTypes a) => ToProgram a (GProgram b) where
-  toProgram i f a = (types, CG.compileStep1 (f input))
-    where (types,input) = getTypes a ("input" ++ show i)
+instance ToProgram (GProgram a) where
+  toProgram i prg () = ([], CG.compileStep1 prg)
 
-instance (GetTypes a, ToProgram b c) => ToProgram a (b -> c) where
-  toProgram i f (a :-> rest) = (ins ++ types, prg)
+instance (MemoryOps a) => ToProgram (Push Grid l a) where
+  toProgram i a@(Push _ p) () = toProgram i prg ()
+    where prg =  do
+            output <- outputArray a
+            p (\a ix -> assignArray output a ix)
+
+instance (GetTypes a, ToProgram b) => ToProgram (a -> b) where
+  toProgram i f (a :- rest) = (ins ++ types, prg)
     where (ins,prg)     = toProgram (i+1) (f input) rest
           (types,input) = getTypes a ("input" ++ show i)
-
 
 
 ---------------------------------------------------------------------------
 -- heterogeneous lists of inputs 
 ---------------------------------------------------------------------------
-data head :-> tail = head :-> tail
+data head :- tail = head :- tail
 
-infixr 5 :->
+infixr 5 :-
 
 
 ---------------------------------------------------------------------------
 -- Function types to input list types. 
---------------------------------------------------------------------------- 
-type family Ips a b
- 
--- type instance Ips a (GlobArray b) = Ips' a -- added Now 26
--- type instance Ips a (Final (GProgram b)) = a 
-type instance Ips a (GProgram b) = a
-type instance Ips a (b -> c) =  a :-> Ips b c
+---------------------------------------------------------------------------
 
+type family InputList a
+
+type instance InputList (a -> b)        = a :- (InputList b)
+type instance InputList (Push Grid l b) = ()
+type instance InputList (GProgram b)    = () 
 

@@ -1,7 +1,15 @@
-{-# LANGUAGE ScopedTypeVariables, TypeFamilies  #-}
+{-# LANGUAGE ScopedTypeVariables,
+             TypeFamilies,
+             GADTs #-}
 
+{- Joel Svensson 2013
 
-{- Joel Svensson 2013 -} 
+   This Module became quite messy.
+   TODO: CLEAN IT UP! 
+
+   notes: 2013-05-02: Cleaned out inspect. 
+
+-} 
 
 module Obsidian.Memory (MemoryOps(..), Names,
   typesScalar, typesArray,
@@ -28,6 +36,9 @@ inNames :: Name -> Names -> Bool
 inNames n (Single name _ _) = n == name
 inNames n (Tuple names) = any (inNames n) names
 
+---------------------------------------------------------------------------
+-- Local Memory
+---------------------------------------------------------------------------
 class MemoryOps a where
   createNames    :: a -> Name -> Names
   assignArray    :: Names -> a -> Exp Word32 -> TProgram ()
@@ -36,12 +47,16 @@ class MemoryOps a where
   readFrom       :: Names -> a
 
 
+---------------------------------------------------------------------------
+-- Instances
+---------------------------------------------------------------------------
 instance Scalar a => MemoryOps (Exp a) where
   createNames a n = Single n (typeOf a) (sizeOf a)
   assignArray  (Single name t s) a ix   = Assign name [ix] a
   assignScalar (Single name t s) a      = Assign name [] a  
   pullFrom (Single name t s) n = Pull n (\i -> index name i) 
   readFrom (Single name t s) = variable name
+
 
 instance (MemoryOps a, MemoryOps b) => MemoryOps (a, b) where
   createNames _ n = Tuple [createNames (undefined :: a) (n++"a")
@@ -59,7 +74,30 @@ instance (MemoryOps a, MemoryOps b) => MemoryOps (a, b) where
   readFrom (Tuple [ns1,ns2])  =
     let p1 = readFrom ns1
         p2 = readFrom ns2
-    in (p1,p2) 
+    in (p1,p2)
+
+instance (MemoryOps a, MemoryOps b, MemoryOps c) => MemoryOps (a, b, c) where
+  createNames _ n = Tuple [createNames (undefined :: a) (n++"a")
+                          ,createNames (undefined :: b) (n++"b")
+                          ,createNames (undefined :: c) (n++"c")]
+  assignArray (Tuple [ns1,ns2,ns3]) (a,b,c) ix = do
+    assignArray ns1 a ix 
+    assignArray ns2 b ix 
+    assignArray ns3 c ix 
+  assignScalar (Tuple [ns1,ns2,ns3]) (a,b,c) = do
+    assignScalar ns1 a
+    assignScalar ns2 b 
+  pullFrom (Tuple [ns1,ns2,ns3]) n =
+    let p1 = pullFrom ns1 n
+        p2 = pullFrom ns2 n
+        p3 = pullFrom ns3 n
+    in Pull n (\ix -> (p1 ! ix, p2 ! ix, p3 ! ix))
+  readFrom (Tuple [ns1,ns2,ns3])  =
+    let p1 = readFrom ns1
+        p2 = readFrom ns2
+        p3 = readFrom ns3
+    in (p1,p2,p3)
+
 
 atomicArray  (Single name t s) ix f = AtomicOp name ix f --what about a?
 
@@ -84,7 +122,7 @@ allocateScalar (Single name t s) =
 allocateScalar (Tuple ns) =
   mapM_ (allocateScalar) ns
 
-allocateArray  :: Names -> Word32 -> Program t ()
+allocateArray  :: Names -> Word32 -> Program Block ()
 allocateArray (Single name t s) n = 
   Allocate name (n * fromIntegral s) (Pointer t)
 allocateArray (Tuple ns) n =

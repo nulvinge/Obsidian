@@ -2,6 +2,7 @@
 {- Joel Svensson 2012 -}
 module Obsidian.CodeGen.PP where 
 
+{- NOTES 2013-05-06: Apply Niklas Ulvinge's tweaks for speed -} 
 
 import Control.Monad.State
 import Data.Text (Text,pack,unpack,append,empty)
@@ -25,7 +26,9 @@ unindent :: PP ()
 unindent = 
   do 
     (i,s) <- get 
-    if i <= 0 then error "Whats going on" else put (i-1,s) 
+    if i <= 0
+      then error "PP.unindent: Indentation level messed up"
+      else put (i-1,s) 
 
 line :: String -> PP () 
 line str = 
@@ -54,3 +57,4 @@ space   = line " "
 cTermLn = line ";" >> newline
 
 wrap s e p = line s >> p >> line e 
+

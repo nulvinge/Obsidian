@@ -1,12 +1,14 @@
 {- Joel Svensson 2012,2013
 
    Notes:
+   2013-04-02: Added a Break statement to the language.
+               Use it to break out of sequential loops.
    2013-01-08: removed number-of-blocks field from ForAllBlocks
 
 -}
 
-{-# LANGUAGE GADTs,
-             FlexibleInstances #-} 
+{-# LANGUAGE GADTs, TypeFamilies, EmptyDataDecls #-}
+             
 
 
 module Obsidian.Program  where 
@@ -18,6 +20,7 @@ import Obsidian.Exp
 import Obsidian.Types
 import Obsidian.Globs
 import Obsidian.Atomic
+import Obsidian.Names
 
 -- Package value-supply
 import Data.Supply
@@ -28,27 +31,24 @@ import Data.Text
 ---------------------------------------------------------------------------
 -- Thread/Block/Grid 
 ---------------------------------------------------------------------------
-data Thread
-data Block
-data Grid 
 
-data PT a where
-  Thread :: PT Thread
-  Block  :: PT Block
-  Grid   :: PT Grid 
+-- A hierarchy! 
+data Step a -- A step in the hierarchy
+data Zero
+  
+type Thread = Zero 
+type Block  = Step Thread 
+type Grid   = Step Block  
+
+
+type family Below a
+
+type instance Below Zero = Zero
+type instance Below (Step Zero) = Zero
+type instance Below (Step (Step Zero)) = Step Zero 
 
 type Identifier = Int 
-
-class LoopState a where
-  allocateLS :: a -> Program t Name -- generalise 
-
-instance Scalar a => LoopState (Exp a) where
-  allocateLS a =
-    do
-      id <- Identifier
-      return $ "v" ++ show id
       
-
 ---------------------------------------------------------------------------
 -- Program datatype
 --------------------------------------------------------------------------
@@ -69,46 +69,38 @@ data Program t a where
               -> Atomic a
               -> Program Thread (Exp a)
 
-  -- TODO: Code generation for this.
-  -- May want this at all levels. (Grid, Block, Thread)
   Cond :: Exp Bool
-          -> Program Thread ()
-          -> Program Thread ()
+          -> Program t ()
+          -> Program t ()
   
   -- DONE: Code generation for this.
   -- TODO: Generalize this loop! (Replace Thread with t) 
-  SeqFor :: Exp Word32 -> (Exp Word32 -> Program t a)
-            -> Program t a
+  SeqFor :: EWord32 -> (EWord32 -> Program t ())
+            -> Program t ()
             
- -- SeqWhile :: LoopState a
- --             => Name
- --            -> (a -> Exp Bool)
- --             -> (a -> Program t a) -- state transformation
- --             -> Program t ()       -- hmm
+  SeqWhile :: Exp Bool ->
+              Program Thread () ->
+              Program Thread () 
   
 
-  ForAll :: (Exp Word32) 
-            -> (Exp Word32 -> Program Thread a)
-            -> Program Block a 
+            
+  Break  :: Program Thread () 
+ 
+  ForAll :: EWord32 
+            -> (EWord32 -> Program t ())
+            -> Program (Step t) ()
 
-  {-
-     I'm not sure about this constructor.
-     As I see it programs from which we generate a kernel
-     must be wrapped in one of these ForAllBlocks.
-     Programs with sequences of 'ForAllBlocks' are problematic.
+  --ForAllBlocks :: EWord32 -> (EWord32 -> Program Block ()) 
+  --                -> Program Grid ()
 
-     Maybe a (ForAllBlocks n f *>* ForAllBlocks m g) Program
-     should be split into two kernels. 
-  -} 
-  ForAllBlocks :: (Exp Word32) -> (Exp Word32 -> Program Block a) 
-                  -> Program Grid a
-
-  ForAllThreads :: (Exp Word32) -> (Exp Word32 -> Program Thread a)
-                   -> Program Grid a 
+  ForAllThreads :: (EWord32) -> (EWord32 -> Program Thread ())
+                   -> Program Grid ()
 
   -- Allocate shared memory in each MP
-  
-  Allocate :: Name -> Word32 -> Type -> Program t () 
+
+  -- TODO: Change the Liveness analysis to a two-pass algo
+  --       and remove the Allocate constructor. 
+  Allocate :: Name -> Word32 -> Type -> Program Block () 
 
   -- Automatic Variables
   Declare :: Name -> Type -> Program t () 
@@ -118,8 +110,11 @@ data Program t a where
 
      Since we cannot synchronize writes to a global array inside of an
      kernel, global arrays will only be written as outputs of the kernel
-  -} 
-  Output   :: Type -> Program Grid Name
+
+     Also used this when doing 
+  -}
+  
+  Output   :: Type -> Program t Name
   -- (Output may be replaced by AllocateG) 
   
   Sync     :: Program Block ()
@@ -131,9 +126,9 @@ data Program t a where
 
   -- Parallel composition of Programs
   -- TODO: Will I use this ? 
-  Par :: Program p () ->
-         Program p () ->
-         Program p () 
+  --Par :: Program p () ->
+  --       Program p () ->
+  --       Program p () 
 
   -- Monad
   Return :: a -> Program t a
@@ -146,16 +141,24 @@ uniqueSM = do
   id <- Identifier
   return $ "arr" ++ show id 
 
----------------------------------------------------------------------------
--- forAll and forAllN
----------------------------------------------------------------------------
---forAll :: (Exp Word32 -> Program Thread ()) -> Program Block () 
---forAll f = ForAll Nothing f
+uniqueNamed pre = do
+  id <- Identifier
+  return $ pre ++ show id 
 
-forAll :: Exp Word32 -> (Exp Word32 -> Program Thread ()) -> Program Block ()
+---------------------------------------------------------------------------
+-- forAll 
+---------------------------------------------------------------------------
+forAll :: EWord32 -> (EWord32 -> Program t ()) -> Program (Step t) ()
 forAll n f = ForAll n f
 
-(*||*) = Par
+---------------------------------------------------------------------------
+-- SeqFor
+---------------------------------------------------------------------------
+seqFor :: EWord32 -> (EWord32 -> Program Thread ())
+            -> Program Thread ()
+seqFor (Literal 1) f = f 0
+seqFor n f = SeqFor n f
+
 
 ---------------------------------------------------------------------------
 -- forAllT
@@ -167,14 +170,14 @@ forAll n f = ForAll n f
 -- that performs local computations is impossible.
 -- Using the hardcoded BlockDim may turn out to be a problem when
 -- we want to compute more than one thing per thread (may be fine though). 
-forAllT :: (Exp Word32) -> (Exp Word32 -> Program Thread ())
+forAllT :: EWord32 -> (EWord32 -> Program Thread ())
            -> Program Grid ()
 forAllT n f = ForAllThreads n 
             $ \gtid -> f gtid 
 
 
 
-forAllBlocks = ForAllBlocks
+forAllBlocks = forAll
 
 ---------------------------------------------------------------------------
 -- Monad
@@ -191,24 +194,39 @@ type BProgram = Program Block
 type GProgram = Program Grid 
 
 ---------------------------------------------------------------------------
--- runPrg (fix types here, Integer!)
+-- runPrg (RETHINK!) (Works for Block programs, but all?)
 ---------------------------------------------------------------------------
 runPrg :: Int -> Program t a -> (a,Int)
 runPrg i Identifier = (i,i+1)
+
+-- Maybe these two are the most interesting cases!
+-- Return may for example give an array. 
 runPrg i (Return a) = (a,i)
 runPrg i (Bind m f) =
   let (a,i') = runPrg i m
-  in runPrg i' (f a) 
+  in runPrg i' (f a)
+     
 runPrg i (Sync) = ((),i)
 runPrg i (ForAll n ixf) =
   let (p,i') = runPrg i (ixf (variable "tid")) 
-  in  (p,i') 
-runPrg i (Allocate id _ _ ) = ((),i)
+  in  (p,i')
+-- What can this boolean depend upon ? its quite general!
+--  (we know p returns a ()... ) 
+runPrg i (Cond b p) = ((),i) 
+runPrg i (Declare _ _) = ((),i)
+runPrg i (Allocate _ _ _ ) = ((),i)
 runPrg i (Assign _ _ a) = ((),i) -- Probaby wrong.. 
 runPrg i (AtomicOp _ _ _) = (variable ("new"++show i),i+1)
-     
+
+{- What do I want from runPrg ?
+
+   # I want to it to "work" for all block programs (no exceptions)
+   # I want a BProgram (Pull a) to return a Pull array of "correct length)
+-}
+
+                            
 ---------------------------------------------------------------------------
--- printPrg
+-- printPrg (REIMPLEMENT) xs
 ---------------------------------------------------------------------------
 printPrg prg = (\(_,x,_) -> x) $ printPrg' 0 prg
 
@@ -249,12 +267,12 @@ printPrg' i (ForAll n f) =
           `append` prg2
           `append` pack "\n}",
        i')
-printPrg' i (ForAllBlocks n f) =
-  let (d,prg2,i') = printPrg' i (f (variable "BIX"))
-  in (d, pack ("blocks (i)" ++ "{\n")
-         `append` prg2
-         `append` pack "\n}",
-      i')
+--printPrg' i (ForAllBlocks n f) =
+--  let (d,prg2,i') = printPrg' i (f (variable "BIX"))
+--  in (d, pack ("blocks (i)" ++ "{\n")
+--         `append` prg2
+--         `append` pack "\n}",
+--      i')
 printPrg' i (Return a) = (a,pack "MonadReturn;\n",i)
 printPrg' i (Bind m f) =
   let (a1, str1,i1) = printPrg' i m

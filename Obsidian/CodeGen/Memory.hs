@@ -15,8 +15,6 @@ module Obsidian.CodeGen.Memory
         sharedMem,  
         Address,
         Bytes,
-        --mapMemory,
-        -- NEW
         mmIM) 
        where 
 
@@ -125,7 +123,7 @@ mmIM im memory memmap = r im (memory,memmap)
           mNew =
             case freeableAddrs of
               (Just as) -> freeAll m' (map fst as)
-              Nothing   -> m
+              Nothing   -> m'
       in r xs (mNew,mm')
          
     process (SAllocate name size t,_) m mm = (m',mm') 
@@ -138,6 +136,7 @@ mmIM im memory memmap = r im (memory,memmap)
     process (SForAllBlocks n im,_) m mm = mmIM im m mm
     -- Another tricky case. 
     process (SSeqFor _ n im,_) m mm = mmIM im m mm
+    process (SSeqWhile b im,_) m mm = mmIM im m mm 
     -- Yet another tricky case.
     process (SForAll n im,_) m mm = mmIM im m mm 
     -- The worst of them all.
@@ -145,7 +144,8 @@ mmIM im memory memmap = r im (memory,memmap)
 
     process (_,_) m mm = (m,mm) 
 
+-- Friday (2013 Mars 29, discovered bug) 
 getFreeableSet :: (Statement Liveness,Liveness) -> IML -> Liveness 
-getFreeableSet (_,l) [] = l
+getFreeableSet (_,l) [] = Set.empty -- not l ! 
 getFreeableSet (_,l) ((_,l1):_) = l Set.\\ l1
 

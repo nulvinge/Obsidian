@@ -56,8 +56,9 @@ kernelHead name ins outs =
 -- genKernel 
 ---------------------------------------------------------------------------
     
-genKernel :: ToProgram a b => String -> (a -> b) -> Ips a b -> String 
-genKernel name kernel a = proto ++ cuda 
+--genKernel :: ToProgram a b => String -> (a -> b) -> Ips a b -> String
+genKernel :: ToProgram a => String -> a -> InputList a -> String     
+genKernel name kernel a = proto ++ ts ++ cuda 
   where
     (ins,im) = toProgram 0 kernel a
 
@@ -67,20 +68,21 @@ genKernel name kernel a = proto ++ cuda
     
     -- Creates (name -> memory address) map      
     (m,mm) = mmIM lc sharedMem Map.empty
-
+             
     -- What if its Right ??? (I DONT KNOW!) 
-    (Left threadBudget) = numThreads im 
+    (Left threadBudget) = numThreads im
+    ts = "/* number of threads needed " ++ show threadBudget ++ "*/\n"
 
     spmd = imToSPMDC threadBudget im
     
     
-    body' = shared : mmSPMDC mm spmd
+    body' = (if size m > 0 then (shared :) else id)  $ mmSPMDC mm spmd
 
     em = snd $ execState (collectExps body') ( 0, Map.empty)
-    (decls,body'') = replacePass em body'
-    spdecls = declsToSPMDC decls 
+    --(decls,body'') = replacePass em body'
+    --spdecls = declsToSPMDC decls 
 
-    body = spdecls ++ body''
+    body = body -- spdecls ++ body''
               
     swap (x,y) = (y,x)
     inputs = map ((\(t,n) -> (typeToCType t,n)) . swap) ins
@@ -131,6 +133,8 @@ mmSPMDC' mm (CFunc name es) = cFunc name (map (mmCExpr mm) es)
 mmSPMDC' mm CSync           = CSync
 mmSPMDC' mm (CIf   e s1 s2) = cIf (mmCExpr mm e) (mmSPMDC mm s1) (mmSPMDC mm s2)
 mmSPMDC' mm (CFor name e s) = cFor name (mmCExpr mm e) (mmSPMDC mm s)
+mmSPMDC' mm (CWhile b s)    = cWhile (mmCExpr mm b) (mmSPMDC mm s) 
+mmSPMDC' mm CBreak = cBreak 
 mmSPMDC' mm (CDeclAssign t nom e) = cDeclAssign t nom (mmCExpr mm e)
 mmSPMDC' mm a@(CDecl t nom) = a
 mmSPMDC' mm a = error $ "mmSPMDC': " ++ show a
@@ -182,6 +186,10 @@ imToSPMDC nt im = concatMap (process nt) im
 
     process nt (SSeqFor name e im,_) =
       [cFor name (expToCExp e) (imToSPMDC nt im)]
+    process nt (SSeqWhile b im,_) =
+      [cWhile (expToCExp b) (imToSPMDC nt im)]
+    process nt (SBreak,_) =
+      [cBreak]
 
     process nt (SForAll (Literal n) im,_) =
       if (n < nt) 

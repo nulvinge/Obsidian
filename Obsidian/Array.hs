@@ -1,7 +1,8 @@
 {-# LANGUAGE MultiParamTypeClasses,  
              FlexibleInstances, FlexibleContexts,
              GADTs, 
-             TypeFamilies #-} 
+             TypeFamilies,
+             RankNTypes #-} 
 
 {- Joel Svensson 2012
 
@@ -17,10 +18,17 @@ import Obsidian.Types
 import Obsidian.Globs
 import Obsidian.Program
 
-
 import Data.List
 import Data.Word
 
+---------------------------------------------------------------------------
+-- Aliases
+---------------------------------------------------------------------------
+type SPull = Pull Word32
+type DPull = Pull EWord32
+
+type SPush t a = Push t Word32 a
+type DPush t a = Push t EWord32 a 
 ---------------------------------------------------------------------------
 -- Create arrats
 ---------------------------------------------------------------------------
@@ -43,16 +51,18 @@ instance ASize (Exp Word32) where
 ---------------------------------------------------------------------------
 -- Push and Pull arrays
 ---------------------------------------------------------------------------
-data Push p s a = Push s
-                     ((a -> Exp Word32 -> TProgram ()) -> Program p ())   
+data Push p s a =
+  Push s ((a -> EWord32 -> TProgram ()) -> Program p ())
+
+-- Is this useful for anything ? 
+data PPush t s a =
+  PPush s ((a -> EWord32 ->  Program (Below t) ()) -> Program t ())
+
 
 data Pull s a = Pull {pullLen :: s, 
-                      pullFun :: Exp Word32 -> a}
+                      pullFun :: EWord32 -> a}
 
---type PushArray a = Push a
---type PullArray a = Pull a
-
-mkPushArray :: s -> ((a -> Exp Word32 -> TProgram ())
+mkPushArray :: s -> ((a -> EWord32 -> TProgram ())
                              -> Program t ()) -> Push t s a
 mkPushArray n p = Push n p 
 mkPullArray n p = Pull n p  
@@ -82,19 +92,63 @@ class Indexible a where
 instance Indexible Pull where
   access p ix = pullFun p ix
 
+---------------------------------------------------------------------------
+-- Functor instance Pull/Push arrays
+---------------------------------------------------------------------------
+instance Array arr => Functor (arr w) where 
+  fmap = aMap
+
 
 ---------------------------------------------------------------------------
 -- Pushable
 ---------------------------------------------------------------------------
+
+class Pushable t where
+  push :: ASize s => Pull s e -> Push t s e 
+
+instance Pushable Thread where
+  push (Pull n ixf) =
+    Push n $ \wf -> seqFor (sizeConv n) $ \i -> wf (ixf i) i
+
+instance Pushable Block where
+  push (Pull n ixf) =
+    Push n $ \wf -> ForAll (sizeConv n) $ \i -> wf (ixf i) i
+
+
+class PushableN t where
+  pushN :: ASize s => Word32 -> Pull s e -> Push t s e
+
+instance PushableN Block where
+  pushN n (Pull m ixf) =
+    Push m $ \ wf -> forAll (sizeConv (m `div` fromIntegral n)) $ \tix ->
+    seqFor (fromIntegral n) $ \ix -> wf (ixf (tix * fromIntegral n + ix))
+                                             (tix * fromIntegral n + ix) 
+ 
+    
+instance PushableN Grid where
+  pushN n (Pull m ixf) =
+    Push m $ \ wf -> forAll (sizeConv (m `div` fromIntegral n)) $ \bix ->
+    forAll (fromIntegral n) $ \tix -> wf (ixf (bix * fromIntegral n + tix))
+                                              (bix * fromIntegral n + tix) 
+ 
+    
+  
+
+pushGrid :: Word32 ->  DPull a -> DPush Grid a
+pushGrid m (Pull n ixf) =
+  Push n $ \ wf -> ForAll (n `div` fromIntegral m) $ \bix ->
+   ForAll (fromIntegral m) $ \tix -> wf (ixf (bix * fromIntegral m + tix))
+                                             (bix * fromIntegral m + tix) 
+                                                
+--instance Pushable' Grid where 
+--  push Grid (Pull n ixf) =
+--    Push n $ \wf -> ForAllThreads (sizeConv n) $ \i -> wf (ixf i) i
+
+                                                       
+
+{- 
 class Pushable a where 
   push  :: ASize s => PT t -> a s e -> Push t s e
-  -- Push using m threads
-  --  m must be a divisor of nm  (TODO: error otherwise) 
-  --pushN :: Word32 -> a e -> Push e
-
-  -- push grouped elements to adjacent indices using
-  -- one thread per group. 
-  --pushF :: a [e] -> Push e 
  
 instance Pushable (Push Thread) where 
   push Thread = id
@@ -109,13 +163,14 @@ instance Pushable (Push Grid) where
   push Thread = error "not implemented: Program transformations!"
   push Block = error "not implemented: Program transformations!" 
   
-instance Pushable Pull where   
+instance Pushable Pull where
   push Thread (Pull n ixf) =
-    Push n $ \wf -> SeqFor (sizeConv n) $ \i -> wf (ixf i) i
+    Push n $ \wf -> seqFor (sizeConv n) $ \i -> wf (ixf i) i
   push Block (Pull n ixf) =
     Push n $ \wf -> ForAll (sizeConv n) $ \i -> wf (ixf i) i 
   push Grid (Pull n ixf) =
     Push n $ \wf -> ForAllThreads (sizeConv n) $ \i -> wf (ixf i) i 
+-} 
 
 {-  pushN m (Pull nm ixf) =
     Push nm -- There are still nm elements (info for alloc) 
@@ -152,56 +207,12 @@ instance Pushable Pull where
   n threads, each writing m elements:
   [(tid * m + k | k <- [0..m]] 
 
------------------------------------------------------------------------- -} 
-
----------------------------------------------------------------------------
--- Global Pushable
---------------------------------------------------------------------------- 
-{- 
-class PushableGlobal a where
-  pushG :: a e -> GlobPush e
-  -- Push Global and Flatten
-  pushGF :: a [e] -> GlobPush e
-
-  -- Push using m threads per block and n elements per thread
-  pushGN :: Word32 -> Word32 -> a e -> GlobPush e
-  
-instance PushableGlobal GlobPull where
-  pushG (GlobPull ixf) =
-      GlobPush 
-        $ \wf -> forAllT
-                 $ \gix -> wf (ixf gix) gix
-                           
-  pushGF (GlobPull ixf) = undefined
-
-  -- Implementing this will set a fixed blocksize.
-  -- But then again, if exact control over number of threads
-  -- is wanted then that is neccessary. 
-  pushGN m n (GlobPull ixf) =
-    GlobPush 
-    $ \wf ->
-    ForAllBlocks $ \bid ->
-    ForAll (Just m) 
-    $ \tid ->
-    let i = bid * (fromIntegral m) + tid in     
-    sequence_ [wf (ixf (i + fromIntegral (j * n))) (i + fromIntegral (j * n))
-              | j <- [0..n]] 
-    
-
--} 
-  
+------------------------------------------------------------------------ -}   
 ---------------------------------------------------------------------------
 -- Indexing, array creation.
 ---------------------------------------------------------------------------
 namedArray name n = mkPullArray n (\ix -> index name ix)
 indexArray n      = mkPullArray n (\ix -> ix)
-
-
---instance Indexible GlobPull a where
---  access (GlobPull ixf) ix = ixf ix 
-
---instance Indexible Distrib a where
---  access p ix = getBlock p ix 
 
 pushApp (Push _ p) a = p a 
 
