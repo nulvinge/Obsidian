@@ -376,3 +376,4 @@ convToPush arr =
    forAll (fromIntegral n) $ \tid -> wf (arr ! tid) tid
   where
     n = len arr                             
+
