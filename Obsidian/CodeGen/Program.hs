@@ -58,6 +58,8 @@ data Statement t =
   | SDeclare  Name Type
   | SOutput   Name Type
 
+  | SComment String
+
     -- Synchronisation
   | SSynchronize
 
@@ -149,6 +151,7 @@ cs i (P.Declare  id t)   = ((),out (SDeclare id t))
 cs i (P.Output   t)      = (nom,out (SOutput nom t))
   where nom = "output" ++ show (supplyValue i) 
 cs i (P.Sync)            = ((),out (SSynchronize))
+cs i (P.Comment c)       = ((),out (SComment c))
 
 
 cs i (P.Bind p f) = (b,im1 ++ im2) 

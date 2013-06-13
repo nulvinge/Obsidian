@@ -125,6 +125,10 @@ cl im = mapM process im
       do 
         s <- get 
         return (SBreak,s)
+    process (SComment ss,_) = 
+      do 
+        s <- get 
+        return (SComment ss,s)
 
 
     process (SForAll n im,_) =  

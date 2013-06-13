@@ -49,6 +49,11 @@ splitUpS n (Pull m ixf) = Pull (m `div` n) $
 input1 :: Pull (Exp Word32) EInt 
 input1 = namedGlobal "apa" (variable "X")
 
+test :: Pull EWord32 EInt -> GProgram ()
+test a = do
+  Comment "test"
+  return ()
+
 ---------------------------------------------------------------------------
 -- Scans 
 ---------------------------------------------------------------------------
