@@ -127,6 +127,7 @@ data SPMDC = CAssign CExpr [CExpr] CExpr  -- array or scalar assign
            | CBreak
            | CWhile CExpr [SPMDC] 
            | CIf     CExpr [SPMDC] [SPMDC]
+           | CComment String
            deriving (Eq,Ord,Show)
                     
 --                                ret_t       param list     body
@@ -179,6 +180,7 @@ cDeclAssign = CDeclAssign
 cIf         = CIf 
 cFor        = CFor
 cBreak      = CBreak
+cComment    = CComment
 cWhile      = CWhile
 --------------------------------------------------------------------------
 -- Printing 
@@ -354,6 +356,8 @@ ppSPMDC ppc (CFor name e s) =
   ppSPMDCList ppc s >> unindent >> end
 ppSPMDC ppc CBreak =
   line "break" >> cTermLn
+ppSPMDC ppc (CComment s) =
+  line $ "// " ++ s
 
 
 ppAtomicOp :: PPConfig -> CAtomicOp -> PP ()

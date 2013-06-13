@@ -124,6 +124,8 @@ data Program t a where
   ThreadFence :: Program Grid ()
   ThreadFenceBlock :: Program Block () 
 
+  Comment :: String -> Program t ()
+
   -- Parallel composition of Programs
   -- TODO: Will I use this ? 
   --Par :: Program p () ->

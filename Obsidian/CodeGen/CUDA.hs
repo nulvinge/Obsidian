@@ -137,6 +137,7 @@ mmSPMDC' mm (CWhile b s)    = cWhile (mmCExpr mm b) (mmSPMDC mm s)
 mmSPMDC' mm CBreak = cBreak 
 mmSPMDC' mm (CDeclAssign t nom e) = cDeclAssign t nom (mmCExpr mm e)
 mmSPMDC' mm a@(CDecl t nom) = a
+mmSPMDC' mm (CComment s) = cComment s
 mmSPMDC' mm a = error $ "mmSPMDC': " ++ show a
 ---------------------------------------------------------------------------
 -- Memory map the arrays in an CExpr
@@ -190,6 +191,8 @@ imToSPMDC nt im = concatMap (process nt) im
       [cWhile (expToCExp b) (imToSPMDC nt im)]
     process nt (SBreak,_) =
       [cBreak]
+    process nt (SComment s,_) =
+      [cComment s]
 
     process nt (SForAll (Literal n) im,_) =
       if (n < nt) 
