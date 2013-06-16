@@ -3,7 +3,6 @@
              FlexibleContexts,
              FlexibleInstances, 
              UndecidableInstances,
-             OverlappingInstances,
              RankNTypes #-} 
 
 {- Joel Svensson 2012 -} 
@@ -173,7 +172,7 @@ data Op a where
   Add :: Num (Exp a) => Op ((a,a) -> a) 
   Sub :: Num (Exp a) => Op ((a,a) -> a) 
   Mul :: Num (Exp a) => Op ((a,a) -> a) 
-  Div :: Integral (Exp a) => Op ((a,a) -> a) 
+  Div :: (Integral (Exp a), Integral a) => Op ((a,a) -> a) 
   
   Mod :: Integral a => Op ((a,a) -> a)
          
@@ -301,30 +300,6 @@ instance (Eq a, Scalar a) => Eq (Exp a) where
 ---------------------------------------------------------------------------
 -- INT Instances
 ---------------------------------------------------------------------------
-instance Num (Exp Int) where 
-  (+) a (Literal 0) = a
-  (+) (Literal 0) a = a
-  (+) (Literal a) (Literal b) = Literal (a+b)
-  -- Added 2 Oct 2012
-  (+) (BinOp Sub b (Literal a)) (Literal c) | a == c  = b 
-  (+) (Literal b) (BinOp Sub a (Literal c)) | b == c  = a 
-  (+) a b = BinOp Add a b  
-  
-  (-) a (Literal 0) = a 
-  (-) (Literal a) (Literal b) = Literal (a - b) 
-  (-) a b = BinOp Sub a b 
-  
-  (*) _ (Literal 0) = Literal 0
-  (*) (Literal 0) _ = Literal 0
-  (*) a (Literal 1) = a 
-  (*) (Literal 1) a = a
-  (*) (Literal a) (Literal b) = Literal (a*b) 
-  (*) a b = BinOp Mul a b 
-  
-  signum = error "signum: not implemented for Exp Int" 
-  abs = error "abs: not implemented for Exp Int" 
-  fromInteger a = Literal (fromInteger a) 
-  
 -- Added new cases for literal 0 (2012/09/25)
 instance Bits (Exp Int) where  
   (.&.) x (Literal 0) = Literal 0
@@ -360,41 +335,10 @@ instance Enum (Exp Int) where
   toEnum = error "toEnum: not implemented for Exp Int" 
   fromEnum = error "fromEnum: not implemented for Exp Int"
          
-instance Integral (Exp Int) where
-  mod (Literal a) (Literal b) = Literal (a `mod` b) 
-  mod a b = BinOp Mod a b
-  div _ (Literal 0) = error "Division by zero in expression" 
-  div a b = BinOp Div a b
-  quotRem = error "quotRem: not implemented for Exp Int" 
-  toInteger = error "toInteger: not implemented for Exp Int" 
 
 ---------------------------------------------------------------------------
 -- Int32
 ---------------------------------------------------------------------------
-instance Num (Exp Int32) where 
-  (+) a (Literal 0) = a
-  (+) (Literal 0) a = a
-  (+) (Literal a) (Literal b) = Literal (a+b)
-  -- Added 2 Oct 2012
-  (+) (BinOp Sub b (Literal a)) (Literal c) | a == c  = b 
-  (+) (Literal b) (BinOp Sub a (Literal c)) | b == c  = a 
-  (+) a b = BinOp Add a b  
-  
-  (-) a (Literal 0) = a 
-  (-) (Literal a) (Literal b) = Literal (a - b) 
-  (-) a b = BinOp Sub a b 
-  
-  (*) _ (Literal 0) = Literal 0
-  (*) (Literal 0) _ = Literal 0
-  (*) a (Literal 1) = a 
-  (*) (Literal 1) a = a
-  (*) (Literal a) (Literal b) = Literal (a*b)
-  (*) a b = BinOp Mul a b 
-  
-  signum = error "signum: not implemented for Exp Int32"
-  abs = error "abs: not implemented for Exp Int32" 
-  fromInteger a = Literal (fromInteger a) 
-  
 -- Added new cases for literal 0 (2012/09/25)
 instance Bits (Exp Int32) where  
   (.&.) x (Literal 0) = Literal 0
@@ -430,51 +374,10 @@ instance Enum (Exp Int32) where
   toEnum = error "toEnum: not implemented for Exp Int32" 
   fromEnum = error "fromEnum: not implemented for Exp Int32" 
          
-instance Integral (Exp Int32) where
-  mod (Literal a) (Literal b) = Literal (a `mod` b) 
-  mod a b = BinOp Mod a b
-  div _ (Literal 0) = error "Division by zero in expression" 
-  div a b = BinOp Div a b
-  quotRem = error "quotRem: not implemented for Exp Int32" 
-  toInteger = error "toInteger: not implemented for Exp Int32" 
-
 
 ---------------------------------------------------------------------------
 -- Word32 Instances
 ---------------------------------------------------------------------------
-instance Num (Exp Word32) where 
-  (+) a (Literal 0) = a
-  (+) (Literal 0) a = a
-  (+) (Literal a) (Literal b) = Literal (a+b)
-
-  -- Added 15 Jan 2013
-  (+) (BinOp Mul (BinOp Div x (Literal a)) (Literal b))
-       (BinOp Mod y (Literal c))
-        | x == y && a == b && b == c = x 
-      -- This spots the kind of indexing that occurs from 
-      --  converting a bix tix view to and from gix view
-        
-  -- Added 2 oct 2012
-  (+) (BinOp Sub b (Literal a)) (Literal c) | a == c  = b 
-  (+) (Literal b) (BinOp Sub a (Literal c)) | b == c  = a 
- 
-  (+) a b = BinOp Add a b  
-  
-  (-) a (Literal 0) = a 
-  (-) (Literal a) (Literal b) = Literal (a - b) 
-  (-) a b = BinOp Sub a b 
-  
-  (*) _ (Literal 0) = Literal 0
-  (*) (Literal 0) _ = Literal 0
-  (*) a (Literal 1) = a 
-  (*) (Literal 1) a = a
-  (*) (Literal a) (Literal b) = Literal (a*b)
-  (*) a b = BinOp Mul a b 
-  
-  signum = error "signum: not implemented for Exp Word32"
-  abs = error "abs: not implemented for Exp Word32" 
-  fromInteger a = Literal (fromInteger a) 
-  
 
 -- adding special shift operators for when both inputs are 
 -- runtime values (2013-01-08) 
@@ -483,7 +386,6 @@ instance Num (Exp Word32) where
 
 (>>*) :: (Scalar b, Scalar a, Bits a, Num b ) => Exp a -> Exp b -> Exp a 
 (>>*) a b = BinOp ShiftR a b 
-
 
  -- Added new cases for literal 0 (2012/09/25)
 instance Bits (Exp Word32) where 
@@ -520,40 +422,7 @@ instance Enum (Exp Word32) where
   toEnum = error "toEnum: not implemented for Exp Word32" 
   fromEnum = error "fromEnum: not implemented for Exp Word32" 
 
-instance Integral (Exp Word32) where
-  mod a b@(Literal 0) = (BinOp Mod a b)
-  mod a b@(Literal 1) = (Literal 0)
-  mod (Literal a) (Literal b) = Literal (a `mod` b)
-  mod a b = BinOp Mod a b 
-
-  div a b@(Literal 0) = (BinOp Div a b)
-  div a b@(Literal 1) = a
-  div (Literal a) (Literal b) = Literal (a `div` b)
-  div a b = BinOp Div a b
-  quotRem = error "quotRem: not implemented for Exp Word32" 
-  toInteger = error "toInteger: not implemented for Exp Word32"
   
-instance Num (Exp Float) where
-  (+) a (Literal 0) = a
-  (+) (Literal 0) a = a
-  (+) (Literal a) (Literal b) = Literal (a + b)
-  (+) a b = BinOp Add a b
-  
-  (-) a (Literal 0) = a
-  (-) (Literal a) (Literal b) = Literal (a - b)
-  (-) a b = BinOp Sub a b
-  
-  (*) a (Literal 1) = a
-  (*) (Literal 1) a = a
-  (*) _ (Literal 0) = Literal 0
-  (*) (Literal 0) _ = Literal 0
-  (*) (Literal a) (Literal b) = Literal (a * b)
-  (*) a b = BinOp Mul a b
-  
-  signum = undefined
-  abs = undefined
-  fromInteger a = Literal (fromInteger a)
-
 instance Fractional (Exp Float) where
   (/) (Literal a) (Literal b) = Literal (a/b)
   (/) a b = BinOp FDiv a b
@@ -634,7 +503,7 @@ instance (Scalar a ,Num a) => Num (Exp a) where
   (*) (Literal 0) _ = Literal 0
   (*) (Literal a) (Literal b) = Literal (a*b) 
   (*) a b = BinOp Mul a b 
-  
+
   signum = error "signum: not implemented for Exp a"
   abs = error "abs: not implemented for Exp a" 
   fromInteger a = Literal (fromInteger a) 
@@ -648,9 +517,12 @@ instance (Scalar a, Enum a) => Enum (Exp a) where
   fromEnum = error "fromEnum: not implemented for Exp a" 
 
 instance (Scalar a, Integral a) => Integral (Exp a) where
+  mod a b@(Literal 0) = (BinOp Mod a b)
+  mod a b@(Literal 1) = (Literal 0)
   mod (Literal a) (Literal b) = Literal (a `mod` b) 
   mod a b = BinOp Mod a b
   div _ (Literal 0) = error "Division by zero in expression" 
+  div a b@(Literal 1) = a
   div a b = BinOp Div a b
   quotRem = error "quotRem: not implemented for Exp a" 
   toInteger = error "toInteger: not implemented for Exp a"

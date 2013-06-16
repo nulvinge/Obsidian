@@ -1,5 +1,6 @@
 {-# LANGUAGE GADTs,
              TypeFamilies,
+             ScopedTypeVariables,
              FlexibleContexts,
              FlexibleInstances #-}
 
@@ -16,6 +17,7 @@ import Data.Tuple (swap)
 import Data.Word
 import Data.Int
 import Data.Maybe
+import Control.Monad
 
 import qualified Data.Map as M
 
@@ -36,11 +38,34 @@ printAnalysis p a = quickPrint (ins, insertAnalysis im) ()
 
 insertAnalysis :: IM -> IM
 insertAnalysis im = im' ++ out (SComment "test")
+  where accesses = collectExp getIndicesExp im
+                ++ collectIM  getIndicesIM  im
+        sizes = getSizes im
+        im' = traverseComment (listToMaybe.map show.map inRange.getIndicesIM) im
+        inRange (n,e) = ranges
+          where ranges = map (getRange M.empty) $ M.keys nes
+                nes = linerize e
+
+getRange :: (Num a, Ord a, Scalar a) => M.Map (Exp a) (a,a) -> Exp a -> Maybe (a,a)
+getRange = gr
   where
-    accesses = collectExp getIndicesExp im
-            ++ collectIM  getIndicesIM  im
-    sizes = getSizes im
-    im' = traverseComment (listToMaybe.map show.getIndicesIM) im
+    gr :: (Num a, Ord a, Scalar a) => M.Map (Exp a) (a,a) -> Exp a -> Maybe (a,a)
+    gr r (BinOp Add a b) = bop r a b $ \al ah bl bh -> return (al+bl,ah+bh)
+    gr r (BinOp Sub a b) = bop r a b $ \al ah bl bh -> return (al-bh,ah-bl)
+    gr r (BinOp Mul a b) = bop r a b $ \al ah bl bh -> return (al*bl,ah*bh)
+    gr r (BinOp Div a b) = bop r a b $ \al ah bl bh -> guard (bl==bh) >> return (al`div`bh,ah`div`bl)
+    gr r (BinOp Mod a b) = bop r a b $ \al ah bl bh -> guard (bl==bh) >> return (max al 0,min ah (bh-1))
+    gr r (BinOp BitwiseXor a b) = bop r a b $ \al ah bl bh -> do
+      guard (al >= 0 && bl >= 0)
+      return (0,(getNext2Powerm ah `max` getNext2Powerm bh))
+    gr r (Literal a) = Just (a,a)
+    gr r a = M.lookup a r
+
+    bop :: (Num a, Ord a, Scalar a) => M.Map (Exp a) (a,a) -> Exp a -> Exp a -> (a->a->a->a->Maybe (a,a)) -> Maybe (a,a)
+    bop r a b f = do
+      (al,ah) <- gr r a
+      (bl,bh) <- gr r b
+      f al ah bl bh
 
 traverseComment f = traverseIM (\a -> map (\s -> (SComment s,())) (maybeToList (f a)) ++ [a])
 
@@ -64,8 +89,8 @@ linerize' (BinOp Add a b) = linerize' a ++ linerize' b
 linerize' (BinOp Mul (Literal a) b) = map (\(n,v) -> (n*a,v)) $ linerize' b
 linerize' (BinOp Mul a (Literal b)) = map (\(n,v) -> (n*b,v)) $ linerize' a
 linerize' (Literal a)     = [(a, Literal 1)]
-linerize' a@(ThreadIdx X) = [(fromIntegral 1, ThreadIdx X)]
-linerize' a@(BlockIdx X)  = [(fromIntegral 1, BlockIdx X)]
+linerize' a@(ThreadIdx X) = [(1, ThreadIdx X)]
+linerize' a@(BlockIdx X)  = [(1, BlockIdx X)]
 linerize' a               = [(1,a)]
 
 normalize :: (Num a, Ord (Exp a)) => [(a,Exp a)] -> M.Map (Exp a) a
