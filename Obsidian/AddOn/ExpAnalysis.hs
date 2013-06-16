@@ -7,7 +7,7 @@
              TypeFamilies,
              FlexibleContexts #-}
 
-module ExpAnalysis where
+module Obsidian.AddOn.ExpAnalysis where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 
@@ -20,6 +20,7 @@ import Obsidian.Force
 import Obsidian.Atomic
 import Obsidian.Globs
 import Obsidian.Memory
+import qualified Obsidian.CodeGen.Program as P
 
 import Debug.Trace
 
@@ -218,6 +219,9 @@ instance (TraverseExp a, TraverseExp b) => TraverseExp (a,b) where
   collectExp f (a,b) = collectExp f a ++ collectExp f b
   traverseExp f (a,b) = (traverseExp f a, traverseExp f b)
 
+instance TraverseExp (P.IM) where
+  collectExp = error "no collectExp for TProgram"
+  traverseExp = error "no collectExp for TProgram"
 
 getIndice :: Names -> Exp a -> [Exp Word32]
 getIndice nn (Index (n,[r])) | n `inNames` nn = [r]
