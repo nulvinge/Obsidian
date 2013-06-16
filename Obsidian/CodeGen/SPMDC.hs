@@ -357,7 +357,7 @@ ppSPMDC ppc (CFor name e s) =
 ppSPMDC ppc CBreak =
   line "break" >> cTermLn
 ppSPMDC ppc (CComment s) =
-  line $ "// " ++ s
+  line $ "// " >> s >> newline
 
 
 ppAtomicOp :: PPConfig -> CAtomicOp -> PP ()
