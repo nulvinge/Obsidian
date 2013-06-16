@@ -51,11 +51,11 @@ simplifyMod m bs a' = (makeExp.(simplifyMod' m bs).snd.(simplifyMod' m bs)) a' -
         makeExp (Nothing,a) = error $ (show a) ++ " not moddable by " ++ (show m) --a`mod`(Literal m)
         -}
 
-t0 = simplifyMod' 512 512 $ (ThreadIdx X)
-t1 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2
-t2 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2 *2
-t3 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2 *2*2
-t4 = simplifyMod' 32 16 $ (ThreadIdx X + 16)
+--t0 = simplifyMod' 512 512 $ (ThreadIdx X)
+--t1 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2
+--t2 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2 *2
+--t3 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2 *2*2
+--t4 = simplifyMod' 32 16 $ (ThreadIdx X + 16)
 
 getNext2Powerm :: Bits a => a -> a
 getNext2Powerm v = if v == 0 then 0 else f (v-1) (bitSize v) 1
@@ -204,9 +204,6 @@ collectAssign ns e@(Return a)  = (a,[])
 
 
 
-
-
-
 instance TraverseExp (TProgram a) where
   collectExp = error "no collectExp for TProgram"
 
@@ -215,17 +212,76 @@ instance TraverseExp (TProgram a) where
   traverseExp f (SeqFor n l) = SeqFor (traverseExp f n) (\i -> traverseExp f (l i))
   traverseExp f (Bind a g) = Bind (traverseExp f a) (\b -> traverseExp f (g b))
 
-instance (TraverseExp a, TraverseExp b) => TraverseExp (a,b) where
-  collectExp f (a,b) = collectExp f a ++ collectExp f b
-  traverseExp f (a,b) = (traverseExp f a, traverseExp f b)
+--instance (TraverseExp a, TraverseExp b) => TraverseExp (a,b) where
+--  collectExp f (a,b) = collectExp f a ++ collectExp f b
+--  traverseExp f (a,b) = (traverseExp f a, traverseExp f b)
 
-instance TraverseExp (P.IM) where
-  collectExp = error "no collectExp for TProgram"
-  traverseExp = error "no collectExp for TProgram"
+
+collectIM :: ((P.Statement a,a) -> [b]) -> P.IMList a -> [b]
+collectIM f = concatMap (collectIM' f)
+  where
+    collectIM' f a@(P.SCond          _ l,_) = f a ++ collectIM f l
+    collectIM' f a@(P.SSeqFor _      _ l,_) = f a ++ collectIM f l
+    collectIM' f a@(P.SSeqWhile      _ l,_) = f a ++ collectIM f l
+    collectIM' f a@(P.SForAll        _ l,_) = f a ++ collectIM f l
+    collectIM' f a@(P.SForAllBlocks  _ l,_) = f a ++ collectIM f l
+    collectIM' f a@(P.SForAllThreads _ l,_) = f a ++ collectIM f l
+    collectIM' f a                      = f a
+
+traverseIM :: ((P.Statement a,a) -> [(P.Statement a,a)]) -> P.IMList a -> P.IMList a
+traverseIM f = concatMap (traverseIM' f)
+  where
+    traverseIM' f (P.SCond           e l,a) = f $ (P.SCond          e (traverseIM f l),a)
+    traverseIM' f (P.SSeqFor n       e l,a) = f $ (P.SSeqFor n      e (traverseIM f l),a)
+    traverseIM' f (P.SSeqWhile       e l,a) = f $ (P.SSeqWhile      e (traverseIM f l),a)
+    traverseIM' f (P.SForAll         e l,a) = f $ (P.SForAll        e (traverseIM f l),a)
+    traverseIM' f (P.SForAllBlocks   e l,a) = f $ (P.SForAllBlocks  e (traverseIM f l),a)
+    traverseIM' f (P.SForAllThreads  e l,a) = f $ (P.SForAllThreads e (traverseIM f l),a)
+    traverseIM' f a = f a
+
+instance TraverseExp a => TraverseExp [a] where
+  collectExp f = concatMap (collectExp f)
+  traverseExp f = map (traverseExp f)
+
+instance TraverseExp (P.Statement a,a) where
+  collectExp f = collectExp f . fst
+  traverseExp f = mapFst $ traverseExp f
+    where mapFst f (a,b) = (f a, b)
+
+instance TraverseExp (P.Statement t) where
+  collectExp f (P.SAssign _       l e) = collectExp f l ++ collectExp f e
+  collectExp f (P.SAtomicOp _ _   e _) = collectExp f e
+  collectExp f (P.SCond           e l) = collectExp f e ++ collectExp f l
+  collectExp f (P.SSeqFor _       e l) = collectExp f e ++ collectExp f l
+  collectExp f (P.SSeqWhile       e l) = collectExp f e ++ collectExp f l
+  collectExp f (P.SForAll         e l) = collectExp f e ++ collectExp f l
+  collectExp f (P.SForAllBlocks   e l) = collectExp f e ++ collectExp f l
+  collectExp f (P.SForAllThreads  e l) = collectExp f e ++ collectExp f l
+  collectExp f _ = []
+
+  traverseExp f (P.SAssign n       l e) = P.SAssign n      (traverseExp f l) (traverseExp f e)
+  traverseExp f (P.SAtomicOp n n2  e a) = P.SAtomicOp n n2 (traverseExp f e) a
+  traverseExp f (P.SCond           e l) = P.SCond          (traverseExp f e) (traverseExp f l)
+  traverseExp f (P.SSeqFor n       e l) = P.SSeqFor n      (traverseExp f e) (traverseExp f l)
+  traverseExp f (P.SSeqWhile       e l) = P.SSeqWhile      (traverseExp f e) (traverseExp f l)
+  traverseExp f (P.SForAll         e l) = P.SForAll        (traverseExp f e) (traverseExp f l)
+  traverseExp f (P.SForAllBlocks   e l) = P.SForAllBlocks  (traverseExp f e) (traverseExp f l)
+  traverseExp f (P.SForAllThreads  e l) = P.SForAllThreads (traverseExp f e) (traverseExp f l)
+  traverseExp f a = a
 
 getIndice :: Names -> Exp a -> [Exp Word32]
 getIndice nn (Index (n,[r])) | n `inNames` nn = [r]
 getIndice _ _ = []
+
+getIndicesExp (Index (n,[r])) = [(n,r)]
+getIndicesExp _ = []
+
+getIndicesIM ((P.SAssign     n [r] _),_) = [(n,r)]
+getIndicesIM ((P.SAtomicOp _ n r   _),_) = [(n,r)]
+getIndicesIM _ = []
+
+getSizesIM ((P.SAllocate n s t),_) = [(n,s)]
+getSizesIM _ = []
 
 traverseOnIndice :: Names -> (Exp Word32 -> Exp Word32) -> Exp a -> Exp a
 traverseOnIndice nn f (Index (n,[r])) | n `inNames` nn = Index (n,[f r])

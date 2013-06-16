@@ -9,11 +9,13 @@ import qualified Obsidian.CodeGen.CUDA as CUDA
 import Obsidian.CodeGen.Program
 import qualified Obsidian.CodeGen.InOut as InOut
 import Obsidian
+import Obsidian.Globs
 import Obsidian.AddOn.ExpAnalysis
 import Data.Tuple (swap)
 
 import Data.Word
 import Data.Int
+import Data.Maybe
 
 import qualified Data.Map as M
 
@@ -33,9 +35,17 @@ printAnalysis p a = quickPrint (ins, insertAnalysis im) ()
     where (ins,im) = toProgram 0 p a
 
 insertAnalysis :: IM -> IM
-insertAnalysis a = a ++ out (SComment "test")
+insertAnalysis im = im' ++ out (SComment "test")
+  where
+    accesses = collectExp getIndicesExp im
+            ++ collectIM  getIndicesIM  im
+    sizes = getSizes im
+    im' = traverseComment (listToMaybe.map show.getIndicesIM) im
 
+traverseComment f = traverseIM (\a -> map (\s -> (SComment s,())) (maybeToList (f a)) ++ [a])
 
+getSizes :: IM -> M.Map Name Word32
+getSizes = M.fromList . collectIM getSizesIM
 
 input1 :: Pull (Exp Word32) EInt 
 input1 = namedGlobal "apa" (variable "X")
