@@ -58,50 +58,56 @@ import Data.Char
    is passed into toProgram (the reifyer). 
 
 -} 
-  
+
 type Inputs = [(Name,Type)]
+type ArraySizes = [(Name,Either Word32 (Exp Word32))]
 
 class ToProgram a where
-  toProgram :: Int -> a -> InputList a -> (Inputs,CG.IM)
+  toProgram :: Int -> a -> InputList a -> (Inputs,ArraySizes,CG.IM)
 
 class GetTypes a where
-  getTypes :: a -> Name -> (Inputs,a)
+  getTypes :: a -> Name -> (Inputs,ArraySizes,a)
 
 instance (MemoryOps a) => GetTypes (Pull Word32 a) where
   getTypes a name = (typesArray names
+                    ,map (\n -> (n,sizeEither $ len a)) (getNames names)
                     ,pullFrom names (len a))
       where names = createNames (valType a) name
 
 instance (MemoryOps a) => GetTypes (Pull (Exp Word32) a) where
   getTypes a name = ((namen, Word32) : typesArray names
-                    ,pullFrom names (variable namen))
+                    ,map (\n -> (n,sizeEither $ nvar)) (getNames names)
+                    ,pullFrom names nvar)
       where namen = name ++ "n"
+            nvar = variable namen
             names = createNames (valType a) name
 
 instance (Scalar a) => GetTypes (Exp a) where
   getTypes a name = (typesScalar names
+                    ,[]
                     ,readFrom names)
       where namen = name ++ "n"
             names = createNames a name
 
 instance (GetTypes a, GetTypes b) => GetTypes (a,b) where
-  getTypes a name = (i1++i2, (a,b))
-    where (i1,a) = getTypes a (name ++ "a")
-          (i2,b) = getTypes b (name ++ "b")
+  getTypes a name = (i1++i2,s1++s2, (a,b))
+    where (i1,s1,a) = getTypes a (name ++ "a")
+          (i2,s2,b) = getTypes b (name ++ "b")
 
 instance ToProgram (GProgram a) where
-  toProgram i prg () = ([], CG.compileStep1 prg)
+  toProgram i prg () = ([], [], CG.compileStep1 prg)
 
-instance (MemoryOps a) => ToProgram (Push Grid l a) where
-  toProgram i a@(Push _ p) () = toProgram i prg ()
-    where prg =  do
+instance (MemoryOps a, ASize l) => ToProgram (Push Grid l a) where
+  toProgram i a@(Push _ p) () = (ins, ("output", sizeEither $ len a) : s, b)
+    where (ins,s,b) = toProgram i prg ()
+          prg = do
             output <- outputArray a
             p (\a ix -> assignArray output a ix)
 
 instance (GetTypes a, ToProgram b) => ToProgram (a -> b) where
-  toProgram i f (a :- rest) = (ins ++ types, prg)
-    where (ins,prg)     = toProgram (i+1) (f input) rest
-          (types,input) = getTypes a ("input" ++ show i)
+  toProgram i f (a :- rest) = (ins ++ types, s1 ++ s2, prg)
+    where (ins,s1,prg)   = toProgram (i+1) (f input) rest
+          (types,s2,input) = getTypes a ("input" ++ show i)
 
 
 ---------------------------------------------------------------------------

@@ -36,6 +36,12 @@ import Control.Monad.State
 import Prelude hiding (zipWith,sum,replicate)
 import qualified Prelude as P
 
+instance Choice (TProgram ()) where  
+  ifThenElse (Literal False) e1 e2 = e2
+  ifThenElse (Literal True)  e1 e2 = e1
+  ifThenElse b e1 e2 = do
+    Cond b e1
+    Cond (notE b) e2
 
 --simplifying treating i as an integer modulo m
 simplifyMod :: Word32 -> Word32 -> Exp Word32 -> Exp Word32
@@ -276,9 +282,17 @@ getIndice _ _ = []
 getIndicesExp (Index (n,[r])) = [(n,r)]
 getIndicesExp _ = []
 
-getIndicesIM ((P.SAssign     n [r] _),_) = [(n,r)]
-getIndicesIM ((P.SAtomicOp _ n r   _),_) = [(n,r)]
-getIndicesIM _ = []
+getIndicesIM (a,cs) = map (\(n,e) -> (n,e,cs)) $ getIndicesIM' a
+  where
+    getIndicesIM' (P.SAssign     n [r] e) = [(n,r)] ++ collectExp getIndicesExp e
+    getIndicesIM' (P.SAtomicOp _ n r   _) = [(n,r)]
+    getIndicesIM' (P.SCond           e l) = collectExp getIndicesExp e
+    getIndicesIM' (P.SSeqFor _       e l) = collectExp getIndicesExp e
+    getIndicesIM' (P.SSeqWhile       e l) = collectExp getIndicesExp e
+    getIndicesIM' (P.SForAll         e l) = collectExp getIndicesExp e
+    getIndicesIM' (P.SForAllBlocks   e l) = collectExp getIndicesExp e
+    getIndicesIM' (P.SForAllThreads  e l) = collectExp getIndicesExp e
+    getIndicesIM' _ = []
 
 getSizesIM ((P.SAllocate n s t),_) = [(n,s)]
 getSizesIM _ = []
@@ -287,10 +301,42 @@ traverseOnIndice :: Names -> (Exp Word32 -> Exp Word32) -> Exp a -> Exp a
 traverseOnIndice nn f (Index (n,[r])) | n `inNames` nn = Index (n,[f r])
 traverseOnIndice _ _ a = a
 
-instance Choice (TProgram ()) where  
-  ifThenElse (Literal False) e1 e2 = e2
-  ifThenElse (Literal True)  e1 e2 = e1
-  ifThenElse b e1 e2 = do
-    Cond b e1
-    Cond (notE b) e2
+
+mapDataIM :: (a -> b) -> P.IMList a -> P.IMList b
+mapDataIM f = traverseIMacc g ()
+  where g () (a,b) = [(a, f b, ())]
+
+traverseIMacc :: (b -> (P.Statement a,a) -> [(P.Statement a,c,b)])
+              -> b -> P.IMList a -> P.IMList c
+traverseIMacc f acc = map g . concat . map (f acc)
+  where
+    g (b,c,acc') = case b of
+      (P.SCond           e l) -> (P.SCond          e (traverseIMacc f acc' l),c)
+      (P.SSeqFor n       e l) -> (P.SSeqFor n      e (traverseIMacc f acc' l),c)
+      (P.SSeqWhile       e l) -> (P.SSeqWhile      e (traverseIMacc f acc' l),c)
+      (P.SForAll         e l) -> (P.SForAll        e (traverseIMacc f acc' l),c)
+      (P.SForAllBlocks   e l) -> (P.SForAllBlocks  e (traverseIMacc f acc' l),c)
+      (P.SForAllThreads  e l) -> (P.SForAllThreads e (traverseIMacc f acc' l),c)
+      (P.SAssign n l e      ) -> (P.SAssign n l e      ,c)
+      (P.SAtomicOp n1 n2 e a) -> (P.SAtomicOp n1 n2 e a,c)
+      (P.SBreak             ) -> (P.SBreak             ,c)
+      (P.SAllocate n s t    ) -> (P.SAllocate n s t    ,c)
+      (P.SDeclare  n t      ) -> (P.SDeclare  n t      ,c)
+      (P.SOutput   n t      ) -> (P.SOutput   n t      ,c)
+      (P.SComment s         ) -> (P.SComment s         ,c)
+      (P.SSynchronize       ) -> (P.SSynchronize       ,c)
+
+type Conds = [(Exp Bool)]
+
+insertCondsIM :: Conds -> P.IMList a -> P.IMList (a,Conds)
+insertCondsIM = traverseIMacc (ins)
+  where
+    ins :: Conds -> (P.Statement a,a) -> [(P.Statement a,(a,Conds),Conds)]
+    ins cs (P.SCond           e l,a) = [(P.SCond          e l, (a,cs), cs ++ [e])]
+    ins cs (P.SSeqFor n       e l,a) = [(P.SSeqFor n      e l, (a,cs), cs ++ condRange (variable n)  e)]
+    ins cs (P.SSeqWhile       e l,a) = [(P.SSeqWhile      e l, (a,cs), cs ++ [e])]
+    ins cs (P.SForAll         e l,a) = [(P.SForAll        e l, (a,cs), cs ++ condRange (ThreadIdx X) e)]
+    ins cs (P.SForAllBlocks   e l,a) = [(P.SForAllBlocks  e l, (a,cs), cs ++ condRange (BlockIdx X)  e)]
+    ins cs (b,a) = [(b,(a,cs),cs)]
+    condRange v e = [v <* e, v >=* 0]
 

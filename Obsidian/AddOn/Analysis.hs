@@ -4,7 +4,7 @@
              FlexibleContexts,
              FlexibleInstances #-}
 
-module Obsidian.AddOn.Analysis (insertAnalysis) where
+module Obsidian.AddOn.Analysis (insertAnalysis, printAnalysis) where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import Obsidian.CodeGen.Program
@@ -17,14 +17,16 @@ import Data.Tuple (swap)
 import Data.Word
 import Data.Int
 import Data.Maybe
+import Data.Either
 import Control.Monad
 
 import qualified Data.Map as M
+import Debug.Trace
 
-instance ToProgram (Inputs,IM) where
+instance ToProgram (Inputs,ArraySizes,IM) where
   toProgram i a () = a
 
-type instance InputList (Inputs,IM)    = () 
+type instance InputList (Inputs,ArraySizes,IM) = () 
 
 -- Coalesced
 
@@ -33,18 +35,44 @@ quickPrint prg input =
   putStrLn $ CUDA.genKernel "kernel" prg input 
 
 printAnalysis :: ToProgram prg => prg -> InputList prg -> IO ()
-printAnalysis p a = quickPrint (ins, insertAnalysis im) ()
-    where (ins,im) = toProgram 0 p a
+printAnalysis p a = quickPrint (ins, sizes, insertAnalysis ins (strace sizes) im) ()
+    where (ins,sizes,im) = toProgram 0 p a
 
-insertAnalysis :: IM -> IM
-insertAnalysis im = im' ++ out (SComment "test")
-  where accesses = collectExp getIndicesExp im
-                ++ collectIM  getIndicesIM  im
-        sizes = getSizes im
-        im' = traverseComment (listToMaybe.map show.map inRange.getIndicesIM) im
-        inRange (n,e) = ranges
-          where ranges = map (getRange M.empty) $ M.keys nes
-                nes = linerize e
+strace a = trace (show a) a
+
+insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
+insertAnalysis ins inSizes im = im' ++ out (SComment $ "test" ++ show (length im, length im'))
+  where accesses = collectIM getIndicesIM  im
+                -- ++ collectExp getIndicesExp im
+        inConstSizes = [(n,l) | (n,Left l) <- inSizes]
+        sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
+        (Left threadBudget) = numThreads im
+        vars = M.fromList [(ThreadIdx X, (0,threadBudget-1))]
+        im1 = mapDataIM fst $ insertCondsIM conds im
+          where conds = concatMap condRange $ map g inSizes ++ map f (collectIM getSizesIM im)
+                condRange (v,e) = [v <* e, v >=* 0]
+                f (n,s) = (variable n, fromIntegral s)
+                g (n,Left l) = (variable n, fromIntegral l)
+                g (n,Right e) = (variable n, e)
+        im' = traverseComment (map (inRange sizes vars).getIndicesIM) im1
+
+inRange sizes vars (n,e,cs) =
+  if isNothing size
+    then Just $ "no size info about " ++ n
+    else if any isNothing ranges
+      then if outofrange
+        then Just "probbably out of range"
+        else Just "indeterminate"
+      else if outofrange
+        then Just $ "definatly out of range: " ++ (show range)
+                ++ " does not fit in " ++ n ++ " with size " ++ (show size)
+        else Nothing
+  where ranges = map (\(e,v) -> getRange vars e >>= pairMul v) $ M.assocs (linerize e)
+        pairMul a (l,h) = Just (l*a,h*a)
+        size = M.lookup n sizes 
+        range = let (l,h) = unzip $ catMaybes ranges
+                in (sum l,sum h)
+        outofrange = (fst range < 0) || (fromJust size <= snd range)
 
 getRange :: (Num a, Ord a, Scalar a) => M.Map (Exp a) (a,a) -> Exp a -> Maybe (a,a)
 getRange = gr
@@ -61,18 +89,17 @@ getRange = gr
     gr r (Literal a) = Just (a,a)
     gr r a = M.lookup a r
 
-    bop :: (Num a, Ord a, Scalar a) => M.Map (Exp a) (a,a) -> Exp a -> Exp a -> (a->a->a->a->Maybe (a,a)) -> Maybe (a,a)
+    bop :: (Num a, Ord a, Scalar a)
+        => M.Map (Exp a) (a,a) -> Exp a -> Exp a
+        -> (a -> a-> a -> a -> Maybe (a,a)) -> Maybe (a,a)
     bop r a b f = do
       (al,ah) <- gr r a
       (bl,bh) <- gr r b
       f al ah bl bh
 
-traverseComment f = traverseIM (\a -> map (\s -> (SComment s,())) (maybeToList (f a)) ++ [a])
+traverseComment f = traverseIM $ \a -> map (\s -> (SComment s,())) (catMaybes $ f a) ++ [a]
 
-getSizes :: IM -> M.Map Name Word32
-getSizes = M.fromList . collectIM getSizesIM
-
-input1 :: Pull (Exp Word32) EInt 
+input1 :: DPull  EInt 
 input1 = namedGlobal "apa" (variable "X")
 
 t0 = printAnalysis (pushGrid 32 . fmap (+1). ixMap (+5)) (input1 :- ())

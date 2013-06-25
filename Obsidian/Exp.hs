@@ -33,7 +33,6 @@ import Obsidian.CodeGen.SPMDC
 -- some synonyms
 type Data a = Exp a 
 
-
 type EInt    = Exp Int      
 type EWord   = Exp Word
 
@@ -552,9 +551,9 @@ instance (Scalar a, Ord a) => OrdE (Exp a) where
   minE a b = BinOp Min a b
 
 instance (OrdE (Exp a), Scalar a) => Ord (Exp a) where
-  compare = error "Ord not working"
-  --max = maxE
-  --min = minE
+  compare a b = compare (show a) (show b) -- a little dangerous, but usefull for comparisons
+  max = error "You should probably use maxE instead of max"
+  min = error "You should probably use minE instead of min"
 
 instance (OrdE a, OrdE b) => OrdE (a,b) where
   (==*) (a1,a2) (b1,b2) = (a1 ==* b1) &&* (a2 ==* b2)

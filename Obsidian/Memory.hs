@@ -12,7 +12,7 @@
 -} 
 
 module Obsidian.Memory (MemoryOps(..), Names,
-  typesScalar, typesArray,
+  typesScalar, typesArray, getNames,
   allocateScalar, allocateArray, outputArray,
   names, inNames, valType, atomicArray
   )  where
@@ -113,7 +113,11 @@ typesScalar :: Names -> [(Name,Type)]
 typesScalar (Single n t s) = [(n,t)]
 typesScalar (Tuple ns) = concat $ map typesScalar ns
 
-typesArray ns = map (\(n,t) -> (n,Pointer t))
+getNames :: Names -> [Name]
+getNames (Single n _ _) = [n]
+getNames (Tuple ns) = concat $ map getNames ns
+
+typesArray ns = map (\(n,t) -> (n, Pointer t))
                     (typesScalar ns)
 
 allocateScalar :: Names -> Program t () 

@@ -12,6 +12,8 @@ import Data.Bits
 import qualified Data.Vector.Storable as V
 
 import Control.Monad.State
+import Debug.Trace
+import Obsidian.AddOn.Analysis
 
 import Prelude hiding (zipWith,sum,replicate,take,drop)
 import qualified Prelude as P 
@@ -242,15 +244,34 @@ s1 arr = do
 type SMatrix a = Pull Word32 (Pull Word32 a)
 
 {-
-transpose :: (ASize l1, ASize l2) => Pull l1 (Pull l2 a) -> Pull l2 (Pull l1 a)
-transpose arr = mkPullArray m
+transpose0 :: (ASize l1, ASize l2) => Pull l1 (Pull l2 a) -> Pull l2 (Pull l1 a)
+transpose0 arr = mkPullArray m
                 $ \i -> mkPullArray n
                        $ \j -> (arr ! j) ! i                                       
                                 
    where
      n = len arr
-     m = len (arr ! 0) 
+     m = len (arr ! 0)
 -}
+
+strace a = trace (show a) a
+
+joinM :: (ASize l) => Pull l (Pull l a) -> Pull l a
+joinM a = mkPullArray n $ \i -> (a!(i`div`m))!(i`mod`m) --(a!(i`div`m)) ! (i`mod`m)
+    where m = sizeConv $ len (a!0)
+          n = len (a!0)*(len a)
+
+joinPushNG a = pushNG l $ joinM a
+    where pushNG :: ASize s => Word32 -> Pull s e -> Push Grid s e
+          pushNG = pushN
+          l = len (a!0)
+
+input2 :: Pull (Word32) EInt
+input2 = namedGlobal "apa" (1024*16)
+
+tt0 = quickPrint (joinPushNG . transpose . splitUpS 16) (input2 :- ())
+
+
 transpose :: SMatrix a -> SMatrix a
 transpose arr = mkPullArray m
                 $ \i -> mkPullArray n
@@ -381,4 +402,27 @@ convToPush arr =
    forAll (fromIntegral n) $ \tid -> wf (arr ! tid) tid
   where
     n = len arr                             
+
+
+red5 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> BProgram (SPush Block a)
+red5 f arr = do
+    arr' <- force $ pConcatMap (return . seqReduce f)
+                               (splitUpS 8 arr)
+    red3 f arr'
+
+red3 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> BProgram (SPush Block a)
+red3 f arr
+    | len arr == 2 = return $ push $ singleton $ f (arr!0) (arr!1)
+    | otherwise    = do
+        let (a1,a2) = halve arr
+        arr' <- unsafeForce $ zipWith f a1 a2
+        red3 f arr'
+
+tr5 = printAnalysis ((pConcatMap $ red5 (+)) . splitUpS 1024) (input2 :- ())
 

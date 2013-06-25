@@ -40,13 +40,16 @@ namedPull name n = Pull n $ \gix -> index name gix
 -- Class ArraySize
 --------------------------------------------------------------------------- 
 class (Integral a, Num a) => ASize a where
-  sizeConv :: a ->  Exp Word32
+  sizeConv :: a -> Exp Word32
+  sizeEither :: a -> Either Word32 (Exp Word32)
 
 instance ASize Word32 where
   sizeConv = fromIntegral
+  sizeEither = Left
 
 instance ASize (Exp Word32) where
   sizeConv = id 
+  sizeEither = Right
 
 ---------------------------------------------------------------------------
 -- Push and Pull arrays
