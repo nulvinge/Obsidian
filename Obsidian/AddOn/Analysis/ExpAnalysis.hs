@@ -7,30 +7,16 @@
              TypeFamilies,
              FlexibleContexts #-}
 
-module Obsidian.AddOn.ExpAnalysis where
+module Obsidian.AddOn.Analysis.ExpAnalysis where
 
-import qualified Obsidian.CodeGen.CUDA as CUDA
-
-import Obsidian.Program --hiding (Bind,Return)
-import Obsidian.Exp
-import Obsidian.Types
-import Obsidian.Array
-import Obsidian.Library
-import Obsidian.Force
-import Obsidian.Atomic
 import Obsidian.Globs
-import Obsidian.Memory
+import Obsidian
 import qualified Obsidian.CodeGen.Program as P
-
-import Debug.Trace
 
 import Data.Word
 import Data.Int
 import Data.Bits
 import Data.Maybe
-
-import qualified Data.Vector.Storable as V
-
 import Control.Monad.State
 
 import Prelude hiding (zipWith,sum,replicate)
@@ -250,6 +236,26 @@ concatMap (traverseIM' f)
     traverseIM' f a = f a
 -}
 
+traverseIMacc :: (b -> (P.Statement a,a) -> [(P.Statement a,c,b)])
+              -> b -> P.IMList a -> P.IMList c
+traverseIMacc f acc = map g . concat . map (f acc)
+  where
+    g (b,c,acc') = case b of
+      (P.SCond           e l) -> (P.SCond          e (traverseIMacc f acc' l),c)
+      (P.SSeqFor n       e l) -> (P.SSeqFor n      e (traverseIMacc f acc' l),c)
+      (P.SSeqWhile       e l) -> (P.SSeqWhile      e (traverseIMacc f acc' l),c)
+      (P.SForAll         e l) -> (P.SForAll        e (traverseIMacc f acc' l),c)
+      (P.SForAllBlocks   e l) -> (P.SForAllBlocks  e (traverseIMacc f acc' l),c)
+      (P.SForAllThreads  e l) -> (P.SForAllThreads e (traverseIMacc f acc' l),c)
+      (P.SAssign n l e      ) -> (P.SAssign n l e      ,c)
+      (P.SAtomicOp n1 n2 e a) -> (P.SAtomicOp n1 n2 e a,c)
+      (P.SBreak             ) -> (P.SBreak             ,c)
+      (P.SAllocate n s t    ) -> (P.SAllocate n s t    ,c)
+      (P.SDeclare  n t      ) -> (P.SDeclare  n t      ,c)
+      (P.SOutput   n t      ) -> (P.SOutput   n t      ,c)
+      (P.SComment s         ) -> (P.SComment s         ,c)
+      (P.SSynchronize       ) -> (P.SSynchronize       ,c)
+
 instance TraverseExp a => TraverseExp [a] where
   collectExp f = concatMap (collectExp f)
   traverseExp f = map (traverseExp f)
@@ -312,26 +318,6 @@ traverseOnIndice _ _ a = a
 mapDataIM :: (a -> b) -> P.IMList a -> P.IMList b
 mapDataIM f = traverseIMacc g ()
   where g () (a,b) = [(a, f b, ())]
-
-traverseIMacc :: (b -> (P.Statement a,a) -> [(P.Statement a,c,b)])
-              -> b -> P.IMList a -> P.IMList c
-traverseIMacc f acc = map g . concat . map (f acc)
-  where
-    g (b,c,acc') = case b of
-      (P.SCond           e l) -> (P.SCond          e (traverseIMacc f acc' l),c)
-      (P.SSeqFor n       e l) -> (P.SSeqFor n      e (traverseIMacc f acc' l),c)
-      (P.SSeqWhile       e l) -> (P.SSeqWhile      e (traverseIMacc f acc' l),c)
-      (P.SForAll         e l) -> (P.SForAll        e (traverseIMacc f acc' l),c)
-      (P.SForAllBlocks   e l) -> (P.SForAllBlocks  e (traverseIMacc f acc' l),c)
-      (P.SForAllThreads  e l) -> (P.SForAllThreads e (traverseIMacc f acc' l),c)
-      (P.SAssign n l e      ) -> (P.SAssign n l e      ,c)
-      (P.SAtomicOp n1 n2 e a) -> (P.SAtomicOp n1 n2 e a,c)
-      (P.SBreak             ) -> (P.SBreak             ,c)
-      (P.SAllocate n s t    ) -> (P.SAllocate n s t    ,c)
-      (P.SDeclare  n t      ) -> (P.SDeclare  n t      ,c)
-      (P.SOutput   n t      ) -> (P.SOutput   n t      ,c)
-      (P.SComment s         ) -> (P.SComment s         ,c)
-      (P.SSynchronize       ) -> (P.SSynchronize       ,c)
 
 type Conds = [(Exp Bool)]
 
