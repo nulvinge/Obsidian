@@ -58,11 +58,18 @@ type EBool   = Exp Bool
 class (Eq a, ExpToCExp a, Show a) => Scalar a where 
   sizeOf :: Exp a -> Int   --  
   typeOf :: Exp a -> Type  --   Good enough for me ... 
+  witness :: Exp a -> Witness a
+  witness a = NothingWitness
 
+data Witness a where
+  Word32Witness :: Witness Word32
+  BoolWitness :: Witness Bool
+  NothingWitness :: Witness a
 
 instance Scalar Bool where  
   sizeOf _ = Storable.sizeOf (undefined :: Int)
   typeOf _ = Bool 
+  witness a = BoolWitness
 
 instance Scalar Int where 
   sizeOf _ = Storable.sizeOf (undefined :: Int)
@@ -107,6 +114,7 @@ instance Scalar Word16 where
 instance Scalar Word32 where 
   sizeOf _ = 4 
   typeOf _ = Word32
+  witness a = Word32Witness
   
 instance Scalar Word64 where 
   sizeOf _ = 8 
@@ -547,7 +555,9 @@ instance (Scalar a, Ord a) => OrdE (Exp a) where
   (<=*) a b = BinOp LEq a b
   (>*)  a b = BinOp Gt  a b
   (>=*) a b = BinOp GEq a b
+  maxE (Literal a) (Literal b) = Literal (max a b)
   maxE a b = BinOp Max a b
+  minE (Literal a) (Literal b) = Literal (min a b)
   minE a b = BinOp Min a b
 
 instance (OrdE (Exp a), Scalar a) => Ord (Exp a) where

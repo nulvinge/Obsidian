@@ -234,8 +234,12 @@ collectIM f = concatMap (collectIM' f)
     collectIM' f a@(P.SForAllThreads _ l,_) = f a ++ collectIM f l
     collectIM' f a                      = f a
 
-traverseIM :: ((P.Statement a,a) -> [(P.Statement a,a)]) -> P.IMList a -> P.IMList a
-traverseIM f = concatMap (traverseIM' f)
+traverseIM :: ((P.Statement a,a) -> [(P.Statement a,c)]) -> P.IMList a -> P.IMList c
+traverseIM f = traverseIMacc (\() l -> map add3 $ f l) ()
+  where add3 (a,b) = (a,b,())
+
+{-
+concatMap (traverseIM' f)
   where
     traverseIM' f (P.SCond           e l,a) = f $ (P.SCond          e (traverseIM f l),a)
     traverseIM' f (P.SSeqFor n       e l,a) = f $ (P.SSeqFor n      e (traverseIM f l),a)
@@ -244,6 +248,7 @@ traverseIM f = concatMap (traverseIM' f)
     traverseIM' f (P.SForAllBlocks   e l,a) = f $ (P.SForAllBlocks  e (traverseIM f l),a)
     traverseIM' f (P.SForAllThreads  e l,a) = f $ (P.SForAllThreads e (traverseIM f l),a)
     traverseIM' f a = f a
+-}
 
 instance TraverseExp a => TraverseExp [a] where
   collectExp f = concatMap (collectExp f)
@@ -282,9 +287,11 @@ getIndice _ _ = []
 getIndicesExp (Index (n,[r])) = [(n,r)]
 getIndicesExp _ = []
 
+getIndicesIM :: (P.Statement a, a) -> [(Name, Exp Word32, a)]
 getIndicesIM (a,cs) = map (\(n,e) -> (n,e,cs)) $ getIndicesIM' a
   where
     getIndicesIM' (P.SAssign     n [r] e) = [(n,r)] ++ collectExp getIndicesExp e
+    getIndicesIM' (P.SAssign     n _ e)   = collectExp getIndicesExp e
     getIndicesIM' (P.SAtomicOp _ n r   _) = [(n,r)]
     getIndicesIM' (P.SCond           e l) = collectExp getIndicesExp e
     getIndicesIM' (P.SSeqFor _       e l) = collectExp getIndicesExp e
