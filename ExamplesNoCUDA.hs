@@ -45,6 +45,12 @@ splitUpS :: Word32 -> Pull Word32 a -> Pull Word32 (Pull Word32 a)
 splitUpS n (Pull m ixf) = Pull (m `div` n) $ 
                           \i -> Pull n $ \j -> ixf (i * (fromIntegral n) + j)
 
+coalesce :: Word32 -> Pull Word32 a -> Pull Word32 (Pull Word32 a)
+coalesce n arr =
+  Pull s $ \i ->
+    Pull n $ \j -> arr ! (i + (fromIntegral s) * j)
+  where s = (len arr) `div` n
+
 --test1 :: Pull (Exp Word32) EInt -> GProgram (Push Grid (Exp Word32) EInt)
 --test1 input = liftG  $ fmap mapFusion (splitUp 256 input) 
 
@@ -410,7 +416,7 @@ red5 :: MemoryOps a
      -> BProgram (SPush Block a)
 red5 f arr = do
     arr' <- force $ pConcatMap (return . seqReduce f)
-                               (splitUpS 8 arr)
+                               (coalesce 8 arr)
     red3 f arr'
 
 red3 :: MemoryOps a
