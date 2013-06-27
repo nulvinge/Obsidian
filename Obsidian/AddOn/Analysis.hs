@@ -32,6 +32,7 @@ printAnalysis p a = quickPrint (ins, sizes, insertAnalysis ins (strace sizes) im
 
 insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
 insertAnalysis ins inSizes im = traverseComment (map Just . fst . snd) im2
+                        ++ [(SComment (show $ M.assocs sizes),())]
   where inConstSizes = [(n,l) | (n,Left l) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
         (Left threadBudget) = numThreads im

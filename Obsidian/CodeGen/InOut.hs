@@ -98,11 +98,16 @@ instance ToProgram (GProgram a) where
   toProgram i prg () = ([], [], CG.compileStep1 prg)
 
 instance (MemoryOps a, ASize l) => ToProgram (Push Grid l a) where
-  toProgram i a@(Push _ p) () = (ins, ("output", sizeEither $ len a) : s, b)
+  toProgram i a@(Push _ p) () = (ins
+                                ,s ++ sizes
+                                ,b)
     where (ins,s,b) = toProgram i prg ()
           prg = do
             output <- outputArray a
             p (\a ix -> assignArray output a ix)
+          --small hack, presumes there are no other outputs
+          sizes = map (\n -> (n,sizeEither $ len a))
+                $ getNames $ createNames (valType a) "output0"
 
 instance (GetTypes a, ToProgram b) => ToProgram (a -> b) where
   toProgram i f (a :- rest) = (ins ++ types, s1 ++ s2, prg)
