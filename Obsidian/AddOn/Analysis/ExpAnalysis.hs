@@ -29,6 +29,20 @@ instance Choice (TProgram ()) where
     Cond b e1
     Cond (notE b) e2
 
+getNext2Powerm :: Bits a => a -> a
+getNext2Powerm v = if v == 0 then 0 else f (v-1) (bitSize v) 1
+  where f v m n =
+          if m < n
+            then v
+            else f (v .|. (v `shiftR` n)) m (n `shiftL` 1)
+
+getNext2Power :: Bits a => a -> a
+getNext2Power = (+1).getNext2Powerm
+
+is2Power x = x .&. (x-1) == 0
+
+{-
+
 --simplifying treating i as an integer modulo m
 simplifyMod :: Word32 -> Word32 -> Exp Word32 -> Exp Word32
 simplifyMod m bs a' = (makeExp.(simplifyMod' m bs).snd.(simplifyMod' m bs)) a' --second time to get correct range after simplifications
@@ -48,18 +62,6 @@ simplifyMod m bs a' = (makeExp.(simplifyMod' m bs).snd.(simplifyMod' m bs)) a' -
 --t2 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2 *2
 --t3 = simplifyMod' 512 512 $ (ThreadIdx X) `div` 2 *2*2
 --t4 = simplifyMod' 32 16 $ (ThreadIdx X + 16)
-
-getNext2Powerm :: Bits a => a -> a
-getNext2Powerm v = if v == 0 then 0 else f (v-1) (bitSize v) 1
-  where f v m n =
-          if m < n
-            then v
-            else f (v .|. (v `shiftR` n)) m (n `shiftL` 1)
-
-getNext2Power :: Bits a => a -> a
-getNext2Power = (+1).getNext2Powerm
-
-is2Power x = x .&. (x-1) == 0
 
 simplifyMod' :: Word32 -> Word32 -> Exp Word32 -> (Maybe (Word32,Word32),Exp Word32)
 simplifyMod' 0 bs = error "Divzero"
@@ -122,6 +124,8 @@ simplifyDiv m bs n = sd
         sd (ThreadIdx X) | (min bs n) <= m = Literal 0
         sd (BlockIdx X)  | (n`div`bs) <= m = Literal 0
         sd a = a `div` Literal m
+
+-}
 
 {-
 collectExp :: (Exp a -> b) -> (b -> b -> b) -> Exp a -> b
@@ -322,18 +326,4 @@ mapDataIM f = traverseIMacc g ()
 mapIM :: ((P.Statement a,a) -> b) -> P.IMList a -> P.IMList b
 mapIM f = traverseIMacc g ()
   where g () (a,b) = [(a, f (a,b), ())]
-
-type Conds = [(Exp Bool)]
-
-insertCondsIM :: Conds -> P.IMList a -> P.IMList (a,Conds)
-insertCondsIM = traverseIMacc (ins)
-  where
-    ins :: Conds -> (P.Statement a,a) -> [(P.Statement a,(a,Conds),Conds)]
-    ins cs (P.SCond           e l,a) = [(P.SCond          e l, (a,cs), cs ++ [e])]
-    ins cs (P.SSeqFor n       e l,a) = [(P.SSeqFor n      e l, (a,cs), cs ++ condRange (variable n)  e)]
-    ins cs (P.SSeqWhile       e l,a) = [(P.SSeqWhile      e l, (a,cs), cs ++ [e])]
-    ins cs (P.SForAll         e l,a) = [(P.SForAll        e l, (a,cs), cs ++ condRange (ThreadIdx X) e)]
-    ins cs (P.SForAllBlocks   e l,a) = [(P.SForAllBlocks  e l, (a,cs), cs ++ condRange (BlockIdx X)  e)]
-    ins cs (b,a) = [(b,(a,cs),cs)]
-    condRange v e = [v <* e, v >=* 0]
 
