@@ -293,7 +293,7 @@ getIndice _ _ = []
 getIndicesExp (Index (n,[r])) = [(n,r)]
 getIndicesExp _ = []
 
-getIndicesIM :: (P.Statement a, a) -> [(Name, Exp Word32, a)]
+getIndicesIM :: (P.Statement b, a) -> [(Name, Exp Word32, a)]
 getIndicesIM (a,cs) = map (\(n,e) -> (n,e,cs)) $ getIndicesIM' a
   where
     getIndicesIM' (P.SAssign     n [r] e) = [(n,r)] ++ collectExp getIndicesExp e
@@ -318,6 +318,10 @@ traverseOnIndice _ _ a = a
 mapDataIM :: (a -> b) -> P.IMList a -> P.IMList b
 mapDataIM f = traverseIMacc g ()
   where g () (a,b) = [(a, f b, ())]
+
+mapIM :: ((P.Statement a,a) -> b) -> P.IMList a -> P.IMList b
+mapIM f = traverseIMacc g ()
+  where g () (a,b) = [(a, f (a,b), ())]
 
 type Conds = [(Exp Bool)]
 

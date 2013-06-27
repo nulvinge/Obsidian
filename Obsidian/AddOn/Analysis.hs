@@ -2,6 +2,7 @@
              TypeFamilies,
              ScopedTypeVariables,
              FlexibleContexts,
+             TupleSections,
              FlexibleInstances #-}
 
 module Obsidian.AddOn.Analysis (insertAnalysis, printAnalysis) where
@@ -30,17 +31,25 @@ printAnalysis p a = quickPrint (ins, sizes, insertAnalysis ins (strace sizes) im
     where (ins,sizes,im) = toProgram 0 p a
 
 insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
-insertAnalysis ins inSizes im = im'
-  ++ out (SComment $ "test" ++ show (length im, length im'))
+insertAnalysis ins inSizes im = traverseComment (map Just . fst . snd) im2
   where inConstSizes = [(n,l) | (n,Left l) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
         (Left threadBudget) = numThreads im
-        im1 :: IMList (M.Map (Exp Word32) (Word32, Word32))
-        im1 = mapDataIM (makeRanges.snd) $ insertCondsIM conds im
+
+        im1,im2,im3 :: IMList ([String], M.Map (Exp Word32) (Word32, Word32))
+        im1 = mapDataIM (([],).makeRanges.snd) $ insertCondsIM conds im
           where conds = condRange (ThreadIdx X, fromIntegral threadBudget)
                 condRange (v,e) = [v <* e, v >=* 0]
-        im1' = traverseComment (map (\(n,e,cs) -> Just (show $ (n,M.lookup n sizes,M.assocs cs))).getIndicesIM) im1
-        im' = traverseComment (map (inRange sizes).getIndicesIM) im1
+        im1' = insertStringsIM (map (\(n,e,cs) -> 
+          Just (show $ (n,M.lookup n sizes,M.assocs cs))).getIndicesIM) im1
+
+        im2 = insertStringsIM (map (inRange sizes).getIndicesIM) im1
+        im3 = insertStringsIM (map (inRange sizes).getIndicesIM) im2
+
+insertStringsIM :: ((Statement ([String], t), t) -> [Maybe String])
+                -> IMList ([String], t) -> IMList ([String], t)
+insertStringsIM f = mapIM g
+  where g (statement,(ss,cs)) = (ss ++ catMaybes (f (statement,cs)), cs)
 
 traverseComment :: ((Statement a,a) -> [Maybe String]) -> IMList a -> IMList ()
 traverseComment f = mapDataIM (const ()) . traverseIM makeComment
