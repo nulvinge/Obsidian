@@ -37,14 +37,14 @@ printAnalysis p a = quickPrint (ins, sizes, insertAnalysis ins sizes im) ()
 insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
 insertAnalysis ins inSizes im = traverseComment (map Just . fst . snd) im3
                         ++ [(SComment (show $ M.assocs sizes),())]
-                        ++ [(SComment ("Total cost:" ++ show cost),())]
+                        ++ [(SComment ("Total cost:" ++ showCost cost),())]
   where inConstSizes = [(n,l) | (n,Left l) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
         (Left threadBudget) = numThreads im
 
         imd = mapDataIM (collectIMData.snd) $ insertIMCollection threadBudget im
         (imc, cost) = insertCost imd
-        im1 = mapDataIM (\d -> (if getCost d > 0 then ["Cost:" ++ show (getCost d)] else [], d)) imc
+        im1 = mapDataIM (\d -> (if getCost d /= noCost then [showCost (getCost d)] else [], d)) imc
 
         im1,im2,im3 :: IMList ([String], IMData)
         im2 = insertStringsIM "Out-of-bounds" (map (inRange sizes).getIndicesIM) im1
@@ -73,8 +73,6 @@ t0 = printAnalysis (pushGrid 32 . fmap (+1). ixMap (+5)) (input1 :- ())
 
 -- Memory
 
--- Cost model
-
 -- creating IMData
 
 data IMDataCollection = CRange (Exp Word32) (Exp Word32, Exp Word32)
@@ -99,10 +97,10 @@ insertIMCollection bs = traverseIMacc (ins) (collRange (ThreadIdx X) (fromIntegr
 
 
 collectIMData :: [IMDataCollection] -> IMData
-collectIMData dc = IMDataA (M.fromListWith max $ catMaybes lowers)
-                           (M.fromListWith min $ catMaybes uppers)
+collectIMData dc = IMDataA (M.fromListWith min $ catMaybes uppers)
+                           (M.fromListWith max $ catMaybes lowers)
                            (S.fromList $ catMaybes blockconsts)
-                           0
+                           noCost
   where
     (lowers,uppers,blockconsts) = unzip3
                                 $ map (\(e,(l,u,b)) -> (fmap (e,) l

@@ -21,7 +21,44 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Debug.Trace
 
-type Cost = Int
+type Cost = (CostT,CostT)
+
+data CostT = CostT
+  { getOpCost    :: Word32
+  , getReadCost  :: Word32
+  , getWriteCost :: Word32
+  , getSyncCost  :: Word32
+  } deriving (Show, Eq)
+
+showCost ((CostT od rd wd sd),(CostT ow rw ww sw)) = "Cost:"
+  ++ " Ops: "    ++ show od ++ "," ++ show ow
+  ++ " Reads: "  ++ show rd ++ "," ++ show rw
+  ++ " Writes: " ++ show wd ++ "," ++ show ww
+  ++ " Syncs: "  ++ show wd ++ "," ++ show ww
+
+opCostT    = CostT 1 0 0 0
+readCostT  = CostT 0 1 0 0
+writeCostT = CostT 0 0 1 0
+syncCostT  = CostT 0 0 0 1
+noCostT    = CostT 0 0 0 0
+
+mkCost t c = (c,c`mulCostT`t)
+
+noCost = (noCostT, noCostT)
+
+addCostT :: CostT -> CostT -> CostT
+addCostT (CostT o1 r1 w1 s1) (CostT o2 r2 w2 s2) = CostT (o1+o2) (r1+r2) (w1+w2) (s1+s2)
+
+mulCostT (CostT o r w s) t = CostT (o*t) (r*t) (w*t) (s*t)
+
+mulCost c t = mapPair ((flip mulCostT) t) c
+
+sumCost = foldr (mapPair2 addCostT) noCost
+sumCostT = foldr addCostT noCostT
+
+seqCost :: Cost -> CostT -> Word32 -> Cost
+seqCost (d,w) c t = (d `addCostT` c
+                    ,w `addCostT` (c `mulCostT` t))
 
 type IMData = IMDataA Word32
 data IMDataA a = IMDataA
@@ -95,4 +132,7 @@ maybe2 f _        _        = Nothing
 boolToMaybe p a = if p then Just a else Nothing
 
 a `cdiv` b = (a+b-1)`div`b
+
+warpsize :: (Num a) => a
+warpsize = 32
 

@@ -22,34 +22,40 @@ import Data.Either
 import Data.List
 import Control.Monad
 import qualified Data.Map as M
+import Debug.Trace
 
 insertCost :: IMList IMData -> (IMList IMData,Cost)
-insertCost im = (im',sum costs)
+insertCost im = (im',sumCost costs)
   where (im',costs) = traverseIMaccUp g im
         g :: [Cost] -> (Statement IMData, IMData)
           -> ((Statement IMData,IMData), Cost)
-        g cl (p,d) = ((p,setCost d cost),cost)
-          where cb = sum cl
-                getUpper = fromIntegral . snd . fromMaybe (undefined,8) . getRange d
+        g cl (p,d) = ((p,setCost d cost),trace (show threads ++ show (tl,th,warpsize)) cost)
+          where cb = sumCost cl
+                getUpperD = fromIntegral . fromMaybe 8 . getUpper d
+                Just (tl, th) = getRange d (ThreadIdx X)
+                threads :: Word32
+                threads = warpsize * fromIntegral (((th+1) `cdiv` warpsize) - (tl `div` warpsize))
                 cost = case p of
-                        SCond          e _ -> getECost e + sum cl
-                        SSeqFor _      e _ -> getECost e + cb * getUpper e
-                        SSeqWhile      e _ ->(getECost e + cb) * 2
-                        SForAll        e _ -> getECost e + cb * getUpper e
-                        SForAllBlocks  e _ -> getECost e + cb * getUpper e
-                        SForAllThreads e _ -> getECost e + cb * getUpper e
-                        SAssign _      l e -> 1000 + (sum $ (collectExp calcECost e)
-                                                         ++ (collectExp calcECost l))
-                        SAtomicOp _ _  e _ -> 1000 + (sum $ collectExp calcECost e)
-                        SSynchronize       -> 100000
-                        _                  -> 0
+                        SCond          e _ -> seqCost cb (getECost e) threads --better this
+                        SSeqFor _      e _ -> seqCost (cb `mulCost` getUpperD e) (getECost e) threads
+                        SSeqWhile      e _ -> seqCost cb (getECost e) 1 `mulCost` 2 --guess
+                        SForAll        e _ -> seqCost cb (getECost e) threads
+                        SForAllBlocks  e _ -> seqCost cb (getECost e) threads
+                        SForAllThreads e _ -> seqCost cb (getECost e) threads
+                        SAssign _      l e -> mkCost threads (writeCostT
+                                           `addCostT` (sumCostT $ (collectExp calcECost e)
+                                                               ++ (collectExp calcECost l)))
+                        SAtomicOp _ _  e _ -> mkCost threads (writeCostT
+                                           `addCostT` (sumCostT (collectExp calcECost e)))
+                        SSynchronize       -> mkCost threads syncCostT
+                        _                  -> noCost
 
-        getECost :: (Scalar a) => Exp a -> Cost
-        getECost = sum . collectExp calcECost
-        calcECost :: Exp a -> [Cost]
-        calcECost (Index (n,[r])) = [10000]
-        calcECost (BinOp op a b)  = [1]
-        calcECost (UnOp op a)     = [1]
-        calcECost _               = [0]
+        getECost :: (Scalar a) => Exp a -> CostT
+        getECost = sumCostT . collectExp calcECost
+        calcECost :: Exp a -> [CostT]
+        calcECost (Index (n,[r])) = [readCostT]
+        calcECost (BinOp op a b)  = [opCostT]
+        calcECost (UnOp op a)     = [opCostT]
+        calcECost _               = [noCostT]
 
 
