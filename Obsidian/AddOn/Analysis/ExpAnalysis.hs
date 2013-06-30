@@ -196,10 +196,6 @@ collectAssign ns e@(Return a)  = (a,[])
 
 
 
-
-
-
-
 instance TraverseExp (TProgram a) where
   collectExp = error "no collectExp for TProgram"
 
@@ -251,14 +247,37 @@ traverseIMacc f acc = map g . concat . map (f acc)
       (P.SForAll         e l) -> (P.SForAll        e (traverseIMacc f acc' l),c)
       (P.SForAllBlocks   e l) -> (P.SForAllBlocks  e (traverseIMacc f acc' l),c)
       (P.SForAllThreads  e l) -> (P.SForAllThreads e (traverseIMacc f acc' l),c)
-      (P.SAssign n l e      ) -> (P.SAssign n l e      ,c)
-      (P.SAtomicOp n1 n2 e a) -> (P.SAtomicOp n1 n2 e a,c)
-      (P.SBreak             ) -> (P.SBreak             ,c)
-      (P.SAllocate n s t    ) -> (P.SAllocate n s t    ,c)
-      (P.SDeclare  n t      ) -> (P.SDeclare  n t      ,c)
-      (P.SOutput   n t      ) -> (P.SOutput   n t      ,c)
-      (P.SComment s         ) -> (P.SComment s         ,c)
-      (P.SSynchronize       ) -> (P.SSynchronize       ,c)
+      p                       -> (simpleIMmap p                              ,c)
+
+traverseIMaccUp :: ([b] -> (P.Statement c, a) -> ((P.Statement c, c), b))
+                -> P.IMList a -> (P.IMList c, [b])
+traverseIMaccUp f = unzip . map (g f)
+  where
+    g :: ([b] -> (P.Statement c, a) -> ((P.Statement c, c), b))
+      -> (P.Statement a,a) -> ((P.Statement c,c) , b)
+    g f (P.SCond           e l,a) = h f l $ \lt -> (P.SCond          e lt,a)
+    g f (P.SSeqFor n       e l,a) = h f l $ \lt -> (P.SSeqFor n      e lt,a)
+    g f (P.SSeqWhile       e l,a) = h f l $ \lt -> (P.SSeqWhile      e lt,a)
+    g f (P.SForAll         e l,a) = h f l $ \lt -> (P.SForAll        e lt,a)
+    g f (P.SForAllBlocks   e l,a) = h f l $ \lt -> (P.SForAllBlocks  e lt,a)
+    g f (P.SForAllThreads  e l,a) = h f l $ \lt -> (P.SForAllThreads e lt,a)
+    g f (p,a) = f [] (simpleIMmap p,a)
+    --h :: [(P.Statement a, a)] -> ([(P.Statement c, c)], [b])
+    h :: ([b] -> (P.Statement c, a) -> ((P.Statement c, c), b))
+      -> P.IMList a
+      -> (P.IMList c -> (P.Statement c, a))
+      -> ((P.Statement c, c), b)
+    h f l i = let (l',b)=unzip $ map (g f) l in f b (i l')
+
+simpleIMmap :: P.Statement a -> P.Statement b
+simpleIMmap (P.SAssign n l e      ) = (P.SAssign n l e      )
+simpleIMmap (P.SAtomicOp n1 n2 e a) = (P.SAtomicOp n1 n2 e a)
+simpleIMmap (P.SBreak             ) = (P.SBreak             )
+simpleIMmap (P.SAllocate n s t    ) = (P.SAllocate n s t    )
+simpleIMmap (P.SDeclare  n t      ) = (P.SDeclare  n t      )
+simpleIMmap (P.SOutput   n t      ) = (P.SOutput   n t      )
+simpleIMmap (P.SComment s         ) = (P.SComment s         )
+simpleIMmap (P.SSynchronize       ) = (P.SSynchronize       )
 
 instance TraverseExp a => TraverseExp [a] where
   collectExp f = concatMap (collectExp f)

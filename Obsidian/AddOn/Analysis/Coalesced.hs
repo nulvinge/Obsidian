@@ -29,15 +29,24 @@ isCoalesced :: (Num Word32, Ord Word32, Scalar Word32, Integral Word32)
 isCoalesced (n,e,cs) =
   if nonConstants /= []
     then Just $ "The following variables are not warp constant: " ++ (show nonConstants)
-    else if tfactor /= 0 && tfactor /= 1
-      then Just $ "Bank conflicts with a factor of: " ++ (show tfactor)
-      else Nothing
+    else if stride == 0 --broadcast
+         || stride == 1 --coalesced
+      then if nonConstantsAll /= []
+        then Just $ "The following variables are not warp constant: " ++ (show nonConstants)
+        else Nothing
+      else if (32 `mod` stride /= 0 --different banks
+           && stride `mod` 32 /= 0) --unnecesary since `mod`32 is already done.
+        then Nothing
+        else Just $ "Bank conflicts with a factor of: " ++ (show stride)
+                  ++ "gives a slowdown of about " ++ (show $ 32`cdiv`stride)
   where e' = simplifyMod' 32 e
-        m = linerize e'
-        tfactor = fromMaybe 0 $ M.lookup (ThreadIdx X) m
-        nonConstants = filter (not.isWarpConstant) $ M.keys m
+        m = linerize e
+        stride = fromMaybe 0 $ M.lookup (ThreadIdx X) m
+        nonConstants = filter (not.isWarpConstant) $ M.keys $ linerize e'
+        nonConstantsAll = filter (not.isWarpConstant) $ M.keys $ linerize e
+
         isWarpConstant (Literal a)   = True
-        isWarpConstant (ThreadIdx X) = True --handled above with tfactor
+        isWarpConstant (ThreadIdx X) = True --handled above with stride
         isWarpConstant (BlockIdx X)  = True
         isWarpConstant a = c
           where (_,_,c) = M.findWithDefault (undefined, undefined, False) a cs
@@ -57,8 +66,8 @@ maybeMod cs m v = fromMaybe (v `mod` fromIntegral m) e
 
 simplifyMod' :: (Num a, Ord a, Scalar a, Integral a)
             => a -> Exp a -> Exp a
-simplifyMod' m v = unLinerizel [(simplify e v,v`mod`m)  | (e,v) <- linerizel v]
-  where simplify e v = e --further simplifications may be possible, as below
+simplifyMod' m = unLinerizel . map simplify . linerizel
+  where simplify (e,v) = (e,v`mod`m) --further simplifications may be possible, as below
         --sm :: Exp Word32 -> (Exp Word32)
         --sm (BinOp Div a b) = sm a `div` b
         --sm (BinOp Mod a bb@(Literal b)) = simplifyMod cs b

@@ -62,3 +62,5 @@ mapPair f (a,b) = (f a, f b)
 mapPair2 f (a1,b1) (a2,b2) = (a1 `f` a2, b1 `f` b2)
 
 
+a `cdiv` b = (a+b-1)`div`b
+

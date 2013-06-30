@@ -14,6 +14,7 @@ import Obsidian.AddOn.Analysis.ExpAnalysis
 import Obsidian.AddOn.Analysis.Helpers
 import Obsidian.AddOn.Analysis.Range
 import Obsidian.AddOn.Analysis.Coalesced
+import Obsidian.AddOn.Analysis.Cost
 
 import Data.Word
 import Data.Tuple
@@ -35,22 +36,25 @@ printAnalysis p a = quickPrint (ins, sizes, insertAnalysis ins sizes im) ()
 insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
 insertAnalysis ins inSizes im = traverseComment (map Just . fst . snd) im3
                         ++ [(SComment (show $ M.assocs sizes),())]
+                        ++ [(SComment ("Total cost:" ++ show cost),())]
   where inConstSizes = [(n,l) | (n,Left l) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
         (Left threadBudget) = numThreads im
 
+        imd = mapDataIM (collectIMData.snd) $ insertIMCollection threadBudget im
+        (imc, cost) = insertCost imd
+        im1 = mapDataIM (\(d,cost) -> (if cost > 0 then ["Cost:" ++ show cost] else [], d)) imc
+
         im1,im2,im3 :: IMList ([String], IMData)
-        im1 = mapDataIM (([],).collectIMData.snd) $ insertIMCollection threadBudget im
-        im1' = insertStringsIM (map (\(n,e,cs) -> 
-          Just (show $ (n,M.lookup n sizes,M.assocs cs))).getIndicesIM) im1
+        im2 = insertStringsIM "Out-of-bounds" (map (inRange sizes).getIndicesIM) im1
+        im3 = insertStringsIM "Coalesce"    (map isCoalesced.getIndicesIM) im2
 
-        im2 = insertStringsIM (map (inRange sizes).getIndicesIM) im1
-        im3 = insertStringsIM (map isCoalesced.getIndicesIM) im2
-
-insertStringsIM :: ((Statement ([String], t), t) -> [Maybe String])
+insertStringsIM :: String -> ((Statement ([String], t), t) -> [Maybe String])
                 -> IMList ([String], t) -> IMList ([String], t)
-insertStringsIM f = mapIM g
-  where g (statement,(ss,cs)) = (ss ++ catMaybes (f (statement,cs)), cs)
+insertStringsIM s f = mapIM g
+  where g (statement,(ss,cs)) = (ss ++ map ((s++": ")++)
+                                           (catMaybes (f (statement,cs)))
+                                ,cs)
 
 traverseComment :: ((Statement a,a) -> [Maybe String]) -> IMList a -> IMList ()
 traverseComment f = mapDataIM (const ()) . traverseIM makeComment
@@ -68,12 +72,7 @@ t0 = printAnalysis (pushGrid 32 . fmap (+1). ixMap (+5)) (input1 :- ())
 
 -- Memory
 
--- Coalesced
-
---analyzeMemory :: GProgram () -> Int
---analyzeMemory p = 
---  let compiledP = compile p -- allocate memory
-
+-- Cost model
 
 -- creating IMData
 
