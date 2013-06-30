@@ -59,6 +59,7 @@ mkCost t c = (c,c`mulCostT`t)
 
 addCostT :: CostT -> CostT -> CostT
 addCostT (CostT o1 r1 w1 s1) (CostT o2 r2 w2 s2) = CostT (o1+o2) (r1+r2) (w1+w2) (s1+s2)
+addCost = mapPair2 addCostT
 
 mulCostT (CostT o r w s) t = CostT (o*t) (r*t) (w*t) (s*t)
 
@@ -80,4 +81,8 @@ makeCost d c = mkCost pars (c `mulCostT` seqs)
         range (ThreadIdx X) = warpsize * fromIntegral (((th+1) `cdiv` warpsize) - (tl `div` warpsize))
           where Just (tl,th) = getRange d (ThreadIdx X)
         range e = ((1+) . (uncurry $ flip (-)) . fromMaybe (0,8) . getRange d) e
+
+setCost (IMDataA l u b _ p s) c = (IMDataA l u b c p s)
+
+addIMCost d c = setCost d (getCost d `addCost` c)
 

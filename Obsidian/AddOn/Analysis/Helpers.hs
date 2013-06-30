@@ -64,8 +64,6 @@ lookupRange d = maybePair . lookupRangeM d
 getBlockConstant :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Bool
 getBlockConstant d e = S.member e (getBlockConstantSet d)
 
-setCost (IMDataA l u b _ p s) c = (IMDataA l u b c p s)
-
 strace a = trace (show a) a
 
 quickPrint :: ToProgram prg => prg -> InputList prg -> IO ()

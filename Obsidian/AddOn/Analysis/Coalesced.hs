@@ -24,8 +24,8 @@ import qualified Data.Map as M
 
 
 isCoalesced :: (Num Word32, Ord Word32, Scalar Word32, Integral Word32)
-            => ([Char], Exp Word32, IMData)
-            -> Maybe [Char]
+            => (String, Exp Word32, IMData)
+            -> Maybe String
 isCoalesced (n,e,cs) =
   if nonConstants /= []
     then Just $ "The following variables are not warp constant: " ++ (show nonConstants)
