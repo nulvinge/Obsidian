@@ -30,35 +30,14 @@ data CostT = CostT
   , getSyncCost  :: Word32
   } deriving (Show, Eq)
 
-showCost ((CostT od rd wd sd),(CostT ow rw ww sw)) = "Cost:"
-  ++ " Ops: "    ++ show od ++ "," ++ show ow
+showCost ((CostT od rd wd sd),(CostT ow rw ww sw)) = 
+      "Ops: "    ++ show od ++ "," ++ show ow
   ++ " Reads: "  ++ show rd ++ "," ++ show rw
   ++ " Writes: " ++ show wd ++ "," ++ show ww
-  ++ " Syncs: "  ++ show wd ++ "," ++ show ww
+  ++ " Syncs: "  ++ show sd ++ "," ++ show sw
 
-opCostT    = CostT 1 0 0 0
-readCostT  = CostT 0 1 0 0
-writeCostT = CostT 0 0 1 0
-syncCostT  = CostT 0 0 0 1
 noCostT    = CostT 0 0 0 0
-
-mkCost t c = (c,c`mulCostT`t)
-
 noCost = (noCostT, noCostT)
-
-addCostT :: CostT -> CostT -> CostT
-addCostT (CostT o1 r1 w1 s1) (CostT o2 r2 w2 s2) = CostT (o1+o2) (r1+r2) (w1+w2) (s1+s2)
-
-mulCostT (CostT o r w s) t = CostT (o*t) (r*t) (w*t) (s*t)
-
-mulCost c t = mapPair ((flip mulCostT) t) c
-
-sumCost = foldr (mapPair2 addCostT) noCost
-sumCostT = foldr addCostT noCostT
-
-seqCost :: Cost -> CostT -> Word32 -> Cost
-seqCost (d,w) c t = (d `addCostT` c
-                    ,w `addCostT` (c `mulCostT` t))
 
 type IMData = IMDataA Word32
 data IMDataA a = IMDataA
@@ -66,6 +45,8 @@ data IMDataA a = IMDataA
   , getLowerMap :: M.Map (Exp a) a
   , getBlockConstantSet :: S.Set (Exp a)
   , getCost :: Cost
+  , getSeqLoopFactor :: [Exp Word32]
+  , getParLoopFactor :: [Exp Word32]
   }
 
 getUpper :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Maybe a
@@ -83,7 +64,7 @@ lookupRange d = maybePair . lookupRangeM d
 getBlockConstant :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Bool
 getBlockConstant d e = S.member e (getBlockConstantSet d)
 
-setCost (IMDataA l u b _) c = (IMDataA l u b c)
+setCost (IMDataA l u b _ p s) c = (IMDataA l u b c p s)
 
 strace a = trace (show a) a
 
@@ -135,4 +116,6 @@ a `cdiv` b = (a+b-1)`div`b
 
 warpsize :: (Num a) => a
 warpsize = 32
+
+list a = [a]
 
