@@ -48,8 +48,7 @@ isCoalesced (n,e,cs) =
         isWarpConstant (Literal a)   = True
         isWarpConstant (ThreadIdx X) = True --handled above with stride
         isWarpConstant (BlockIdx X)  = True
-        isWarpConstant a = c
-          where (_,_,c) = M.findWithDefault (undefined, undefined, False) a cs
+        isWarpConstant a = getBlockConstant cs a
         --isWarpConstant _ = False --further analysis required, but should be good for the most obious cases
 
  

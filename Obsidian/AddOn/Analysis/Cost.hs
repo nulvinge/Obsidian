@@ -23,14 +23,12 @@ import Data.List
 import Control.Monad
 import qualified Data.Map as M
 
-type Cost = Int
-
-insertCost :: IMList IMData -> (IMList (IMData,Cost),Cost)
+insertCost :: IMList IMData -> (IMList IMData,Cost)
 insertCost im = (im',sum costs)
   where (im',costs) = traverseIMaccUp g im
-        g :: [Cost] -> (Statement (IMData,Cost), IMData)
-          -> ((Statement (IMData,Cost),(IMData,Cost)), Cost)
-        g cl (p,d) = ((p,(d,cost)),cost)
+        g :: [Cost] -> (Statement IMData, IMData)
+          -> ((Statement IMData,IMData), Cost)
+        g cl (p,d) = ((p,setCost d cost),cost)
           where cb = sum cl
                 getUpper = fromIntegral . snd . fromMaybe (undefined,8) . getRange d
                 cost = case p of

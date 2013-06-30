@@ -23,6 +23,7 @@ import Data.Maybe
 import Data.Either
 import Control.Monad
 import qualified Data.Map as M
+import qualified Data.Set as S
 
 instance ToProgram (Inputs,ArraySizes,IM) where
   toProgram i a () = a
@@ -43,7 +44,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . fst . snd) im3
 
         imd = mapDataIM (collectIMData.snd) $ insertIMCollection threadBudget im
         (imc, cost) = insertCost imd
-        im1 = mapDataIM (\(d,cost) -> (if cost > 0 then ["Cost:" ++ show cost] else [], d)) imc
+        im1 = mapDataIM (\d -> (if getCost d > 0 then ["Cost:" ++ show (getCost d)] else [], d)) imc
 
         im1,im2,im3 :: IMList ([String], IMData)
         im2 = insertStringsIM "Out-of-bounds" (map (inRange sizes).getIndicesIM) im1
@@ -98,12 +99,18 @@ insertIMCollection bs = traverseIMacc (ins) (collRange (ThreadIdx X) (fromIntegr
 
 
 collectIMData :: [IMDataCollection] -> IMData
-collectIMData = M.mapMaybe maybeRange
-              . M.fromListWith minmax
-              . concat
-              -- . strace
-              . map makeRange
+collectIMData dc = IMDataA (M.fromListWith max $ catMaybes lowers)
+                           (M.fromListWith min $ catMaybes uppers)
+                           (S.fromList $ catMaybes blockconsts)
+                           0
   where
+    (lowers,uppers,blockconsts) = unzip3
+                                $ map (\(e,(l,u,b)) -> (fmap (e,) l
+                                                       ,fmap (e,) u
+                                                       ,boolToMaybe b e))
+                                $ concat
+                                $ map makeRange dc
+
     makeRange :: IMDataCollection -> [(Exp Word32, (Maybe Word32, Maybe Word32, Bool))]
     makeRange (CRange e (l,h)) = [(e, (expToMaybe $ Just l,expToMaybe $ Just h,False))]
     makeRange (CCond e)     = map (\(e,(l,h)) -> (e,(l,h,False))) $ makeRangeE e

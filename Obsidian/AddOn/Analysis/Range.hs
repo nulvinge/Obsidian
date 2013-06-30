@@ -41,36 +41,37 @@ inRange sizes (n,e,cs) =
   where (indets, ranges) = partitionEithers $ map g $ M.assocs (linerize e)
         g (e,v) = case getRange cs e of
                     Nothing -> Left e
-                    Just e' -> Right $ mapPair (*v) e'
+                    Just r -> Right $ mapPair (*v) r
         size = M.lookup n sizes 
         range = mapPair sum $ unzip ranges
         outofrange = not (range `rangeInSize` fromJust size)
 
 getRange :: (Num a, Ord a, Scalar a) => IMDataA a -> Exp a -> Maybe (a,a)
-getRange = gr'
-  where
-    gr' :: (Num a, Ord a, Scalar a) => IMDataA a -> Exp a -> Maybe (a,a)
-    gr' r a = b `mplus` (gr r a)
-      where b = do (l,h,s) <- M.lookup a r
-                   return (l,h)
+getRange d = maybePair . getRangeM d
 
-    gr :: (Num a, Ord a, Scalar a) => IMDataA a -> Exp a -> Maybe (a,a)
-    gr r (BinOp Add a b) = bop r a b $ \al ah bl bh -> return (al+bl,ah+bh)
-    gr r (BinOp Sub a b) = bop r a b $ \al ah bl bh -> return (al-bh,ah-bl)
-    gr r (BinOp Mul a b) = bop r a b $ \al ah bl bh -> return (al*bl,ah*bh)
-    gr r (BinOp Div a b) = bop r a b $ \al ah bl bh -> guard (bl==bh) >> return (al`div`bh,ah`div`bl)
-    gr r (BinOp Mod a b) = bop r a b $ \al ah bl bh -> guard (bl==bh) >> return (max al 0,min ah (bh-1))
-    gr r (BinOp BitwiseXor a b) = bop r a b $ \al ah bl bh -> do
-      guard (al >= 0 && bl >= 0)
-      return (0,(getNext2Powerm ah `max` getNext2Powerm bh))
-    gr r (Literal a) = Just (a,a)
-    gr r a = Nothing
+getRangeM :: (Num a, Ord a, Scalar a) => IMDataA a -> Exp a -> (Maybe a,Maybe a)
+getRangeM = gr'
+  where
+    gr' :: (Num a, Ord a, Scalar a) => IMDataA a -> Exp a -> (Maybe a,Maybe a)
+    gr' r a = mapPair2 mplus (lookupRangeM r a) (gr r a)
+
+    gr :: (Num a, Ord a, Scalar a) => IMDataA a -> Exp a -> (Maybe a,Maybe a)
+    gr r (BinOp Add a b) = bop r a b $ \al ah bl bh -> (maybe2 (+) al bl,maybe2 (+) ah bh)
+    gr r (BinOp Sub a b) = bop r a b $ \al ah bl bh -> (maybe2 (-) al bh,maybe2 (-) ah bl)
+    gr r (BinOp Mul a b) = bop r a b $ \al ah bl bh -> (maybe2 (*) al bl,maybe2 (*) ah bh)
+    gr r (BinOp Div a b) = bop r a b $ \al ah bl bh -> mapPair (guard (bl==bh) >>)
+      (maybe2 div al bh, maybe2 div ah bl)
+    gr r (BinOp Mod a b) = bop r a b $ \al ah bl bh -> mapPair (guard (bl==bh) >>)
+      (fmap (max 0) al,maybe2 min ah (fmap (+ (-1)) bh))
+    gr r (BinOp BitwiseXor a b) = bop r a b $ \al ah bl bh -> mapPair (guard (al >= Just 0 && bl >= Just 0) >>)
+      (Just 0,maybe2 max (fmap getNext2Powerm ah) (fmap getNext2Powerm bh))
+    gr r (Literal a) = (Just a,Just a)
+    gr r a = (Nothing,Nothing)
 
     bop :: (Num a, Ord a, Scalar a)
         => IMDataA a -> Exp a -> Exp a
-        -> (a -> a-> a -> a -> Maybe (a,a)) -> Maybe (a,a)
-    bop r a b f = do
-      (al,ah) <- gr' r a
-      (bl,bh) <- gr' r b
-      f al ah bl bh
+        -> (Maybe a -> Maybe a-> Maybe a -> Maybe a -> (Maybe a,Maybe a)) -> (Maybe a,Maybe a)
+    bop r a b f = f al ah bl bh
+      where (al,ah) = gr' r a
+            (bl,bh) = gr' r b
 

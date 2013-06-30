@@ -18,10 +18,35 @@ import Data.Maybe
 import Data.Either
 import Control.Monad
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Debug.Trace
 
+type Cost = Int
+
 type IMData = IMDataA Word32
-type IMDataA a = M.Map (Exp a) (a, a, Bool)
+data IMDataA a = IMDataA
+  { getUpperMap :: M.Map (Exp a) a
+  , getLowerMap :: M.Map (Exp a) a
+  , getBlockConstantSet :: S.Set (Exp a)
+  , getCost :: Cost
+  }
+
+getUpper :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Maybe a
+getUpper d e = M.lookup e (getUpperMap d)
+
+getLower :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Maybe a
+getLower d e = M.lookup e (getLowerMap d)
+
+lookupRangeM :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> (Maybe a,Maybe a)
+lookupRangeM d e = (getLower d e, getUpper d e)
+
+lookupRange :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Maybe (a,a)
+lookupRange d = maybePair . lookupRangeM d
+
+getBlockConstant :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Bool
+getBlockConstant d e = S.member e (getBlockConstantSet d)
+
+setCost (IMDataA l u b _) c = (IMDataA l u b c)
 
 strace a = trace (show a) a
 
@@ -61,6 +86,13 @@ rangeInSize r s = r `rangeIn` (0,s-1)
 mapPair f (a,b) = (f a, f b)
 mapPair2 f (a1,b1) (a2,b2) = (a1 `f` a2, b1 `f` b2)
 
+maybePair (Just a, Just b) = Just (a,b)
+maybePair _                = Nothing
+
+maybe2 f (Just a) (Just b) = Just $ f a b
+maybe2 f _        _        = Nothing
+
+boolToMaybe p a = if p then Just a else Nothing
 
 a `cdiv` b = (a+b-1)`div`b
 
