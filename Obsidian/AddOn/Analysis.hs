@@ -37,7 +37,7 @@ printAnalysis p a = quickPrint (ins, sizes, insertAnalysis ins sizes im) ()
 insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
 insertAnalysis ins inSizes im = traverseComment (map Just . fst . snd) im2
                         ++ [(SComment (show $ M.assocs sizes),())]
-                        ++ [(SComment ("Total cost:" ++ showCost cost),())]
+                        ++ [(SComment ("Total cost: " ++ showCost cost),())]
   where inConstSizes = [(n,l) | (n,Left l) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
         (Left threadBudget) = numThreads im
@@ -62,7 +62,7 @@ insertStringsIM :: String -> ((Statement ([String], t), t) -> [Maybe String])
 insertStringsIM s f = mapIM g
   where g (statement,(ss,d)) = (ss ++ map ((s++": ")++)
                                           (catMaybes (f (statement,d)))
-                                ,d)
+                               ,d)
 
 insertStringsCostIM :: String
                     -> ((Statement ([String], IMData), IMData) -> [(CostT, Maybe String)])

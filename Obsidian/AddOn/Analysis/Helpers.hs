@@ -34,15 +34,19 @@ showCost = tail
          . zip info
          . uncurry zip
          . mapPair V.toList
-  where info = ["Ops", "SeqRead", "Read", "SeqWrite", "Write", "Sync"]
+  where info = [a ++ c ++ " " ++ b
+               | c <- [""," sequential"]
+               , b <- ["write","read"]
+               , a <- ["global", "local"]
+               ] ++ ["Ops", "Sync"]
 
-noCostT       = V.replicate 10 0
-opCostT       = noCostT V.// [(0,1)]
-readSeqCostT  = noCostT V.// [(1,1)]
-readParCostT  = noCostT V.// [(2,1)]
-writeSeqCostT = noCostT V.// [(3,1)]
-writeParCostT = noCostT V.// [(4,1)]
-syncCostT     = noCostT V.// [(5,1)]
+noCostT  = V.replicate 15 0
+accessCostT :: Bool -> Bool -> Bool -> CostT
+accessCostT gl rw ps = noCostT V.// [(n,1)]
+  where n :: Int
+        n = 4*fromEnum ps + 2*fromEnum rw + 1*fromEnum gl
+opCostT  = noCostT V.// [(8,1)]
+syncCostT= noCostT V.// [(9,1)]
 noCost = (noCostT, noCostT)
 
 type IMData = IMDataA Word32
