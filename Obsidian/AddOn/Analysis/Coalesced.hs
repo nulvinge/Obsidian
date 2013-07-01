@@ -24,9 +24,9 @@ import qualified Data.Map as M
 
 
 isCoalesced :: (Num Word32, Ord Word32, Scalar Word32, Integral Word32)
-            => (String, Exp Word32, IMData)
-            -> Maybe String
-isCoalesced (n,e,cs) =
+            => (String, Exp Word32, Bool, IMData)
+            -> (CostT,Maybe String)
+isCoalesced (n,e,rw,cs) = appendCost rw $
   if nonConstants /= []
     then Just $ "The following variables are not warp constant: " ++ (show nonConstants)
     else if stride == 0 --broadcast
@@ -50,6 +50,11 @@ isCoalesced (n,e,cs) =
         isWarpConstant (BlockIdx X)  = True
         isWarpConstant a = getBlockConstant cs a
         --isWarpConstant _ = False --further analysis required, but should be good for the most obious cases
+        appendCost :: Bool -> Maybe String -> (CostT, Maybe String)
+        appendCost False Nothing = (writeParCostT, Nothing)
+        appendCost True  Nothing = (readParCostT, Nothing)
+        appendCost False x       = (writeSeqCostT, x)
+        appendCost True  x       = (readSeqCostT, x)
 
  
 simplifyMod :: (Num a, Bounded a, Ord a, Scalar a, Integral a)

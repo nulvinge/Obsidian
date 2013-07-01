@@ -23,10 +23,10 @@ import Control.Monad
 import qualified Data.Map as M
 
 inRange :: (Num a, Ord a, Scalar a)
-        => M.Map [Char] a
-        -> ([Char], Exp a, IMDataA a)
-        -> Maybe [Char]
-inRange sizes (n,e,cs) =
+        => M.Map String a
+        -> (String, Exp a, Bool, IMDataA a)
+        -> Maybe String
+inRange sizes (n,e,rw,cs) =
   if isNothing size
     then Just $ "no size info about " ++ n
     else if indets /= []

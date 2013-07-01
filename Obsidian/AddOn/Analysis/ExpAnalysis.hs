@@ -316,19 +316,22 @@ getIndice _ _ = []
 getIndicesExp (Index (n,[r])) = [(n,r)]
 getIndicesExp _ = []
 
-getIndicesIM :: (P.Statement b, a) -> [(Name, Exp Word32, a)]
-getIndicesIM (a,cs) = map (\(n,e) -> (n,e,cs)) $ getIndicesIM' a
+getIndicesIM :: (P.Statement b, a) -> [(Name, Exp Word32, Bool, a)]
+getIndicesIM (a,cs) = map (\(n,e,rw) -> (n,e,rw,cs)) $ getIndicesIM' a
   where
-    getIndicesIM' (P.SAssign     n [r] e) = [(n,r)] ++ collectExp getIndicesExp e
-    getIndicesIM' (P.SAssign     n _ e)   = collectExp getIndicesExp e
-    getIndicesIM' (P.SAtomicOp _ n r   _) = [(n,r)]
-    getIndicesIM' (P.SCond           e l) = collectExp getIndicesExp e
-    getIndicesIM' (P.SSeqFor _       e l) = collectExp getIndicesExp e
-    getIndicesIM' (P.SSeqWhile       e l) = collectExp getIndicesExp e
-    getIndicesIM' (P.SForAll         e l) = collectExp getIndicesExp e
-    getIndicesIM' (P.SForAllBlocks   e l) = collectExp getIndicesExp e
-    getIndicesIM' (P.SForAllThreads  e l) = collectExp getIndicesExp e
+    getIndicesIM' :: (P.Statement b) -> [(Name, Exp Word32, Bool)]
+    getIndicesIM' (P.SAssign     n [r] e) = [(n,r,False)] ++ ce r ++ ce e
+    getIndicesIM' (P.SAssign     n r e)   = concat (map ce r) ++ ce e
+    getIndicesIM' (P.SAtomicOp _ n r   _) = [(n,r,False)] ++ ce r
+    getIndicesIM' (P.SCond           e l) = ce e
+    getIndicesIM' (P.SSeqFor _       e l) = ce e
+    getIndicesIM' (P.SSeqWhile       e l) = ce e
+    getIndicesIM' (P.SForAll         e l) = ce e
+    getIndicesIM' (P.SForAllBlocks   e l) = ce e
+    getIndicesIM' (P.SForAllThreads  e l) = ce e
     getIndicesIM' _ = []
+    ce :: (Scalar a) => (Exp a) -> [(Name, Exp Word32, Bool)]
+    ce = map (\(n,e) -> (n,e,True)) . collectExp getIndicesExp
 
 getSizesIM ((P.SAllocate n s t),_) = [(n,s)]
 getSizesIM _ = []

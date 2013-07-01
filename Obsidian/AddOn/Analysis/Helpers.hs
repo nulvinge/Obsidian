@@ -19,24 +19,30 @@ import Data.Either
 import Control.Monad
 import qualified Data.Map as M
 import qualified Data.Set as S
+import qualified Data.Vector as V
 import Debug.Trace
 
 type Cost = (CostT,CostT)
 
-data CostT = CostT
-  { getOpCost    :: Word32
-  , getReadCost  :: Word32
-  , getWriteCost :: Word32
-  , getSyncCost  :: Word32
-  } deriving (Show, Eq)
+type CostT = (V.Vector Integer)
 
-showCost ((CostT od rd wd sd),(CostT ow rw ww sw)) = 
-      "Ops: "    ++ show od ++ "," ++ show ow
-  ++ " Reads: "  ++ show rd ++ "," ++ show rw
-  ++ " Writes: " ++ show wd ++ "," ++ show ww
-  ++ " Syncs: "  ++ show sd ++ "," ++ show sw
+showCost :: Cost -> String
+showCost = tail
+         . concat
+         . map (\(i,(s,p)) -> " " ++ i ++ ": " ++ show s ++ "/" ++ show p)
+         . filter (\(i,(s,p)) -> any (/=0) [s,p])
+         . zip info
+         . uncurry zip
+         . mapPair V.toList
+  where info = ["Ops", "SeqRead", "Read", "SeqWrite", "Write", "Sync"]
 
-noCostT    = CostT 0 0 0 0
+noCostT       = V.replicate 10 0
+opCostT       = noCostT V.// [(0,1)]
+readSeqCostT  = noCostT V.// [(1,1)]
+readParCostT  = noCostT V.// [(2,1)]
+writeSeqCostT = noCostT V.// [(3,1)]
+writeParCostT = noCostT V.// [(4,1)]
+syncCostT     = noCostT V.// [(5,1)]
 noCost = (noCostT, noCostT)
 
 type IMData = IMDataA Word32

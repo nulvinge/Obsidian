@@ -49,7 +49,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . fst . snd) im2
         imActions :: [(IMList ([String], IMData) -> IMList ([String], IMData))]
         imActions =
           [ insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
-          , insertStringsIM "Coalesce"      $ map isCoalesced.getIndicesIM
+          , insertStringsCostIM "Coalesce"      $ map isCoalesced.getIndicesIM
           , mapIM $ \(p,(e,d)) -> (e,) $ insertCost (p,d)
           , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           --, insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
@@ -60,9 +60,18 @@ insertAnalysis ins inSizes im = traverseComment (map Just . fst . snd) im2
 insertStringsIM :: String -> ((Statement ([String], t), t) -> [Maybe String])
                 -> IMList ([String], t) -> IMList ([String], t)
 insertStringsIM s f = mapIM g
-  where g (statement,(ss,cs)) = (ss ++ map ((s++": ")++)
-                                           (catMaybes (f (statement,cs)))
-                                ,cs)
+  where g (statement,(ss,d)) = (ss ++ map ((s++": ")++)
+                                          (catMaybes (f (statement,d)))
+                                ,d)
+
+insertStringsCostIM :: String
+                    -> ((Statement ([String], IMData), IMData) -> [(CostT, Maybe String)])
+                    -> IMList ([String], IMData) -> IMList ([String], IMData)
+insertStringsCostIM s f = mapIM g
+  where g (statement,(ss,cs)) = (ss ++ map ((s++": ")++) (catMaybes $ strings)
+                                ,addIMCostT cs (sumCostT costs))
+          where (costs,strings) = unzip $ f (statement,cs)
+
 
 traverseComment :: ((Statement a,a) -> [Maybe String]) -> IMList a -> IMList ()
 traverseComment f = mapDataIM (const ()) . traverseIM makeComment
