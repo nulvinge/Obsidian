@@ -49,7 +49,8 @@ insertAnalysis ins inSizes im = traverseComment (map Just . fst . snd) im2
         imActions :: [(IMList ([String], IMData) -> IMList ([String], IMData))]
         imActions =
           [ insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
-          , insertStringsCostIM "Coalesce"      $ map isCoalesced.getIndicesIM
+          , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
+          , insertStringsIM "Diverging"     $ diverges
           , mapIM $ \(p,(e,d)) -> (e,) $ insertCost (p,d)
           , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           --, insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]

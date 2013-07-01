@@ -23,11 +23,11 @@ import Data.Word
 ---------------------------------------------------------------------------
 -- seqReduce (actually reduce) 
 ---------------------------------------------------------------------------
-seqReduce :: (ASize l, MemoryOps a)
-           => (a -> a -> a)
+seqReduceTI :: (ASize l, MemoryOps a)
+           => (EWord32 -> a -> a -> TProgram a)
            -> Pull l a
            -> Push Thread l a
-seqReduce op arr =
+seqReduceTI op arr =
   Push 1 $ \wf -> 
   do
     ns <- names (valType arr)
@@ -37,12 +37,19 @@ seqReduce op arr =
  
     SeqFor (n-1) $ \ ix ->
       do
-        assignScalar ns (readFrom ns `op`  (arr ! (ix + 1)))
+        v <- (op ix (readFrom ns) (arr ! (ix + 1)))
+        assignScalar ns v
     
     wf (readFrom ns) 0 
   where 
     n = sizeConv$ len arr
     init = arr ! 0 
+
+seqReduce :: (ASize l, MemoryOps a)
+           => (a -> a -> a)
+           -> Pull l a
+           -> Push Thread l a
+seqReduce op = seqReduceTI (\i a b -> return (op a b))
 
 -- TODO: This is dangerous when array lengths are unknown! 
 

@@ -4,7 +4,7 @@
              FlexibleContexts,
              FlexibleInstances #-}
 
-module Obsidian.AddOn.Analysis.Cost (insertCost, sumCost, sumCostT, addIMCostT) where
+module Obsidian.AddOn.Analysis.Cost (insertCost, diverges, sumCost, sumCostT, addIMCostT) where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut
@@ -81,4 +81,21 @@ setCost (IMDataA l u b _ p s) c = (IMDataA l u b c p s)
 
 addIMCost d c = setCost d (getCost d `addCost` c)
 addIMCostT d c = addIMCost d (makeCost d c)
+
+diverges :: (Statement ([String], IMData), IMData) -> [Maybe String]
+diverges (SCond e ((_,(_,d2)):_), d1) =
+  if sameRange && containsThreadIdx e
+    then [Just "This condition causes divergence issues"]
+    else [Nothing]
+  where
+    warprange d = mapPair (*warpsize) (tl `div` warpsize, (th+1)`cdiv`warpsize)
+      where Just (tl,th) = getRange d (ThreadIdx X)
+    sameRange = mapPair2 (==) (warprange d1) (warprange d2) == (True,True)
+
+    containsThreadIdx :: (Scalar a) => Exp a -> Bool
+    containsThreadIdx e = or (collectExp isThreadIdx e)
+    isThreadIdx :: Exp a -> [Bool]
+    isThreadIdx (ThreadIdx X) = [True]
+    isThreadIdx _             = [False]
+diverges _ = []
 

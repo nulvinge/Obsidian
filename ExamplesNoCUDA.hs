@@ -1,4 +1,3 @@
-
 module ExamplesNoCuda where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
@@ -431,4 +430,29 @@ red3 f arr
         red3 f arr'
 
 tr5 = printAnalysis ((pConcatMap $ red5 (+)) . splitUpS 1024) (input2 :- ())
+
+err5 :: (MemoryOps a, Num a) => SPull a -> BProgram (SPush Block a)
+err5 arr = do
+  arr' <- force $ pConcatMap (return . seqReduce (+) . ixMap (+1))
+                             (splitUpS 8 arr)
+  arr'' <- force $ Push (len arr') $ \wf ->
+            ForAll (fromIntegral $ len arr') $ \i -> f (flip wf $ i) i (arr'!i)
+  err3 arr''
+  where 
+    --f :: (Num a, MemoryOps a) => Exp Word32 -> Exp a -> TProgram ()
+    f wf i a = ifThenElse ((i .&. 1) ==* 0)
+                  (wf a)
+                  (wf (-a))
+    --f i a b = ifThenElse ((i .&. 1) ==* 0) (return $ a+b) (return $ b+a)
+
+err3 :: (MemoryOps a, Num a) => SPull a -> BProgram (SPush Block a)
+err3 arr
+    | len arr == 2 = return $ push $ singleton $ (arr!0) + (arr!1)
+    | otherwise    = do
+        let (a1,a2) = evenOdds arr
+        arr' <- unsafeForce $ zipWith (+) a1 a2
+        err3 arr'
+
+te5 = printAnalysis ((pConcatMap $ err5) . splitUpS 1024) (input2 :- ())
+
 

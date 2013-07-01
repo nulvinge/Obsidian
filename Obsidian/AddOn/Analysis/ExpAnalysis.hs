@@ -29,6 +29,22 @@ instance Choice (TProgram ()) where
     Cond b e1
     Cond (notE b) e2
 
+{-
+instance (MemoryOps a) => Choice (TProgram a) where  
+  ifThenElse (Literal False) e1 e2 = e2
+  ifThenElse (Literal True)  e1 e2 = e1
+  ifThenElse b e1 e2 = do
+    ns <- names (undefined :: a)
+    allocateScalar ns 
+    Cond b $ do
+      v <- e1
+      assignScalar ns v
+    Cond (notE b) $ do
+      v <- e1
+      assignScalar ns v
+    return (readFrom ns)
+-}
+
 getNext2Powerm :: Bits a => a -> a
 getNext2Powerm v = if v == 0 then 0 else f (v-1) (bitSize v) 1
   where f v m n =

@@ -39,7 +39,7 @@ isCoalesced (n,e,rw,cs) = appendCost (isLocal n) rw $
            && stride `mod` 32 /= 0) --unnecesary since `mod`32 is already done.
         then Nothing
         else Just $ "Bank conflicts with a factor of: " ++ (show stride)
-                  ++ "gives a slowdown of about " ++ (show $ 32`cdiv`stride)
+                  -- ++ " gives a slowdown of about " ++ (show $ stride)
   where e' = simplifyMod' 32 e
         m = linerize e
         stride = fromMaybe 0 $ M.lookup (ThreadIdx X) m
@@ -77,4 +77,5 @@ simplifyMod' m = unLinerizel . map simplify . linerizel
         --sm :: Exp Word32 -> (Exp Word32)
         --sm (BinOp Div a b) = sm a `div` b
         --sm (BinOp Mod a bb@(Literal b)) = simplifyMod cs b
+
 
