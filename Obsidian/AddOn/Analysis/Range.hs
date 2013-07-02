@@ -4,7 +4,7 @@
              FlexibleContexts,
              FlexibleInstances #-}
 
-module Obsidian.AddOn.Analysis.Range (inRange, getRange) where
+module Obsidian.AddOn.Analysis.Range (inRange, getRange, getRangeM) where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut
@@ -22,7 +22,7 @@ import Data.List
 import Control.Monad
 import qualified Data.Map as M
 
-inRange :: (Num a, Ord a, Scalar a)
+inRange :: (Num a, Ord a, Scalar a, Integral a)
         => M.Map String a
         -> (String, Exp a, Bool, IMDataA a)
         -> Maybe String
@@ -46,16 +46,19 @@ inRange sizes (n,e,rw,cs) =
         range = mapPair sum $ unzip ranges
         outofrange = not (range `rangeInSize` fromJust size)
 
-getRange :: (Num a, Ord a, Scalar a) => IMDataA a -> Exp a -> Maybe (a,a)
+getRange :: (Num a, Ord a, Scalar a, Integral a)
+         => IMDataA a -> Exp a -> Maybe (Integer,Integer)
 getRange d = maybePair . getRangeM d
 
-getRangeM :: (Num a, Ord a, Scalar a) => IMDataA a -> Exp a -> (Maybe a,Maybe a)
+getRangeM :: (Num a, Ord a, Scalar a, Integral a)
+          => IMDataA a -> Exp a -> (Maybe Integer,Maybe Integer)
 getRangeM = gr'
   where
-    gr' :: (Num a, Ord a, Scalar a) => IMDataA a -> Exp a -> (Maybe a,Maybe a)
+    gr' :: (Num a, Ord a, Scalar a, Integral a)
+        => IMDataA a -> Exp a -> (Maybe Integer,Maybe Integer)
     gr' r a = mapPair2 mplus (lookupRangeM r a) (gr r a)
 
-    gr :: (Num a, Ord a, Scalar a) => IMDataA a -> Exp a -> (Maybe a,Maybe a)
+    gr :: (Num a, Ord a, Scalar a, Integral a) => IMDataA a -> Exp a -> (Maybe Integer,Maybe Integer)
     gr r (BinOp Add a b) = bop r a b $ \al ah bl bh -> (maybe2 (+) al bl,maybe2 (+) ah bh)
     gr r (BinOp Sub a b) = bop r a b $ \al ah bl bh -> (maybe2 (-) al bh,maybe2 (-) ah bl)
     gr r (BinOp Mul a b) = bop r a b $ \al ah bl bh -> (maybe2 (*) al bl,maybe2 (*) ah bh)
@@ -65,12 +68,14 @@ getRangeM = gr'
       (fmap (max 0) al,maybe2 min ah (fmap (+ (-1)) bh))
     gr r (BinOp BitwiseXor a b) = bop r a b $ \al ah bl bh -> mapPair (guard (al >= Just 0 && bl >= Just 0) >>)
       (Just 0,maybe2 max (fmap getNext2Powerm ah) (fmap getNext2Powerm bh))
-    gr r (Literal a) = (Just a,Just a)
+    gr r (Literal a) = (Just $ fromIntegral a,Just $ fromIntegral a)
     gr r a = (Nothing,Nothing)
 
-    bop :: (Num a, Ord a, Scalar a)
+    bop :: (Num a, Ord a, Scalar a, Integral a)
         => IMDataA a -> Exp a -> Exp a
-        -> (Maybe a -> Maybe a-> Maybe a -> Maybe a -> (Maybe a,Maybe a)) -> (Maybe a,Maybe a)
+        -> (Maybe Integer -> Maybe Integer -> Maybe Integer -> Maybe Integer
+          -> (Maybe Integer,Maybe Integer))
+        -> (Maybe Integer,Maybe Integer)
     bop r a b f = f al ah bl bh
       where (al,ah) = gr' r a
             (bl,bh) = gr' r b

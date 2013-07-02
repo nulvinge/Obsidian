@@ -15,6 +15,7 @@ import Obsidian.AddOn.Analysis.Helpers
 import Obsidian.AddOn.Analysis.Range
 import Obsidian.AddOn.Analysis.Coalesced
 import Obsidian.AddOn.Analysis.Cost
+import Obsidian.AddOn.Analysis.Hazards
 
 import Data.Word
 import Data.Tuple
@@ -35,43 +36,45 @@ printAnalysis p a = quickPrint (ins, sizes, insertAnalysis ins sizes im) ()
     where (ins,sizes,im) = toProgram 0 p a
 
 insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
-insertAnalysis ins inSizes im = traverseComment (map Just . fst . snd) im2
+insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) im2
                         ++ [(SComment (show $ M.assocs sizes),())]
                         ++ [(SComment ("Total cost: " ++ showCost cost),())]
   where inConstSizes = [(n,l) | (n,Left l) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
         (Left threadBudget) = numThreads im
 
-        im1, im2 :: IMList ([String], IMData)
-        im1 = mapDataIM (([],).collectIMData.snd) $ insertIMCollection threadBudget im
+        im1, im2 :: IMList IMData
+        im1 = mapDataIM (collectIMData.snd) $ insertIMCollection threadBudget im
         im2 = foldr (.) id (Prelude.reverse imActions) im1
 
-        imActions :: [(IMList ([String], IMData) -> IMList ([String], IMData))]
+        imActions :: [IMList IMData -> IMList IMData]
         imActions =
           [ insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
-          , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
+          --, insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
           , insertStringsIM "Diverging"     $ diverges
-          , mapIM $ \(p,(e,d)) -> (e,) $ insertCost (p,d)
-          , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
+          , hazardChecking
+          , mapIM $ \(p,d) -> insertCost (p,d)
+          --, insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           --, insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
           ]
 
-        cost = sumCost $ collectIM (list.getCost.snd.snd) im2
+        cost = sumCost $ collectIM (list.getCost.snd) im2
 
-insertStringsIM :: String -> ((Statement ([String], t), t) -> [Maybe String])
-                -> IMList ([String], t) -> IMList ([String], t)
+insertStringsIM :: String -> ((Statement IMData, IMData) -> [Maybe String])
+                -> IMList IMData -> IMList IMData
 insertStringsIM s f = mapIM g
-  where g (statement,(ss,d)) = (ss ++ map ((s++": ")++)
-                                          (catMaybes (f (statement,d)))
-                               ,d)
+  where g (statement,d) = addComments d $ map ((s++": ")++) $ catMaybes $ f (statement,d)
+                               
 
 insertStringsCostIM :: String
-                    -> ((Statement ([String], IMData), IMData) -> [(CostT, Maybe String)])
-                    -> IMList ([String], IMData) -> IMList ([String], IMData)
+                    -> ((Statement IMData, IMData) -> [(CostT, Maybe String)])
+                    -> IMList IMData -> IMList IMData
 insertStringsCostIM s f = mapIM g
-  where g (statement,(ss,cs)) = (ss ++ map ((s++": ")++) (catMaybes $ strings)
-                                ,addIMCostT cs (sumCostT costs))
-          where (costs,strings) = unzip $ f (statement,cs)
+  where g (statement,d0) = d2
+          where (costs,strings) = unzip $ f (statement,d0)
+                d1 = addIMCostT d0 (sumCostT costs)
+                d2 = addComments d1 $ map ((s++": ")++) $ catMaybes $ strings
+
 
 
 traverseComment :: ((Statement a,a) -> [Maybe String]) -> IMList a -> IMList ()
@@ -101,21 +104,25 @@ data IMDataCollection = CRange (Exp Word32) (Exp Word32, Exp Word32)
 type Conds = [(Exp Bool)]
 
 insertIMCollection :: Word32 -> IMList a -> IMList (a,[IMDataCollection])
-insertIMCollection bs = traverseIMacc (ins) start
+insertIMCollection bs = traverseIMaccDown (list `comp2` ins) start
   where
-    ins :: [IMDataCollection] -> (Statement a,a) -> [(Statement a,(a,[IMDataCollection]),[IMDataCollection])]
-    ins cs (SCond           e l,a) = [(SCond          e l, (a,cs), cs ++ [CCond e])]
-    ins cs (SSeqFor n       e l,a) = [(SSeqFor n      e l, (a,cs), cs ++ collRange (variable n)  e
-                                                                      ++ [CThreadConstant (variable n)]
-                                                                      ++ [CLoopSeqFactor (variable n)])]
-    ins cs (SSeqWhile       e l,a) = [(SSeqWhile      e l, (a,cs), cs ++ [CCond e]
-                                                                      ++ [CLoopSeqFactor 2])]
-    ins cs (SForAll         e l,a) = [(SForAll        e l, (a,cs), cs ++ collRange (ThreadIdx X) e)]
-                                                                      -- ++ [CLoopParFactor (ThreadIdx X)])]
-    ins cs (SForAllBlocks   e l,a) = [(SForAllBlocks  e l, (a,cs), cs ++ collRange (BlockIdx X)  e
-                                                                      ++ [CThreadConstant (BlockIdx X)]
-                                                                      ++ [CLoopParFactor (BlockIdx X)])]
-    ins cs (b,a) = [(b,(a,cs),cs)]
+    ins :: [IMDataCollection] -> (Statement a,a) -> ((Statement a,(a,[IMDataCollection])),[IMDataCollection])
+    ins cs b@(SCond         e l,a) = (mapSnd (,cs) b, cs ++ [CCond e])
+    ins cs b@(SSeqFor n     e l,a) = (mapSnd (,cs) b
+                                     ,cs ++ collRange (variable n)  e
+                                         ++ [CThreadConstant (variable n)]
+                                         ++ [CLoopSeqFactor (variable n)])
+    ins cs b@(SSeqWhile     e l,a) = (mapSnd (,cs) b
+                                     ,cs ++ [CCond e]
+                                         ++ [CLoopSeqFactor 2])
+    ins cs b@(SForAll       e l,a) = (mapSnd (,cs) b
+                                     ,cs ++ collRange (ThreadIdx X) e)
+                                         -- ++ [CLoopParFactor (ThreadIdx X)])]
+    ins cs b@(SForAllBlocks e l,a) = (mapSnd (,cs) b
+                                     ,cs ++ collRange (BlockIdx X)  e
+                                         ++ [CThreadConstant (BlockIdx X)]
+                                         ++ [CLoopParFactor (BlockIdx X)])
+    ins cs b =                       (mapSnd (,cs) b,cs)
 
     start = collRange (ThreadIdx X) (fromIntegral bs)
          ++ [CLoopParFactor (ThreadIdx X)]
@@ -123,7 +130,8 @@ insertIMCollection bs = traverseIMacc (ins) start
 
 
 collectIMData :: [IMDataCollection] -> IMData
-collectIMData dc = IMDataA (M.fromListWith min $ catMaybes uppers)
+collectIMData dc = IMDataA []
+                           (M.fromListWith min $ catMaybes uppers)
                            (M.fromListWith max $ catMaybes lowers)
                            (S.fromList $ catMaybes $ map getBlockConsts dc)
                            noCost
@@ -144,17 +152,17 @@ collectIMData dc = IMDataA (M.fromListWith min $ catMaybes uppers)
                     $ concat
                     $ map makeRange dc
 
-    makeRange :: IMDataCollection -> [(Exp Word32, (Maybe Word32, Maybe Word32))]
+    makeRange :: IMDataCollection -> [(Exp Word32, (Maybe Integer, Maybe Integer))]
     makeRange (CRange e (l,h)) = [(e, (expToMaybe $ Just l,expToMaybe $ Just h))]
-    makeRange (CCond e)     = map (\(e,(l,h)) -> (e,(l,h))) $ makeRangeE e
+    makeRange (CCond e) = map (\(e,(l,h)) -> (e,(l,h))) $ makeRangeE e
     makeRange _ = []
 
 
-    makeRangeE :: Exp Bool -> [(Exp Word32, (Maybe Word32, Maybe Word32))]
+    makeRangeE :: Exp Bool -> [(Exp Word32, (Maybe Integer, Maybe Integer))]
     makeRangeE (BinOp o a b) = makeRangeB (witness a) o a b
     makeRangeE _ = []
     makeRangeB :: Witness a -> (Op ((a,b) -> Bool)) -> Exp a -> Exp b
-               -> [(Exp Word32, (Maybe Word32, Maybe Word32))]
+               -> [(Exp Word32, (Maybe Integer, Maybe Integer))]
     makeRangeB Word32Witness Eq  a b = makeInEq (a-b)  $ \v -> (Just v, Just v)
     makeRangeB Word32Witness Lt  a b = makeInEq (a-b+1)$ \v -> (Nothing,Just v)
     makeRangeB Word32Witness LEq a b = makeInEq (a-b)  $ \v -> (Nothing,Just v)
@@ -173,13 +181,13 @@ collectIMData dc = IMDataA (M.fromListWith min $ catMaybes uppers)
 
     makeInEq :: Exp Word32
              -> (Exp Word32 -> (Maybe (Exp Word32), Maybe (Exp Word32)))
-             -> [(Exp Word32, (Maybe Word32,Maybe Word32))]
+             -> [(Exp Word32, (Maybe Integer,Maybe Integer))]
     makeInEq a f = map solToRange $ solveIneq a
       where solToRange (var,val,left) =
               if left
                 then (var,mapPair expToMaybe $        f val)
                 else (var,mapPair expToMaybe $ swap $ f val)
-    expToMaybe (Just (Literal a)) = Just a
+    expToMaybe (Just (Literal a)) = Just $ fromIntegral a
     expToMaybe _                  = Nothing
 
     solveIneq :: Exp Word32 -> [(Exp Word32, Exp Word32, Bool)]

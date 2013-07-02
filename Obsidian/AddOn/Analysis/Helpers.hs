@@ -14,6 +14,7 @@ import Obsidian
 import Data.Word
 import Data.Tuple
 import Data.Int
+import Data.List
 import Data.Maybe
 import Data.Either
 import Control.Monad
@@ -51,24 +52,27 @@ noCost = (noCostT, noCostT)
 
 type IMData = IMDataA Word32
 data IMDataA a = IMDataA
-  { getUpperMap :: M.Map (Exp a) a
-  , getLowerMap :: M.Map (Exp a) a
+  { getComments :: [String]
+  , getUpperMap :: M.Map (Exp a) Integer
+  , getLowerMap :: M.Map (Exp a) Integer
   , getBlockConstantSet :: S.Set (Exp a)
   , getCost :: Cost
   , getSeqLoopFactor :: [Exp Word32]
   , getParLoopFactor :: [Exp Word32]
   }
 
-getUpper :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Maybe a
+addComments (IMDataA ss l u b c p s) ss' = (IMDataA (ss++ss') l u b c p s)
+
+getUpper :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Maybe Integer
 getUpper d e = M.lookup e (getUpperMap d)
 
-getLower :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Maybe a
+getLower :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Maybe Integer
 getLower d e = M.lookup e (getLowerMap d)
 
-lookupRangeM :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> (Maybe a,Maybe a)
+lookupRangeM :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> (Maybe Integer,Maybe Integer)
 lookupRangeM d e = (getLower d e, getUpper d e)
 
-lookupRange :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Maybe (a,a)
+lookupRange :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Maybe (Integer,Integer)
 lookupRange d = maybePair . lookupRangeM d
 
 getBlockConstant :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Bool
@@ -80,37 +84,46 @@ quickPrint :: ToProgram prg => prg -> InputList prg -> IO ()
 quickPrint prg input =
   putStrLn $ CUDA.genKernel "kernel" prg input 
 
-linerizel :: (Num a, Ord (Exp a), Eq a) => Exp a -> [(Exp a,a)]
+linerizel :: (Num a, Ord (Exp a), Eq a, Integral a) => Exp a -> [(Exp a,Integer)]
 linerizel = M.toList . linerize
 
-linerize :: (Num a, Ord (Exp a), Eq a) => Exp a -> M.Map (Exp a) a
+linerize :: (Num a, Ord (Exp a), Eq a, Integral a) => Exp a -> M.Map (Exp a) Integer
 linerize = M.filter (/=0) . M.fromListWith (+) . linerize'
 
-linerize' :: (Num a) => Exp a -> [(Exp a,a)]
+linerize' :: (Num a, Integral a) => Exp a -> [(Exp a,Integer)]
 linerize' (BinOp Add a b) = linerize' a ++ linerize' b
 linerize' (BinOp Sub a b) = linerize' a ++ (map (\(v,n) -> (v,-n)) $ linerize' b)
-linerize' (BinOp Mul (Literal a) b) = map (\(v,n) -> (v,n*a)) $ linerize' b
-linerize' (BinOp Mul a (Literal b)) = map (\(v,n) -> (v,n*b)) $ linerize' a
-linerize' (Literal a)     = [(Literal 1,  a)]
+linerize' (BinOp Mul (Literal a) b) = map (\(v,n) -> (v,n*fromIntegral a)) $ linerize' b
+linerize' (BinOp Mul a (Literal b)) = map (\(v,n) -> (v,n*fromIntegral b)) $ linerize' a
+linerize' (Literal a)     = [(Literal 1, fromIntegral a)]
 linerize' a@(ThreadIdx X) = [(ThreadIdx X,1)]
 linerize' a@(BlockIdx X)  = [(BlockIdx X, 1)]
 linerize' a               = [(a,          1)]
 
-unLinerizel :: (Scalar a, Integral a, Num a, Ord (Exp a)) => [(Exp a,a)] -> Exp a
+unLinerizel :: (Scalar a, Integral a, Num a, Ord (Exp a)) => [(Exp a,Integer)] -> Exp a
 unLinerizel x = sum [val * fromIntegral p | (val,p) <- x, p /= 0]
 
-unLinerize :: (Scalar a, Integral a, Num a, Ord (Exp a)) => M.Map (Exp a) a -> Exp a
+unLinerize :: (Scalar a, Integral a, Num a, Ord (Exp a)) => M.Map (Exp a) Integer -> Exp a
 unLinerize = unLinerizel . M.assocs
 
 collectIndices a = map (\(_,[r]) -> r) $ collectIndex a
   where collectIndex (Index r) = [r]
         collectIndex _ = []
 
-rangeIn (ls,hs) (lb,hb) = ls >= lb && hs <= hb
+rangeIn (ls,hs) (lb,hb) = ls >= fromIntegral lb && hs <= fromIntegral hb
 rangeInSize r s = r `rangeIn` (0,s-1)
+
+
+isLocal n | "arr"    `isPrefixOf` n = True
+          | "input"  `isPrefixOf` n = False
+          | "output" `isPrefixOf` n = False
+          | otherwise = error n
 
 mapPair f (a,b) = (f a, f b)
 mapPair2 f (a1,b1) (a2,b2) = (a1 `f` a2, b1 `f` b2)
+
+mapFst f (a,b) = (f a, b)
+mapSnd f (a,b) = (a, f b)
 
 maybePair (Just a, Just b) = Just (a,b)
 maybePair _                = Nothing
@@ -126,4 +139,6 @@ warpsize :: (Num a) => a
 warpsize = 32
 
 list a = [a]
+
+comp2 a b c d = a (b c d)
 

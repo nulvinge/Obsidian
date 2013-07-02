@@ -5,6 +5,7 @@
              MultiParamTypeClasses,
              FlexibleInstances,
              TypeFamilies,
+             TupleSections,
              FlexibleContexts #-}
 
 module Obsidian.AddOn.Analysis.ExpAnalysis where
@@ -17,6 +18,7 @@ import Data.Word
 import Data.Int
 import Data.Bits
 import Data.Maybe
+import Data.List
 import Control.Monad.State
 
 import Prelude hiding (zipWith,sum,replicate)
@@ -237,8 +239,7 @@ collectIM f = concatMap (collectIM' f)
     collectIM' f a                      = f a
 
 traverseIM :: ((P.Statement a,a) -> [(P.Statement a,c)]) -> P.IMList a -> P.IMList c
-traverseIM f = traverseIMacc (\() l -> map add3 $ f l) ()
-  where add3 (a,b) = (a,b,())
+traverseIM f = traverseIMaccDown (\() l -> map (,()) $ f l) ()
 
 {-
 concatMap (traverseIM' f)
@@ -252,18 +253,18 @@ concatMap (traverseIM' f)
     traverseIM' f a = f a
 -}
 
-traverseIMacc :: (b -> (P.Statement a,a) -> [(P.Statement a,c,b)])
+traverseIMaccDown :: (b -> (P.Statement a,a) -> [((P.Statement a,c),b)])
               -> b -> P.IMList a -> P.IMList c
-traverseIMacc f acc = map g . concat . map (f acc)
+traverseIMaccDown f acc = map g . concat . map (f acc)
   where
-    g (b,c,acc') = case b of
-      (P.SCond           e l) -> (P.SCond          e (traverseIMacc f acc' l),c)
-      (P.SSeqFor n       e l) -> (P.SSeqFor n      e (traverseIMacc f acc' l),c)
-      (P.SSeqWhile       e l) -> (P.SSeqWhile      e (traverseIMacc f acc' l),c)
-      (P.SForAll         e l) -> (P.SForAll        e (traverseIMacc f acc' l),c)
-      (P.SForAllBlocks   e l) -> (P.SForAllBlocks  e (traverseIMacc f acc' l),c)
-      (P.SForAllThreads  e l) -> (P.SForAllThreads e (traverseIMacc f acc' l),c)
-      p                       -> (simpleIMmap p                              ,c)
+    g ((b,c),acc') = case b of
+      (P.SCond           e l) -> (P.SCond          e (traverseIMaccDown f acc' l),c)
+      (P.SSeqFor n       e l) -> (P.SSeqFor n      e (traverseIMaccDown f acc' l),c)
+      (P.SSeqWhile       e l) -> (P.SSeqWhile      e (traverseIMaccDown f acc' l),c)
+      (P.SForAll         e l) -> (P.SForAll        e (traverseIMaccDown f acc' l),c)
+      (P.SForAllBlocks   e l) -> (P.SForAllBlocks  e (traverseIMaccDown f acc' l),c)
+      (P.SForAllThreads  e l) -> (P.SForAllThreads e (traverseIMaccDown f acc' l),c)
+      p                       -> (simpleIMmap p                                  ,c)
 
 traverseIMaccUp :: ([b] -> (P.Statement c, a) -> ((P.Statement c, c), b))
                 -> P.IMList a -> (P.IMList c, [b])
@@ -284,6 +285,29 @@ traverseIMaccUp f = unzip . map (g f)
       -> (P.IMList c -> (P.Statement c, a))
       -> ((P.Statement c, c), b)
     h f l i = let (l',b)=unzip $ map (g f) l in f b (i l')
+
+traverseIMaccPrePost :: (((P.Statement a,a),b) -> ((P.Statement a,c),b))
+                     -> (((P.Statement d,c),b) -> ((P.Statement d,d),b))
+                     -> b -> P.IMList a -> (P.IMList d,b)
+traverseIMaccPrePost pre post b = swap . mapAccumL (curry $ swap . post . g (traverseIMaccPrePost pre post) . pre . swap) b
+  where
+    g :: (b -> P.IMList a -> (P.IMList d,b))
+      -> ((P.Statement a,c),b) -> ((P.Statement d,c),b)
+    g f ((P.SCond           e l,a),b) = h f b l $ \lt -> (P.SCond          e lt,a)
+    g f ((P.SSeqFor n       e l,a),b) = h f b l $ \lt -> (P.SSeqFor n      e lt,a)
+    g f ((P.SSeqWhile       e l,a),b) = h f b l $ \lt -> (P.SSeqWhile      e lt,a)
+    g f ((P.SForAll         e l,a),b) = h f b l $ \lt -> (P.SForAll        e lt,a)
+    g f ((P.SForAllBlocks   e l,a),b) = h f b l $ \lt -> (P.SForAllBlocks  e lt,a)
+    g f ((P.SForAllThreads  e l,a),b) = h f b l $ \lt -> (P.SForAllThreads e lt,a)
+    g f ((p,a),b) = ((simpleIMmap p,a),b)
+    h :: (b -> P.IMList a -> (P.IMList d,b)) -> b -> P.IMList a
+      -> (P.IMList d -> (P.Statement d,c)) -> ((P.Statement d,c),b)
+    h f b l j = (j p',b')
+      where (p', b') = f b l
+    swap (a,b) = (b,a)
+
+traverseIMaccDataPrePost pre post = traverseIMaccPrePost (f pre) (f post)
+  where f g a@((p,_),_) = let (d',b') = g a in ((p,d'),b')
 
 simpleIMmap :: P.Statement a -> P.Statement b
 simpleIMmap (P.SAssign n l e      ) = (P.SAssign n l e      )
@@ -358,10 +382,10 @@ traverseOnIndice _ _ a = a
 
 
 mapDataIM :: (a -> b) -> P.IMList a -> P.IMList b
-mapDataIM f = traverseIMacc g ()
-  where g () (a,b) = [(a, f b, ())]
+mapDataIM f = traverseIMaccDown g ()
+  where g () (a,b) = [((a, f b), ())]
 
 mapIM :: ((P.Statement a,a) -> b) -> P.IMList a -> P.IMList b
-mapIM f = traverseIMacc g ()
-  where g () (a,b) = [(a, f (a,b), ())]
+mapIM f = traverseIMaccDown g ()
+  where g () (a,b) = [((a, f (a,b)), ())]
 

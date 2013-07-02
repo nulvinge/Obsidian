@@ -11,6 +11,5 @@ import Data.Word
 
 type Name = String
 
-
-
 type NumThreads = Word32
+

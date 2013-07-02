@@ -436,7 +436,7 @@ err5 arr = do
   arr' <- force $ pConcatMap (return . seqReduce (+) . ixMap (+1))
                              (splitUpS 8 arr)
   arr'' <- force $ Push (len arr') $ \wf ->
-            ForAll (fromIntegral $ len arr') $ \i -> f (flip wf $ i) i (arr'!i)
+            ForAll (fromIntegral $ len arr') $ \i -> wf 0 0 >> f (flip wf $ i) i (arr'!i)
   err3 arr''
   where 
     --f :: (Num a, MemoryOps a) => Exp Word32 -> Exp a -> TProgram ()

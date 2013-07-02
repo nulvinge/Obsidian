@@ -51,10 +51,6 @@ isCoalesced (n,e,rw,cs) = appendCost (isLocal n) rw $
         isWarpConstant (BlockIdx X)  = True
         isWarpConstant a = getBlockConstant cs a
         --isWarpConstant _ = False --further analysis required, but should be good for the most obious cases
-        isLocal n | "arr"    `isPrefixOf` n = True
-                  | "input"  `isPrefixOf` n = False
-                  | "output" `isPrefixOf` n = False
-                  | otherwise = error n
         appendCost :: Bool -> Bool -> Maybe String -> (CostT, Maybe String)
         appendCost gl rw s = (accessCostT gl rw (isJust s), s)
 
@@ -73,7 +69,7 @@ maybeMod cs m v = fromMaybe (v `mod` fromIntegral m) e
 simplifyMod' :: (Num a, Ord a, Scalar a, Integral a)
             => a -> Exp a -> Exp a
 simplifyMod' m = unLinerizel . map simplify . linerizel
-  where simplify (e,v) = (e,v`mod`m) --further simplifications may be possible, as below
+  where simplify (e,v) = (e,v`mod` fromIntegral m) --further simplifications may be possible, as below
         --sm :: Exp Word32 -> (Exp Word32)
         --sm (BinOp Div a b) = sm a `div` b
         --sm (BinOp Mod a bb@(Literal b)) = simplifyMod cs b

@@ -71,19 +71,19 @@ makeCost :: IMData -> CostT -> Cost
 makeCost d c = mkCost pars (c `mulCostT` seqs)
   where seqs = product $ map range (getSeqLoopFactor d)
         pars = product $ map range (getParLoopFactor d)
-        range :: Exp Word32 -> Word32
+        range :: Exp Word32 -> Integer
         range (BlockIdx X) = 1
         range (ThreadIdx X) = warpsize * fromIntegral (((th+1) `cdiv` warpsize) - (tl `div` warpsize))
           where Just (tl,th) = getRange d (ThreadIdx X)
         range e = ((1+) . (uncurry $ flip (-)) . fromMaybe (0,8) . getRange d) e
 
-setCost (IMDataA l u b _ p s) c = (IMDataA l u b c p s)
+setCost (IMDataA ss l u b _ p s) c = (IMDataA ss l u b c p s)
 
 addIMCost d c = setCost d (getCost d `addCost` c)
 addIMCostT d c = addIMCost d (makeCost d c)
 
-diverges :: (Statement ([String], IMData), IMData) -> [Maybe String]
-diverges (SCond e ((_,(_,d2)):_), d1) =
+diverges :: (Statement IMData, IMData) -> [Maybe String]
+diverges (SCond e ((_,d2):_), d1) =
   if sameRange && containsThreadIdx e
     then [Just "This condition causes divergence issues"]
     else [Nothing]
