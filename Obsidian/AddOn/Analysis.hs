@@ -39,7 +39,8 @@ insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
 insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) imf
                         ++ [(SComment (show $ M.assocs sizes),())]
                         ++ [(SComment ("Total cost: " ++ showCost cost),())]
-                        ++ map (\s -> (SComment ("SyncDepEdges: " ++ show s),())) syncDepEdges
+                        ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdgesf
+                        ++ map (\s -> (SComment ("Accesses: " ++ show s),())) accesses
   where inConstSizes = [(n,l) | (n,Left l) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
         (Left threadBudget) = numThreads im
@@ -62,7 +63,9 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           ]
 
         cost = sumCost $ collectIM (list.getCost.snd) imf
-        syncDepEdges = makeFlowDepEdges im2
+        accesses = concat $ map getAccessesIM instructions
+        depEdges1 = makeFlowDepEdges im2
+        depEdgesf = eliminateDepEdges accesses depEdges1
 
 insertStringsIM :: String -> ((Statement IMData, IMData) -> [Maybe String])
                 -> IMList IMData -> IMList IMData
@@ -201,17 +204,16 @@ collectIMData dc = IMDataA []
             --solves p*e+a <> 0 => e <> -a/p
             move p a = (-(unLinerize a)) `div` fromIntegral (abs p)
 
-instructunNumbering :: ((Statement IMData, IMData), [(Statement (),IMData)])
-                    -> (IMData, [(Statement (),IMData)])
+instructunNumbering :: ((Statement IMData, IMData), [(Statement IMData,IMData)])
+                    -> (IMData, [(Statement IMData,IMData)])
 instructunNumbering ((p,d),il) =
   case shouldCount of
     Just p' -> let d' = setInstruction d (length il)
                in (d', il++[(p',d')])
     Nothing -> (d,il)
-  where shouldCount :: Maybe (Statement ())
+  where shouldCount :: Maybe (Statement IMData)
         shouldCount = case p of
             SAssign n l e -> Just $ SAssign n l e
             SSynchronize  -> Just SSynchronize
             _             -> Nothing
-
 

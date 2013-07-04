@@ -9,6 +9,8 @@ module Obsidian.AddOn.Analysis.Helpers where
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut
 import Obsidian.CodeGen.Program
+import Obsidian.Globs
+import Obsidian.AddOn.Analysis.ExpAnalysis
 import Obsidian
 
 import Data.Word
@@ -60,6 +62,9 @@ data IMDataA a = IMDataA
   , getLoops :: [(Exp Word32, Bool)]
   , getInstruction :: Int
   }
+
+instance Show (IMDataA a) where
+  show _ = "IMData"
 
 addComments    (IMDataA ss l u b c loop i) ss' = (IMDataA (ss++ss') l u b c loop i)
 setCost        (IMDataA ss l u b _ loop i) c   = (IMDataA ss l u b c loop i)
@@ -117,6 +122,16 @@ unLinerize = unLinerizel . M.assocs
 collectIndices a = map (\(_,[r]) -> r) $ collectIndex a
   where collectIndex (Index r) = [r]
         collectIndex _ = []
+
+type Access = (Name, Exp Word32, Bool, IMData, (Int,Int))
+getAccessesIM :: (Statement IMData, IMData) -> [Access]
+getAccessesIM (p,d) = map g
+                    $ zip [0..]
+                    $ Data.List.reverse --makes reads come before writes
+                    $ getIndicesIM (p,d)
+  where g (i,(n,e,l,d)) = (n,e,l,d,(getInstruction d,i))
+
+
 
 rangeIn (ls,hs) (lb,hb) = ls >= fromIntegral lb && hs <= fromIntegral hb
 rangeIntersect (ls,hs) (lb,hb) = not $ hs < lb || hb < ls
