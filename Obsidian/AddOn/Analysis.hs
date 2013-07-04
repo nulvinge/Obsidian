@@ -98,8 +98,8 @@ t0 = printAnalysis (pushGrid 32 . fmap (+1). ixMap (+5)) (input1 :- ())
 data IMDataCollection = CRange (Exp Word32) (Exp Word32, Exp Word32)
                       | CCond  (Exp Bool)
                       | CThreadConstant (Exp Word32) --more advanced analysis needed here
-                      | CLoopSeqFactor (Exp Word32)
-                      | CLoopParFactor (Exp Word32)
+                      | CLoopSeq (Exp Word32)
+                      | CLoopPar (Exp Word32)
 
 type Conds = [(Exp Bool)]
 
@@ -111,21 +111,21 @@ insertIMCollection bs = traverseIMaccDown (list `comp2` ins) start
     ins cs b@(SSeqFor n     e l,a) = (mapSnd (,cs) b
                                      ,cs ++ collRange (variable n)  e
                                          ++ [CThreadConstant (variable n)]
-                                         ++ [CLoopSeqFactor (variable n)])
-    ins cs b@(SSeqWhile     e l,a) = (mapSnd (,cs) b
-                                     ,cs ++ [CCond e]
-                                         ++ [CLoopSeqFactor 2])
+                                         ++ [CLoopSeq (variable n)])
+    --ins cs b@(SSeqWhile     e l,a) = (mapSnd (,cs) b
+    --                                 ,cs ++ [CCond e]
+    --                                     ++ [CLoopSeq 2])
     ins cs b@(SForAll       e l,a) = (mapSnd (,cs) b
-                                     ,cs ++ collRange (ThreadIdx X) e)
-                                         -- ++ [CLoopParFactor (ThreadIdx X)])]
+                                     ,cs ++ collRange (ThreadIdx X) e
+                                         ++ [CLoopPar (ThreadIdx X)])
     ins cs b@(SForAllBlocks e l,a) = (mapSnd (,cs) b
                                      ,cs ++ collRange (BlockIdx X)  e
                                          ++ [CThreadConstant (BlockIdx X)]
-                                         ++ [CLoopParFactor (BlockIdx X)])
+                                         ++ [CLoopPar (BlockIdx X)])
     ins cs b =                       (mapSnd (,cs) b,cs)
 
     start = collRange (ThreadIdx X) (fromIntegral bs)
-         ++ [CLoopParFactor (ThreadIdx X)]
+         -- ++ [CLoopPar (ThreadIdx X)]
     collRange v e = [CRange v (0,e-1)]
 
 
@@ -135,15 +135,14 @@ collectIMData dc = IMDataA []
                            (M.fromListWith max $ catMaybes lowers)
                            (S.fromList $ catMaybes $ map getBlockConsts dc)
                            noCost
-                           seqs
-                           pars
+                           loops
   where
     getBlockConsts (CThreadConstant e) = Just e
     getBlockConsts _                   = Nothing
 
-    (seqs,pars) = partitionEithers $ catMaybes $ map getLoopFactors dc
-    getLoopFactors (CLoopSeqFactor e) = Just $ Left  e
-    getLoopFactors (CLoopParFactor e) = Just $ Right e
+    loops = catMaybes $ map getLoopFactors dc
+    getLoopFactors (CLoopSeq e) = Just $ (e,False)
+    getLoopFactors (CLoopPar e) = Just $ (e,True)
     getLoopFactors _                  = Nothing
 
     (lowers,uppers) = unzip

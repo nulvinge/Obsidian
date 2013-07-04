@@ -57,11 +57,10 @@ data IMDataA a = IMDataA
   , getLowerMap :: M.Map (Exp a) Integer
   , getBlockConstantSet :: S.Set (Exp a)
   , getCost :: Cost
-  , getSeqLoopFactor :: [Exp Word32]
-  , getParLoopFactor :: [Exp Word32]
+  , getLoops :: [(Exp Word32, Bool)]
   }
 
-addComments (IMDataA ss l u b c p s) ss' = (IMDataA (ss++ss') l u b c p s)
+addComments (IMDataA ss l u b c loop) ss' = (IMDataA (ss++ss') l u b c loop)
 
 getUpper :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Maybe Integer
 getUpper d e = M.lookup e (getUpperMap d)
@@ -77,6 +76,10 @@ lookupRange d = maybePair . lookupRangeM d
 
 getBlockConstant :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Bool
 getBlockConstant d e = S.member e (getBlockConstantSet d)
+
+getSeqLoops, getParLoops :: IMData -> [Exp Word32]
+getSeqLoops = map fst . filter ((==False).snd) . getLoops
+getParLoops = map fst . filter ((==True ).snd) . getLoops
 
 strace a = trace (show a) a
 
@@ -111,6 +114,7 @@ collectIndices a = map (\(_,[r]) -> r) $ collectIndex a
         collectIndex _ = []
 
 rangeIn (ls,hs) (lb,hb) = ls >= fromIntegral lb && hs <= fromIntegral hb
+rangeIntersect (ls,hs) (lb,hb) = not $ hs < lb || hb < ls
 rangeInSize r s = r `rangeIn` (0,s-1)
 
 
@@ -141,4 +145,11 @@ warpsize = 32
 list a = [a]
 
 comp2 a b c d = a (b c d)
+
+partitionMaybes :: (a -> Maybe b) -> [a] -> ([b],[a])
+partitionMaybes p = partitionEithers . map g
+  where g a = case p a of
+                Nothing -> Right a
+                Just b  -> Left  b
+
 

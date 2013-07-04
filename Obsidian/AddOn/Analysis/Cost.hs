@@ -69,15 +69,15 @@ seqCost (d,w) c t = (d `addCostT` c
 
 makeCost :: IMData -> CostT -> Cost
 makeCost d c = mkCost pars (c `mulCostT` seqs)
-  where seqs = product $ map range (getSeqLoopFactor d)
-        pars = product $ map range (getParLoopFactor d)
+  where seqs = product $ map range (getSeqLoops d)
+        pars = product $ map range (getParLoops d)
         range :: Exp Word32 -> Integer
         range (BlockIdx X) = 1
         range (ThreadIdx X) = warpsize * fromIntegral (((th+1) `cdiv` warpsize) - (tl `div` warpsize))
           where Just (tl,th) = getRange d (ThreadIdx X)
         range e = ((1+) . (uncurry $ flip (-)) . fromMaybe (0,8) . getRange d) e
 
-setCost (IMDataA ss l u b _ p s) c = (IMDataA ss l u b c p s)
+setCost (IMDataA ss l u b _ loop) c = (IMDataA ss l u b c loop)
 
 addIMCost d c = setCost d (getCost d `addCost` c)
 addIMCostT d c = addIMCost d (makeCost d c)
