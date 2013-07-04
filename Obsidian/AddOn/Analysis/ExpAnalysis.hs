@@ -309,6 +309,9 @@ traverseIMaccPrePost pre post b = swap . mapAccumL (curry $ swap . post . g (tra
 traverseIMaccDataPrePost pre post = traverseIMaccPrePost (f pre) (f post)
   where f g a@((p,_),_) = let (d',b') = g a in ((p,d'),b')
 
+traverseIMaccDataPre pre = traverseIMaccPrePost (f pre) id
+  where f g a@((p,_),_) = let (d',b') = g a in ((p,d'),b')
+
 simpleIMmap :: P.Statement a -> P.Statement b
 simpleIMmap (P.SAssign n l e      ) = (P.SAssign n l e      )
 simpleIMmap (P.SAtomicOp n1 n2 e a) = (P.SAtomicOp n1 n2 e a)

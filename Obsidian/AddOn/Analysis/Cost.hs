@@ -77,8 +77,6 @@ makeCost d c = mkCost pars (c `mulCostT` seqs)
           where Just (tl,th) = getRange d (ThreadIdx X)
         range e = ((1+) . (uncurry $ flip (-)) . fromMaybe (0,8) . getRange d) e
 
-setCost (IMDataA ss l u b _ loop) c = (IMDataA ss l u b c loop)
-
 addIMCost d c = setCost d (getCost d `addCost` c)
 addIMCostT d c = addIMCost d (makeCost d c)
 

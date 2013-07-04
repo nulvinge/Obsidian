@@ -36,29 +36,33 @@ printAnalysis p a = quickPrint (ins, sizes, insertAnalysis ins sizes im) ()
     where (ins,sizes,im) = toProgram 0 p a
 
 insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
-insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) im2
+insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) imf
                         ++ [(SComment (show $ M.assocs sizes),())]
                         ++ [(SComment ("Total cost: " ++ showCost cost),())]
+                        ++ map (\s -> (SComment ("SyncDepEdges: " ++ show s),())) syncDepEdges
   where inConstSizes = [(n,l) | (n,Left l) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
         (Left threadBudget) = numThreads im
 
-        im1, im2 :: IMList IMData
+        im1, im2, imf :: IMList IMData
         im1 = mapDataIM (collectIMData.snd) $ insertIMCollection threadBudget im
-        im2 = foldr (.) id (Prelude.reverse imActions) im1
+        (im2,instructions) = traverseIMaccDataPre instructunNumbering [] im1
+        imf = foldr (.) id (Prelude.reverse imActions) im2
 
         imActions :: [IMList IMData -> IMList IMData]
         imActions =
           [ insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
-          --, insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
+          , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
           , insertStringsIM "Diverging"     $ diverges
+          , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>0) . Just . getInstruction . snd
           , hazardChecking
           , mapIM $ \(p,d) -> insertCost (p,d)
           --, insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           --, insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
           ]
 
-        cost = sumCost $ collectIM (list.getCost.snd) im2
+        cost = sumCost $ collectIM (list.getCost.snd) imf
+        syncDepEdges = makeFlowDepEdges im2
 
 insertStringsIM :: String -> ((Statement IMData, IMData) -> [Maybe String])
                 -> IMList IMData -> IMList IMData
@@ -136,6 +140,7 @@ collectIMData dc = IMDataA []
                            (S.fromList $ catMaybes $ map getBlockConsts dc)
                            noCost
                            loops
+                           (-1)
   where
     getBlockConsts (CThreadConstant e) = Just e
     getBlockConsts _                   = Nothing
@@ -195,4 +200,18 @@ collectIMData dc = IMDataA []
       where m = linerize x
             --solves p*e+a <> 0 => e <> -a/p
             move p a = (-(unLinerize a)) `div` fromIntegral (abs p)
+
+instructunNumbering :: ((Statement IMData, IMData), [(Statement (),IMData)])
+                    -> (IMData, [(Statement (),IMData)])
+instructunNumbering ((p,d),il) =
+  case shouldCount of
+    Just p' -> let d' = setInstruction d (length il)
+               in (d', il++[(p',d')])
+    Nothing -> (d,il)
+  where shouldCount :: Maybe (Statement ())
+        shouldCount = case p of
+            SAssign n l e -> Just $ SAssign n l e
+            SSynchronize  -> Just SSynchronize
+            _             -> Nothing
+
 

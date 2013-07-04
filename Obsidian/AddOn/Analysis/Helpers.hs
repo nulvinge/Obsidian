@@ -58,9 +58,14 @@ data IMDataA a = IMDataA
   , getBlockConstantSet :: S.Set (Exp a)
   , getCost :: Cost
   , getLoops :: [(Exp Word32, Bool)]
+  , getInstruction :: Int
   }
 
-addComments (IMDataA ss l u b c loop) ss' = (IMDataA (ss++ss') l u b c loop)
+addComments    (IMDataA ss l u b c loop i) ss' = (IMDataA (ss++ss') l u b c loop i)
+setCost        (IMDataA ss l u b _ loop i) c   = (IMDataA ss l u b c loop i)
+setInstruction (IMDataA ss l u b c loop _) i   = (IMDataA ss l u b c loop i)
+
+
 
 getUpper :: (Ord a, Scalar a) => IMDataA a -> (Exp a) -> Maybe Integer
 getUpper d e = M.lookup e (getUpperMap d)

@@ -5,7 +5,7 @@
              TupleSections,
              FlexibleInstances #-}
 
-module Obsidian.AddOn.Analysis.Hazards (hazardChecking) where
+module Obsidian.AddOn.Analysis.Hazards (hazardChecking, makeFlowDepEdges) where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut
@@ -66,7 +66,7 @@ hasHazard same local aa@(an,a,arw,ad) ba@(bn,b,brw,bd)
   | otherwise = Just $ loc sameTBGroup
                     ++ show (same,local,arw,a,brw,b,mds) -- getRange ad ae `rangeIntersects` getRange bd be
       where mds = aa `diffs` ba
-            (d0,ds) = trace (show (a,b)) $ strace $ fromJust mds
+            (d0,ds) = fromJust mds
             sameThread = sameGroup (ThreadIdx X)
             sameBlock  = sameGroup (BlockIdx  X)
             sameTBGroup = sameThread && (local || sameBlock)
@@ -128,4 +128,51 @@ gcdTest a = d >= 1 && a0 `mod` d /= 0
     (lins,factors) = partition ((==1).fst) $ linerizel a
     a0 = case lins of [] -> 0; [(_,a)] -> -a
     d = if factors == [] then 0 else foldr1 gcd $ map snd factors
+
+
+type DepEdge = (Int,Int,DepEdgeType, [Exp Bool])
+data DepEdgeType = SyncDepEdge
+                 | WarpDepEdge
+                 | BlockDepEdge
+                 | ThreadDepEdge
+                 | DataDep
+  deriving (Show,Eq)
+
+makeFlowDepEdges :: IMList IMData -> [DepEdge]
+makeFlowDepEdges = nub . (\(_,(_,_,globs,a)) -> processGlobals globs ++ a) . traverseIMaccDataPrePost pre post ([],[],[],[])
+  where
+    pre :: ((Statement IMData, IMData), ([Access], [Access], [Access], [DepEdge]))
+        -> (IMData, ([Access], [Access], [Access], [DepEdge]))
+    pre ((SSynchronize, d),(loc,prevloc,glob,edges)) = (d,([],prevloc++loc,glob,edges))
+    pre ((p,d),            (loc,prevloc,glob,edges)) = (d,
+        (loc++local,prevloc,glob++global,edges++newedges))
+      where (local,global) = partition (isLocal. \(n,_,_,_)->n) $ getIndicesIM (p,d)
+            newedges = concat $ [makeEdges True True  (a,b) | a <- local, b <- prevloc]
+                             ++ [makeEdges True False (a,b) | a <- local, b <- loc]
+    post ((p, d),(loc,prevloc,glob,edges)) = (d,(loc,prevloc,glob,edges))
+    processGlobals = concat . map (makeEdges False False) . combinations
+
+makeEdges local nosync (aa@(na,a,arw,ad),ba@(nb,b,brw,bd))
+  | na /= nb   = [] --different arrays
+  | arw && brw = [] --read read
+  | otherwise  =
+        [(getInstruction ad, getInstruction bd, DataDep, [])]
+     ++(if not (local && nosync) then []
+          else [(getInstruction ad, getInstruction bd, SyncDepEdge, [])]
+    )++(if not sameThread || not sameTBGroup then []
+          else [(getInstruction ad, getInstruction bd, ThreadDepEdge, [])]
+    )++(if not (aa `sameWarp` ba) || not sameTBGroup then []
+          else [(getInstruction ad, getInstruction bd, WarpDepEdge, [])]
+    )++(if not sameBlock then []
+          else [(getInstruction ad, getInstruction bd, BlockDepEdge, [])]
+    )
+  where mds = aa `diffs` ba
+        (d0,ds) = fromJust mds
+        sameThread = sameGroup (ThreadIdx X)
+        sameBlock  = sameGroup (BlockIdx  X)
+        sameTBGroup = sameThread && (local || sameBlock)
+        sameGroup e = isJust mds && d0 == 0 &&
+                    (  (af == bf && af /= 0)
+                    || (getRange ad e == Just (0,0)))
+          where (_,af,bf) = fromMaybe (undefined,0,0) $ lookup e ds
 
