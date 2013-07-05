@@ -57,6 +57,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , insertStringsIM "Diverging"     $ diverges
           , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>0) . Just . getInstruction . snd
           , insertStringsIM "Hazards"       $ insertHazards accesses depEdgesF
+          , insertStringsIM "Unnessary sync"$ unneccessarySyncs accesses depEdgesF
           , mapIM $ \(p,d) -> insertCost (p,d)
           --, insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           --, insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]

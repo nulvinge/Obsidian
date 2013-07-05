@@ -5,7 +5,11 @@
              TupleSections,
              FlexibleInstances #-}
 
-module Obsidian.AddOn.Analysis.Hazards (insertHazards, makeFlowDepEdges, eliminateDepEdges)  where
+module Obsidian.AddOn.Analysis.Hazards
+  (insertHazards
+  ,makeFlowDepEdges
+  ,eliminateDepEdges
+  ,unneccessarySyncs)  where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut
@@ -70,6 +74,7 @@ warprange d = mapPair (*warpsize) (tl `div` warpsize, (th+1)`cdiv`warpsize)
   where Just (tl,th) = getRange d (ThreadIdx X)
 sameWarpRange d1 d2 = mapPair2 (==) (warprange d1) (warprange d2) == (True,True)
 
+--should be extended a lot
 banerjee aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) = maybe False (0>) h
                                                 || maybe False (>0) l
   where
@@ -209,4 +214,35 @@ insertHazards accesses edges (p,d) = map hazardEdge
             loc _                    = ""
             same = ai == bi
             local = isLocal an && isLocal bn
+
+
+unneccessarySyncs :: [Access] -> [DepEdge] -> (Statement IMData,IMData) -> [Maybe String]
+unneccessarySyncs accesses edges (SSynchronize,d) =
+  if (not $ any makesNeccessary edges)
+    then [Just ""]
+    else []
+  where
+    i = getInstruction d
+    aMap = M.fromList $ map (\a@(_,_,_,_,i) -> (i,a)) accesses
+    makesNeccessary (a'@(ai',_),b'@(bi',_),t,c)
+      | not $ ai' > i && bi' < i = False
+      | not same && (sameThread || aa `sameWarp` ba) = False
+      | otherwise = True
+      where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' aMap
+            ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' aMap
+
+            mds = aa `diffs` ba
+            (d0,ds) = fromJust mds
+            sameThread = sameGroup (ThreadIdx X)
+            sameBlock  = sameGroup (BlockIdx  X)
+            sameTBGroup = sameThread && (local || sameBlock)
+            sameGroup e = isJust mds && d0 == 0 &&
+                        (  (af == bf && af /= 0)
+                        || (getRange ad e == Just (0,0)))
+              where (_,af,bf) = fromMaybe (undefined,0,0) $ lookup e ds
+            same = ai == bi
+            local = isLocal an && isLocal bn
+unneccessarySyncs _ _ _ = []
+
+
 
