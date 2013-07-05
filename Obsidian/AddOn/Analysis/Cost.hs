@@ -70,7 +70,7 @@ seqCost (d,w) c t = (d `addCostT` c
 makeCost :: IMData -> CostT -> Cost
 makeCost d c = mkCost pars (c `mulCostT` seqs)
   where seqs = product $ map range (getSeqLoops d)
-        pars = product $ map range (getParLoops d)
+        pars = product $ map range (nub $ (ThreadIdx X) : getParLoops d)
         range :: Exp Word32 -> Integer
         range (BlockIdx X) = 1
         range (ThreadIdx X) = warpsize * fromIntegral (((th+1) `cdiv` warpsize) - (tl `div` warpsize))

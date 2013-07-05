@@ -37,7 +37,7 @@ printAnalysis p a = quickPrint (ins, sizes, insertAnalysis ins sizes im) ()
 
 insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
 insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) imF
-                        ++ [(SComment (show $ M.assocs sizes),())]
+                        -- ++ [(SComment (show $ M.assocs sizes),())]
                         ++ [(SComment ("Total cost: " ++ showCost cost),())]
                         -- ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdgesF
                         -- ++ map (\s -> (SComment ("Accesses: " ++ show s),())) accesses
@@ -59,8 +59,8 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , insertStringsIM "Hazards"       $ insertHazards accesses depEdgesF
           , insertStringsIM "Unnessary sync"$ unneccessarySyncs accesses depEdgesF
           , mapIM $ \(p,d) -> insertCost (p,d)
-          --, insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
-          --, insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
+          , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
+          -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
           ]
 
         cost = sumCost $ collectIM (list.getCost.snd) imF
