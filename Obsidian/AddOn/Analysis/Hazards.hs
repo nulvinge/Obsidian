@@ -5,7 +5,7 @@
              TupleSections,
              FlexibleInstances #-}
 
-module Obsidian.AddOn.Analysis.Hazards (hazardChecking, makeFlowDepEdges, eliminateDepEdges)  where
+module Obsidian.AddOn.Analysis.Hazards (insertHazards, makeFlowDepEdges, eliminateDepEdges)  where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut
@@ -26,25 +26,6 @@ import Control.Monad
 import qualified Data.Map as M
 import Debug.Trace
 
-hazardChecking :: IMList IMData -> IMList IMData
-hazardChecking = fst . traverseIMaccDataPrePost pre post ([],[])
-
-pre :: ((Statement IMData, IMData), ([Access], [Access]))
-    -> (IMData, ([Access], [Access]))
-pre ((SSynchronize, d),(loc,glob)) = (d,([],glob))
-pre ((p,d),            (loc,glob)) = (addComments d comments, (loc++local,glob++global))
-  where (local,global) = partition (isLocal. \(n,_,_,_,_)->n) $ getAccessesIM (p,d)
-        localCombs  = map (\a -> (a,a)) local  ++ listProduct local  loc  ++ combinations local
-        globalCombs = map (\a -> (a,a)) global ++ listProduct global glob ++ combinations global
-        comments = getHazards local loc True
-                ++ getHazards global glob False
-        getHazards current before t = catMaybes
-          $ map (\a -> hasHazard True t a a) current
-         ++ map (uncurry $ hasHazard False t)
-                (listProduct current before ++ combinations local)
-
-post ((p, d),(loc,glob)) = (d,(loc,glob))
-
 listProduct :: [a] -> [b] -> [(a,b)]
 listProduct la lb = [(a,b) | a <- la, b <- lb]
 combinations :: [a] -> [(a,a)]
@@ -52,8 +33,8 @@ combinations l = concat $ map (\(i,ll) -> map (i,) ll) $ zip l (prefixes l)
 prefixes :: [a] -> [[a]]
 prefixes l = map (`L.take` l) $ L.take (length l) [0..]
 
-hasHazard :: Bool -> Bool -> Access -> Access -> Maybe String
-hasHazard same local aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
+isIndependent :: Access -> Access -> Maybe String
+isIndependent aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
   | an /= bn                     = Nothing --different arrays
   | arw && brw                   = Nothing --read read
   -- | isJust d && fromJust d /= 0 = Nothing --banerjee
@@ -75,6 +56,8 @@ hasHazard same local aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
             loc True                 = "same thread dependence "
             loc _ | aa `sameWarp` ba = "same warp dependence   "
             loc _                    = ""
+            same = ai == bi
+            local = isLocal an && isLocal bn
 
 sameWarp :: Access -> Access -> Bool
 sameWarp aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
@@ -96,29 +79,30 @@ banerjee aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) = maybe False (0>) h
 
 diffs aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) = do
   guard $ getLoops ad == getLoops bd
-  (a0,afs) <- getFactors ad a
-  (b0,bfs) <- getFactors bd b
-  return (a0-b0
+  (c0,afs,bfs) <- getFactors2 aa ba
+  return (c0
          , map (\((e,sp,a),(_,_,b)) -> (e,(sp,a,b))) $ zip afs bfs)
 
-  where
-    m = M.filter (==0) $ M.unionWith (+) (linerize a) (linerize (-b))
-    fromExp (Literal a) = Just a
-    fromExp _           = Nothing
+getFactors2 :: Access -> Access -> Maybe (Integer, [(Exp Word32,Bool,Integer)], [(Exp Word32,Bool,Integer)])
+getFactors2 aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) = do
+    guard $ 0 == (M.size $ linerize $ unLinerizel a0v - unLinerizel b0v)
+    return (a0-b0,af,bf)
+  where (a0,af,a0v) = getFactors ad a
+        (b0,bf,b0v) = getFactors bd b
+        isConst e = getBlockConstant ad e && getBlockConstant bd e
 
-    getFactors :: IMData -> Exp Word32 -> Maybe (Integer, [(Exp Word32,Bool,Integer)])
-    getFactors d e = do
-        guard $ nonLoopConst == []
-        return $ (sum consts, factors)
-      where e' = linerize e
-            factors = map (\(f,ps) -> (f,ps,M.findWithDefault 0 f e')) $ getLoops d
-            (consts,nonconsts) = partitionMaybes (\(k,n) -> liftM (n*) $ getConst k)
-                               $ M.toList e'
-            nonLoopConst       = filter (\(k,_) -> not $ any ((==k).fst) $ getLoops d) nonconsts
-            getConst a = do
-              (l,h) <- getRange d a
-              guard $ l==h
-              Just l
+
+getFactors :: IMData -> Exp Word32 -> (Integer, [(Exp Word32,Bool,Integer)], [(Exp Word32,Integer)])
+getFactors d e = (sum consts, factors, nonLoopConst)
+  where e' = linerize e
+        factors = map (\(f,ps) -> (f,ps,M.findWithDefault 0 f e')) $ getLoops d
+        (consts,nonconsts) = partitionMaybes (\(k,n) -> liftM (n*) $ getConst k)
+                            $ M.toList e'
+        nonLoopConst       = filter (\(k,_) -> not $ any ((==k).fst) $ getLoops d) nonconsts
+        getConst a = do
+          (l,h) <- getRange d a
+          guard $ l==h
+          Just l
 
 gcdTest :: Exp Word32 -> Bool
 gcdTest a = d >= 1 && a0 `mod` d /= 0
@@ -170,12 +154,13 @@ makeEdges conds local nosync (aa@(an,a,arw,ad,ai),ba@(bn,b,brw,bd,bi))
   | otherwise  = [(ai, bi, [DataDep $ map (DAny,) $ getLoops ad], conds)]
        ++(if not (local && nosync) then []
             else [(ai, bi, [SyncDepEdge], conds)]
-      )++(if not (sameThread && sameTBGroup) then []
+      {- )++(if not (sameThread && sameTBGroup) then []
             else [(ai, bi, [ThreadDepEdge], conds)]
       )++(if sameThread || not (aa `sameWarp` ba && not sameTBGroup) then []
             else [(ai, bi, [WarpDepEdge], conds)]
       )++(if not sameBlock then []
             else [(ai, bi, [BlockDepEdge], conds)]
+      -}
       )
   where mds = aa `diffs` ba
         (d0,ds) = fromJust mds
@@ -188,15 +173,40 @@ makeEdges conds local nosync (aa@(an,a,arw,ad,ai),ba@(bn,b,brw,bd,bi))
           where (_,af,bf) = fromMaybe (undefined,0,0) $ lookup e ds
 
 eliminateDepEdges :: [Access] -> [DepEdge] -> [DepEdge]
-eliminateDepEdges accesses edges = map tryEdge edges
+eliminateDepEdges accesses edges = catMaybes $ map tryEdge edges
   where
     aMap = M.fromList $ map (\a@(_,_,_,_,i) -> (i,a)) accesses
-    tryEdge (a',b',t,c) = (a',b',tryEdge' (a',b',t,c),c)
-    tryEdge' (a',b',t,c) =
-      if isJust (hasHazard (isLocal an) (ai==bi) aa ba)
-        then t
-        else []
+    tryEdge (a',b',t,c) = if isJust (isIndependent aa ba)
+        then Just (a',b',t,c)
+        else Nothing
       where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' aMap
             ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' aMap
 
+insertHazards :: [Access] -> [DepEdge] -> (Statement IMData,IMData) -> [Maybe String]
+insertHazards accesses edges (p,d) = map hazardEdge
+                                   $ filter (\((i,_),_,_,_) -> i == getInstruction d)
+                                   $ edges
+  where
+    aMap = M.fromList $ map (\a@(_,_,_,_,i) -> (i,a)) accesses
+    hazardEdge (a',b',t,c)
+      | elem SyncDepEdge t && local = Nothing
+      | not same && (sameThread || aa `sameWarp` ba) = Nothing
+      | otherwise = Just $ "with " ++ show b' ++ loc sameThread
+      where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' aMap
+            ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' aMap
+
+            mds = aa `diffs` ba
+            (d0,ds) = fromJust mds
+            sameThread = sameGroup (ThreadIdx X)
+            sameBlock  = sameGroup (BlockIdx  X)
+            sameTBGroup = sameThread && (local || sameBlock)
+            sameGroup e = isJust mds && d0 == 0 &&
+                        (  (af == bf && af /= 0)
+                        || (getRange ad e == Just (0,0)))
+              where (_,af,bf) = fromMaybe (undefined,0,0) $ lookup e ds
+            loc True                 = ": same thread dependence"
+            loc _ | aa `sameWarp` ba = ": same warp dependence"
+            loc _                    = ""
+            same = ai == bi
+            local = isLocal an && isLocal bn
 

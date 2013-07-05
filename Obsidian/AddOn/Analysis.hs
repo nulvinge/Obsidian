@@ -36,19 +36,19 @@ printAnalysis p a = quickPrint (ins, sizes, insertAnalysis ins sizes im) ()
     where (ins,sizes,im) = toProgram 0 p a
 
 insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
-insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) imf
+insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) imF
                         ++ [(SComment (show $ M.assocs sizes),())]
                         ++ [(SComment ("Total cost: " ++ showCost cost),())]
-                        ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdgesf
-                        ++ map (\s -> (SComment ("Accesses: " ++ show s),())) accesses
+                        -- ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdgesF
+                        -- ++ map (\s -> (SComment ("Accesses: " ++ show s),())) accesses
   where inConstSizes = [(n,l) | (n,Left l) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
         (Left threadBudget) = numThreads im
 
-        im1, im2, imf :: IMList IMData
+        im1, im2, imF :: IMList IMData
         im1 = mapDataIM (collectIMData.snd) $ insertIMCollection threadBudget im
         (im2,instructions) = traverseIMaccDataPre instructunNumbering [] im1
-        imf = foldr (.) id (Prelude.reverse imActions) im2
+        imF = foldr (.) id (Prelude.reverse imActions) im2
 
         imActions :: [IMList IMData -> IMList IMData]
         imActions =
@@ -56,16 +56,16 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
           , insertStringsIM "Diverging"     $ diverges
           , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>0) . Just . getInstruction . snd
-          , hazardChecking
+          , insertStringsIM "Hazards"       $ insertHazards accesses depEdgesF
           , mapIM $ \(p,d) -> insertCost (p,d)
           --, insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           --, insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
           ]
 
-        cost = sumCost $ collectIM (list.getCost.snd) imf
+        cost = sumCost $ collectIM (list.getCost.snd) imF
         accesses = concat $ map getAccessesIM instructions
         depEdges1 = makeFlowDepEdges im2
-        depEdgesf = eliminateDepEdges accesses depEdges1
+        depEdgesF = eliminateDepEdges accesses depEdges1
 
 insertStringsIM :: String -> ((Statement IMData, IMData) -> [Maybe String])
                 -> IMList IMData -> IMList IMData
