@@ -9,6 +9,8 @@ import Obsidian.CodeGen.PP
 
 import Data.Word
 import Data.Int
+import Data.Bits
+import Numeric
 
 import qualified Data.List as L
 import qualified Data.Map as M
@@ -245,17 +247,25 @@ ppCTypedName ppc (CArray [] t) nom = ppCType ppc t >> space >> line nom >> line 
 ppCTypedName ppc (CQualified q t) nom = ppCQual ppc q >> space >> ppCTypedName ppc t nom 
 
 ----------------------------------------------------------------------------
-ppValue (IntVal i)    = line$ show i
-ppValue (Int8Val i)   = line$ show i
-ppValue (Int16Val i)  = line$ show i
-ppValue (Int32Val i)  = line$ show i
-ppValue (Int64Val i)  = line$ show i
-ppValue (FloatVal f)  = line$ show f ++ "f"  
-ppValue (DoubleVal d) = line$ show d
-ppValue (Word8Val  w) = line$ show w 
-ppValue (Word16Val w) = line$ show w
-ppValue (Word32Val w) = line$ show w
-ppValue (Word64Val w) = line$ show w 
+ppValue (IntVal i)    = line$ showi i
+ppValue (Int8Val i)   = line$ showi i
+ppValue (Int16Val i)  = line$ showi i
+ppValue (Int32Val i)  = line$ showi i
+ppValue (Int64Val i)  = line$ showi i
+ppValue (FloatVal f)  = line$ show  f ++ "f"  
+ppValue (DoubleVal d) = line$ show  d
+ppValue (Word8Val  w) = line$ showi w 
+ppValue (Word16Val w) = line$ showi w
+ppValue (Word32Val w) = line$ showi w
+ppValue (Word64Val w) = line$ showi w 
+
+showi 0 = "0"
+showi a | 1 >= popCount (complement a)     = "~0x" ++ showHex (complement a) ""
+showi a | 1 >= popCount (complement (a+1)) = "~0x" ++ showHex (complement a) ""
+showi a | 1 >= popCount (1+complement a)   = "~0x" ++ showHex (complement a) ""
+showi a | 1 >= popCount a && a>1024        =  "0x" ++ showHex a ""
+showi a | 1 >= popCount (a+1)              =  "0x" ++ showHex a ""
+showi a = show a
 
 ----------------------------------------------------------------------------
 ppBinOp CAdd = line$ "+"

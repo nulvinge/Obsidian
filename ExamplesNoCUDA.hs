@@ -580,16 +580,20 @@ phase :: Choice a
       => Int -> (a -> a -> a) -> SPull a -> SPush Block a
 phase i f arr =
   Push l $ \wf -> ForAll s12 $ \tid -> do
-    let ix1 = tid .&. (bit i) .|. (tid .&. (complement $ bit i) `shiftL` 1)  -- iinsertZero i tid
+    let ix1 = tid .&. (bit i -1) .|. (tid .&. (complement $ bit i - 1) `shiftL` 1)  -- iinsertZero i tid
         ix2 = complementBit ix1 i
         ix3 = ix2 .&. (complement $ bit i - 1) -- - 1
 
-        i0 = (tid `mod` (bit i))
+    let i0 = (tid `mod` (bit i))
         i3 = (tid - i0)
         i1 = i0 + i3
-        i2 = complementBit ix1 i
+        i2 = complementBit i1 i
+
     wf (arr ! ix1) ix1
     wf (f (arr ! ix3) (arr ! ix2)) ix2
+
+    --wf (arr ! i1) i1
+    --wf (f (arr ! i3) (arr ! i2)) i2
   where
     l = len arr
     l2 = l `div` 2
