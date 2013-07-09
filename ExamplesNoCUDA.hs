@@ -486,6 +486,11 @@ tr5 = printAnalysis ((pConcatMap $ red5 (+)) . splitUpS 1024) (input2 :- ())
 tr6 = printAnalysis ((pConcatMap $ red6 (+)) . splitUpS 1024) (input2 :- ())
 tr7 = printAnalysis ((pConcatMap $ red7 (+)) . splitUpS 1024) (input2 :- ())
 
+or4 = printPrg $ do
+  let a@(Push n p) = (pConcatMap $ red4 (+)) $ splitUpS 1024 input2
+  output <- outputArray a
+  p (\a ix -> assignArray output a ix)
+
 err5 :: (MemoryOps a, Num a) => SPull a -> BProgram (SPush Block a)
 err5 arr = do
   arr' <- force $ pConcatMap (return . seqReduce (+) . ixMap (+1))

@@ -73,11 +73,21 @@ data Statement t =
 compileStep1 :: Compile t => P.Program t a -> IM
 compileStep1 p = snd $ compile ns p
   where
-    ns = unsafePerformIO$ newEnumSupply
+    ns = unsafePerformIO$ do
+      a <- newEnumSupply
+      b <- newEnumSupply
+      return (a,b)
 
+type VarSupply = (Supply Int, Supply Int)
+
+supplyVar    (a,b) = supplyValue a
+supplyOutput (a,b) = supplyValue b
+supplySplit (a,b) = ((a1,b1),(a2,b2))
+  where (a1,a2) = split2 a
+        (b1,b2) = split2 b
 
 class Compile t where
-  compile :: Supply Int -> P.Program t a -> (a,IM)
+  compile :: VarSupply -> P.Program t a -> (a,IM)
 
 -- Compile Thread program 
 instance Compile Zero  where 
@@ -103,15 +113,15 @@ instance Compile (Step (Step (Zero))) where
 ---------------------------------------------------------------------------
 -- General compilation
 ---------------------------------------------------------------------------
-cs :: Compile t => Supply Int -> P.Program t a -> (a,IM) 
-cs i P.Identifier = (supplyValue i, [])
+cs :: Compile t => VarSupply -> P.Program t a -> (a,IM) 
+cs i P.Identifier = (supplyVar i, [])
 
 cs i (P.Assign name ix e) =
   ((),out (SAssign name ix e))
  
 cs i (P.AtomicOp name ix at) = (v,out im)
   where 
-    nom = "a" ++ show (supplyValue i)
+    nom = "a" ++ show (supplyVar i)
     v = variable nom
     im = SAtomicOp nom name ix at
       
@@ -120,8 +130,8 @@ cs i (P.Cond bexp p) = ((),out (SCond bexp im))
 
 cs i (P.SeqFor n f) = (a,out (SSeqFor nom n im))
   where
-    (i1,i2) = split2 i
-    nom = "i" ++ show (supplyValue i1)
+    (i1,i2) = supplySplit i
+    nom = "i" ++ show (supplyVar i1)
     v = variable nom
     p = f v
     (a,im) = compile i2 p
@@ -149,14 +159,14 @@ cs i (P.Declare  id t)   = ((),out (SDeclare id t))
 -- Output works in a different way! (FIX THIS!)
 --  Uniformity! (Allocate Declare Output) 
 cs i (P.Output   t)      = (nom,out (SOutput nom t))
-  where nom = "output" ++ show (supplyValue i) 
+  where nom = "output" ++ show (supplyOutput i) 
 cs i (P.Sync)            = ((),out (SSynchronize))
 cs i (P.Comment c)       = ((),out (SComment c))
 
 
 cs i (P.Bind p f) = (b,im1 ++ im2) 
   where
-    (s1,s2) = split2 i
+    (s1,s2) = supplySplit i
     (a,im1) = compile s1 p
     (b,im2) = compile s2 (f a)
 

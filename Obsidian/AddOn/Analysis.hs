@@ -43,6 +43,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
                         ++ [(SComment ("Total cost: " ++ showCost cost),())]
                         -- ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdgesF
                         -- ++ map (\s -> (SComment ("Accesses: " ++ show s),())) accesses
+                        -- ++ [(SComment $ show $ getOutputs im,())]
   where (inScalars,inConstSizes) = mapFst (map fst)
                                  $ partition ((==0).snd)
                                    [(n,l) | (n,Left l) <- inSizes]
@@ -50,6 +51,8 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
         threadBudget = case numThreads im of
           Left tb -> tb
           Right tb -> error ("nonconstant threadbudget: " ++ show tb)
+
+        outs = error $ show $ getOutputs im
 
         im1, im2, imF :: IMList IMData
         im1 = mapDataIM (collectIMData.snd) $ insertIMCollection threadBudget inScalars im
