@@ -33,7 +33,7 @@ isCoalesced (n,e,rw,cs) = appendCost (isLocal n) rw $
     else if stride == 0 --broadcast
          || stride == 1 --coalesced
       then if nonConstantsAll /= []
-        then Just $ "The following variables are not warp constant: " ++ (show nonConstants)
+        then Just $ "The following variables are not warp constant: " ++ (show nonConstantsAll)
         else Nothing
       else if (32 `mod` stride /= 0 --different banks
            && stride `mod` 32 /= 0) --unnecesary since `mod`32 is already done.
@@ -46,10 +46,16 @@ isCoalesced (n,e,rw,cs) = appendCost (isLocal n) rw $
         nonConstants = filter (not.isWarpConstant) $ M.keys $ linerize e'
         nonConstantsAll = filter (not.isWarpConstant) $ M.keys $ linerize e
 
-        isWarpConstant (Literal a)   = True
-        isWarpConstant (ThreadIdx X) = True --handled above with stride
-        isWarpConstant (BlockIdx X)  = True
-        isWarpConstant a = getBlockConstant cs a
+        isWarpConstant :: Scalar a => Exp a -> Bool
+        isWarpConstant = and . collectExp f
+          where f :: Scalar a => Exp a -> [Bool]
+                f = (map (\a -> isWarpConstant' (witness a) a) . getLeaves)
+
+        isWarpConstant' :: Witness a -> Exp a -> Bool
+        isWarpConstant' _ (Literal a)   = True
+        isWarpConstant' _ (ThreadIdx X) = True --handled above with stride
+        isWarpConstant' _ (BlockIdx X)  = True
+        isWarpConstant' Word32Witness a = getBlockConstant cs a
         --isWarpConstant _ = False --further analysis required, but should be good for the most obious cases
         appendCost :: Bool -> Bool -> Maybe String -> (CostT, Maybe String)
         appendCost gl rw s = (accessCostT gl rw (isJust s), s)

@@ -329,7 +329,7 @@ instance Bits (Exp Int) where
   bitSize a  = sizeOf a * 8
   isSigned a = True
 
-  bit  = error "bit: is undefined for Exp Int"
+  bit  = Literal . bit
   testBit = error "testBit: is undefined for Exp Int"
   popCount = error "popCoint: is undefined for Exp Int"
 
@@ -368,7 +368,7 @@ instance Bits (Exp Int32) where
   bitSize a  = 32 -- sizeeOf a * 8
   isSigned a = True
 
-  bit  = error "bit: is undefined for Exp Int32"
+  bit  = Literal . bit
   testBit = error "testBit: is undefined for Exp Int32"
   popCount = error "popCoint: is undefined for Exp Int32"
 
@@ -417,7 +417,7 @@ instance Bits (Exp Word32) where
   bitSize a  = 32
   isSigned a = False
 
-  bit  = error "bit: is undefined for Exp Word32"
+  bit  = Literal . bit
   testBit = error "testBit: is undefined for Exp Word32"
   popCount = error "popCoint: is undefined for Exp Word32"
 
@@ -529,6 +529,7 @@ instance (Scalar a, Integral a) => Integral (Exp a) where
   mod (Literal a) (Literal b) = Literal (a `mod` b) 
   mod a b = BinOp Mod a b
   div _ (Literal 0) = error "Division by zero in expression" 
+  div (Literal a) (Literal b) = Literal (a `div` b)
   div a b@(Literal 1) = a
   div a b = BinOp Div a b
   quotRem = error "quotRem: not implemented for Exp a" 

@@ -91,7 +91,7 @@ force arr = unsafeWrite arr >>= idSync
 
 
 unsafeForce :: MemoryOps a => SPull a -> BProgram (SPull a) 
-unsafeForce arr | len arr < 32 = unsafeWrite arr 
+unsafeForce arr | len arr <= 32 = unsafeWrite arr 
 unsafeForce arr = force arr
 
 write :: (Array p, Write p, MemoryOps a) =>  p Word32 a -> BProgram (Pull Word32 a)

@@ -409,14 +409,27 @@ convToPush arr =
     n = len arr                             
 
 
-red5 :: MemoryOps a
+red1 :: MemoryOps a
      => (a -> a -> a)
      -> SPull a
      -> BProgram (SPush Block a)
-red5 f arr = do
-    arr' <- force $ pConcatMap (return . seqReduce f)
-                               (coalesce 8 arr)
-    red3 f arr'
+red1 f arr
+    | len arr == 1 = return $ push arr
+    | otherwise    = do
+        let (a1,a2) = evenOdds arr
+        arr' <- unsafeForce $ zipWith f a1 a2
+        red1 f arr'
+
+red2 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> BProgram (SPush Block a)
+red2 f arr
+    | len arr == 1 = return $ push arr
+    | otherwise    = do
+        let (a1,a2) = halve arr
+        arr' <- unsafeForce $ zipWith f a1 a2
+        red2 f arr'
 
 red3 :: MemoryOps a
      => (a -> a -> a)
@@ -429,7 +442,49 @@ red3 f arr
         arr' <- unsafeForce $ zipWith f a1 a2
         red3 f arr'
 
+red4 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> BProgram (SPush Block a)
+red4 f arr = do
+    arr' <- force $ pConcatMap (return . seqReduce f)
+                               (splitUpS 8 arr)
+    red3 f arr'
+
+red5 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> BProgram (SPush Block a)
+red5 f arr = do
+    arr' <- force $ pConcatMap (return . seqReduce f)
+                               (coalesce 8 arr)
+    red3 f arr'
+
+red6 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> BProgram (SPush Block a)
+red6 f arr = do
+    arr' <- force $ pConcatMap (return . seqReduce f)
+                               (coalesce 16 arr)
+    red3 f arr'
+
+red7 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> BProgram (SPush Block a)
+red7 f arr = do
+    arr' <- force $ pConcatMap (return . seqReduce f)
+                               (coalesce 32 arr)
+    red3 f arr'
+
+tr1 = printAnalysis ((pConcatMap $ red1 (+)) . splitUpS 1024) (input2 :- ())
+tr2 = printAnalysis ((pConcatMap $ red2 (+)) . splitUpS 1024) (input2 :- ())
+tr3 = printAnalysis ((pConcatMap $ red3 (+)) . splitUpS 1024) (input2 :- ())
+tr4 = printAnalysis ((pConcatMap $ red4 (+)) . splitUpS 1024) (input2 :- ())
 tr5 = printAnalysis ((pConcatMap $ red5 (+)) . splitUpS 1024) (input2 :- ())
+tr6 = printAnalysis ((pConcatMap $ red6 (+)) . splitUpS 1024) (input2 :- ())
+tr7 = printAnalysis ((pConcatMap $ red7 (+)) . splitUpS 1024) (input2 :- ())
 
 err5 :: (MemoryOps a, Num a) => SPull a -> BProgram (SPush Block a)
 err5 arr = do
@@ -455,4 +510,112 @@ err3 arr
 
 te5 = printAnalysis ((pConcatMap $ err5) . splitUpS 1024) (input2 :- ())
 
+reverseL :: SPull a -> BProgram (SPush Block a)
+reverseL = liftM push . return . Obsidian.reverse
+
+
+reverseL' :: MemoryOps a => SPull a -> BProgram (SPush Block a)
+reverseL' = liftM push . force . Obsidian.reverse
+
+reverses :: DPull a -> DPush Grid a
+reverses = pConcatMap reverseL . splitUp 256
+
+largeReverse :: DPull a -> DPush Grid a
+largeReverse = pConcat . Obsidian.reverse . pMap reverseL . splitUp 256
+
+trevl  = printAnalysis ((pConcatMap $ reverseL)  . splitUpS 1024) (input2 :- ())
+trevl' = printAnalysis ((pConcatMap $ reverseL') . splitUpS 1024) (input2 :- ())
+trevs  = printAnalysis reverses (input1 :- ())
+trevL  = printAnalysis largeReverse (input1 :- ())
+
+mandel :: Push Grid Word32 EWord8
+mandel = genRect 512 512 iters
+  where
+    xmax =  1.2 :: EFloat
+    xmin = -2.0 :: EFloat
+    ymax =  1.2 :: EFloat
+    ymin = -1.2 :: EFloat
+
+    deltaP = (xmax - xmin) / 512.0
+    deltaQ = (ymax - ymin) / 512.0
+
+    f bid tid (x,y,iter) =
+        (x*x - y*y + (xmin + (w32ToF tid) * deltaP)
+        ,2*x*y + (ymax - (w32ToF bid) * deltaQ)
+        ,iter+1)
+
+    cond (x,y,iter) = ((x*x + y*y) <* 4) &&* iter <* 512
+
+    iters :: EWord32 -> EWord32 -> TProgram (SPush Thread EWord8)
+    iters bid tid = return $ fmap extract $ seqUntil (f bid tid) cond (0,0,1)
+    extract (_,_,c) = ((w32ToW8 c) `mod` 16) * 16
+
+    genRect bs ts p = generate bs (return . generate ts . p)
+
+tm0 = printAnalysis mandel ()
+
+sklansky :: (Choice a, MemoryOps a)
+         => Int -> (a -> a -> a) -> SPull a -> BProgram (SPush Block a)
+sklansky 0 op arr = return $ push arr
+sklansky n op arr = do
+  let arr1 = binSplit (n-1) (fan op) arr
+  arr2 <- force arr1
+  sklansky (n-1) op arr2
+
+  where
+    fan :: Choice a
+        => (a -> a -> a) -> SPull a -> SPull a
+    fan op arr = a1 `conc` fmap (op c) a2
+      where (a1,a2) = halve arr
+            c = a1 ! fromIntegral (len a1-1)
+
+ts1 = printAnalysis ((pConcatMap $ sklansky 10 (+)) . splitUpS 1024) (input2 :- ())
+
+phase :: Choice a
+      => Int -> (a -> a -> a) -> SPull a -> SPush Block a
+phase i f arr =
+  Push l $ \wf -> ForAll s12 $ \tid -> do
+    let ix1 = tid .&. (bit i) .|. (tid .&. (complement $ bit i) `shiftL` 1)  -- iinsertZero i tid
+        ix2 = complementBit ix1 i
+        ix3 = ix2 .&. (complement $ bit i - 1) - 1
+    wf (arr ! ix1) ix1
+    wf (f (arr ! ix3) (arr ! ix2)) ix2
+  where
+    l = len arr
+    l2 = l `div` 2
+    s12 = sizeConv l2
+
+
+compose :: MemoryOps a
+        => [SPull a -> SPush Block a]
+        -> SPull a -> BProgram (SPush Block a)
+compose [f] arr    = return $ f arr
+compose (f:fs) arr = do
+  arr2 <- force $ f arr
+  compose fs arr2
+
+
+sklansky2 :: (Choice a, MemoryOps a)
+          => Int -> (a -> a -> a) -> SPull a -> BProgram (SPush Block a)
+sklansky2 n op = compose [phase i op | i <- [0..(n-1)]]
+
+ts2 = printAnalysis ((pConcatMap $ sklansky2 10 (+)) . splitUpS 1024) (input2 :- ())
+
+sklansky3 :: (Choice a, MemoryOps a)
+          => Int -> (a -> a -> a) -> SPull a -> BProgram (SPush Block a)
+sklansky3 n op arr = do
+  im <- force $ load 2 arr
+  compose [phase i op | i <- [0..(n-1)]] im
+
+ts3 = printAnalysis ((pConcatMap $ sklansky3 10 (+)) . splitUpS 1024) (input2 :- ())
+
+load :: ASize l => Word32 -> Pull l a -> Push Block l a 
+load n arr =
+  Push m $ \wf ->
+    forAll (sizeConv n') $ \tid ->
+      seqFor (fromIntegral n) $ \ix -> 
+        wf (arr ! (tid + (ix*n'))) (tid + (ix*n')) 
+  where
+    m = len arr
+    n' = sizeConv m `div` fromIntegral n
 

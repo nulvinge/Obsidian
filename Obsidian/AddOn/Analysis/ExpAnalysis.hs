@@ -169,8 +169,8 @@ traverseExp f d a = f d a
 -}
 
 class TraverseExp a where
-  collectExp :: (forall e. Exp e -> [b]) -> a -> [b]
-  traverseExp :: (forall e. Exp e -> Exp e) -> a -> a
+  collectExp :: (forall e. Scalar e => Exp e -> [b]) -> a -> [b]
+  traverseExp :: (forall e. Scalar e => Exp e -> Exp e) -> a -> a
 
 instance (Scalar a) => TraverseExp (Exp a) where
   collectExp f e@(BinOp op a b) = f e ++ collectExp f a ++ collectExp f b
@@ -383,6 +383,11 @@ traverseOnIndice :: Names -> (Exp Word32 -> Exp Word32) -> Exp a -> Exp a
 traverseOnIndice nn f (Index (n,[r])) | n `inNames` nn = Index (n,[f r])
 traverseOnIndice _ _ a = a
 
+getLeaves a@(Literal _)   = [a]
+getLeaves a@(WarpSize)    = [a]
+getLeaves a@(BlockIdx _)  = [a]
+getLeaves a@(ThreadIdx _) = [a]
+getLeaves _               = []
 
 mapDataIM :: (a -> b) -> P.IMList a -> P.IMList b
 mapDataIM f = traverseIMaccDown g ()

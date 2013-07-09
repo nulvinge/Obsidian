@@ -87,6 +87,7 @@ instance (MemoryOps a, MemoryOps b, MemoryOps c) => MemoryOps (a, b, c) where
   assignScalar (Tuple [ns1,ns2,ns3]) (a,b,c) = do
     assignScalar ns1 a
     assignScalar ns2 b 
+    assignScalar ns3 c 
   pullFrom (Tuple [ns1,ns2,ns3]) n =
     let p1 = pullFrom ns1 n
         p2 = pullFrom ns2 n

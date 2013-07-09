@@ -256,10 +256,10 @@ numThreads im = foldl maxCheck (Left 0) $ map process im
     process (SForAllThreads n im,_) = Right (variable "UNKNOWN") --fix this!
     process a = Left 0 -- ok ? 
 
-    maxCheck (Left a) (Right b)  = Right $ max (fromIntegral a) b
-    maxCheck (Right a) (Left b)  = Right $ max a (fromIntegral b)
+    maxCheck (Left a) (Right b)  = Right $ maxE (fromIntegral a) b
+    maxCheck (Right a) (Left b)  = Right $ maxE a (fromIntegral b)
     maxCheck (Left a) (Left  b)  = Left  $ max a b
-    maxCheck (Right a) (Right b) = Right $ max a b
+    maxCheck (Right a) (Right b) = Right $ maxE a b
 
 
 getOutputs :: IMList a -> [(Name,Type)]

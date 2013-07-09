@@ -10,6 +10,7 @@ module Obsidian.AddOn.Analysis (insertAnalysis, printAnalysis) where
 --import qualified Obsidian.CodeGen.Program as P
 import Obsidian.CodeGen.Program
 import Obsidian
+import Obsidian.Globs
 import Obsidian.AddOn.Analysis.ExpAnalysis
 import Obsidian.AddOn.Analysis.Helpers
 import Obsidian.AddOn.Analysis.Range
@@ -20,6 +21,7 @@ import Obsidian.AddOn.Analysis.Hazards
 import Data.Word
 import Data.Tuple
 import Data.Int
+import Data.List
 import Data.Maybe
 import Data.Either
 import Control.Monad
@@ -41,13 +43,17 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
                         ++ [(SComment ("Total cost: " ++ showCost cost),())]
                         -- ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdgesF
                         -- ++ map (\s -> (SComment ("Accesses: " ++ show s),())) accesses
-  where inConstSizes = [(n,l) | (n,Left l) <- inSizes]
+  where (inScalars,inConstSizes) = mapFst (map fst)
+                                 $ partition ((==0).snd)
+                                   [(n,l) | (n,Left l) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
-        (Left threadBudget) = numThreads im
+        threadBudget = case numThreads im of
+          Left tb -> tb
+          Right tb -> error ("nonconstant threadbudget: " ++ show tb)
 
         im1, im2, imF :: IMList IMData
-        im1 = mapDataIM (collectIMData.snd) $ insertIMCollection threadBudget im
-        (im2,instructions) = traverseIMaccDataPre instructunNumbering [] im1
+        im1 = mapDataIM (collectIMData.snd) $ insertIMCollection threadBudget inScalars im
+        (im2,instructions) = traverseIMaccDataPre instructionNumbering [] im1
         imF = foldr (.) id (Prelude.reverse imActions) im2
 
         imActions :: [IMList IMData -> IMList IMData]
@@ -55,11 +61,11 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           [ insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
           , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
           , insertStringsIM "Diverging"     $ diverges
-          , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>0) . Just . getInstruction . snd
+          -- , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>0) . Just . getInstruction . snd
           , insertStringsIM "Hazards"       $ insertHazards accesses depEdgesF
           , insertStringsIM "Unnessary sync"$ unneccessarySyncs accesses depEdgesF
           , mapIM $ \(p,d) -> insertCost (p,d)
-          , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
+          -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
           ]
 
@@ -111,8 +117,8 @@ data IMDataCollection = CRange (Exp Word32) (Exp Word32, Exp Word32)
 
 type Conds = [(Exp Bool)]
 
-insertIMCollection :: Word32 -> IMList a -> IMList (a,[IMDataCollection])
-insertIMCollection bs = traverseIMaccDown (list `comp2` ins) start
+insertIMCollection :: Word32 -> [Name] -> IMList a -> IMList (a,[IMDataCollection])
+insertIMCollection bs inScalars = traverseIMaccDown (list `comp2` ins) start
   where
     ins :: [IMDataCollection] -> (Statement a,a) -> ((Statement a,(a,[IMDataCollection])),[IMDataCollection])
     ins cs b@(SCond         e l,a) = (mapSnd (,cs) b, cs ++ [CCond e])
@@ -134,6 +140,7 @@ insertIMCollection bs = traverseIMaccDown (list `comp2` ins) start
 
     start = collRange (ThreadIdx X) (fromIntegral bs)
          -- ++ [CLoopPar (ThreadIdx X)]
+         ++ map (CThreadConstant . variable) inScalars
     collRange v e = [CRange v (0,e-1)]
 
 
@@ -205,9 +212,9 @@ collectIMData dc = IMDataA []
             --solves p*e+a <> 0 => e <> -a/p
             move p a = (-(unLinerize a)) `div` fromIntegral (abs p)
 
-instructunNumbering :: ((Statement IMData, IMData), [(Statement IMData,IMData)])
-                    -> (IMData, [(Statement IMData,IMData)])
-instructunNumbering ((p,d),il) =
+instructionNumbering :: ((Statement IMData, IMData), [(Statement IMData,IMData)])
+                     -> (IMData, [(Statement IMData,IMData)])
+instructionNumbering ((p,d),il) =
   case shouldCount of
     Just p' -> let d' = setInstruction d (length il)
                in (d', il++[(p',d')])

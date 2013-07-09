@@ -76,7 +76,7 @@ instance (MemoryOps a) => GetTypes (Pull Word32 a) where
 
 instance (MemoryOps a) => GetTypes (Pull (Exp Word32) a) where
   getTypes a name = ((namen, Word32) : typesArray names
-                    ,map (\n -> (n,sizeEither $ nvar)) (getNames names)
+                    ,(namen,Left 0) : map (\n -> (n,sizeEither $ nvar)) (getNames names)
                     ,pullFrom names nvar)
       where namen = name ++ "n"
             nvar = variable namen
@@ -84,10 +84,9 @@ instance (MemoryOps a) => GetTypes (Pull (Exp Word32) a) where
 
 instance (Scalar a) => GetTypes (Exp a) where
   getTypes a name = (typesScalar names
-                    ,[]
+                    ,map (\n -> (n,Left 0)) (getNames names)
                     ,readFrom names)
-      where namen = name ++ "n"
-            names = createNames a name
+      where names = createNames a name
 
 instance (GetTypes a, GetTypes b) => GetTypes (a,b) where
   getTypes a name = (i1++i2,s1++s2, (a,b))
@@ -107,7 +106,7 @@ instance (MemoryOps a, ASize l) => ToProgram (Push Grid l a) where
             p (\a ix -> assignArray output a ix)
           --small hack, presumes there are no other outputs
           sizes = map (\n -> (n,sizeEither $ len a))
-                $ getNames $ createNames (valType a) "output1"
+                $ getNames $ createNames (valType a) "output0"
 
 instance (GetTypes a, ToProgram b) => ToProgram (a -> b) where
   toProgram i f (a :- rest) = (ins ++ types, s1 ++ s2, prg)

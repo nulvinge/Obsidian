@@ -70,7 +70,9 @@ genKernel name kernel a = proto ++ ts ++ cuda
     (m,mm) = mmIM lc sharedMem Map.empty
              
     -- What if its Right ??? (I DONT KNOW!) 
-    (Left threadBudget) = numThreads im
+    threadBudget = case numThreads im of
+      Left tb -> tb
+      Right tb -> error ("nonconstant threadbudget: " ++ show tb)
     ts = "/* number of threads needed " ++ show threadBudget ++ "*/\n"
 
     spmd = imToSPMDC threadBudget im
