@@ -19,6 +19,7 @@ import Data.Int
 import Data.Maybe
 import Data.Either
 import Data.List
+import Data.Bits
 import Control.Monad
 import qualified Data.Map as M
 
@@ -66,10 +67,22 @@ getRangeM = gr'
       (maybe2 div al bh, maybe2 div ah bl)
     gr r (BinOp Mod a b) = bop r a b $ \al ah bl bh -> mapPair (guard (bl==bh) >>)
       (fmap (max 0) al,maybe2 min ah (fmap (+ (-1)) bh))
-    gr r (BinOp BitwiseXor a b) = bop r a b $ \al ah bl bh -> mapPair (guard (al >= Just 0 && bl >= Just 0) >>)
-      (Just 0,maybe2 max (fmap getNext2Powerm ah) (fmap getNext2Powerm bh))
+    gr r (BinOp BitwiseXor a b) = bop r a b $ \al ah bl bh -> mFilPos al bl $
+      (Just 0,maybe2 max (getN2P a ah) (getN2P b bh))
+    gr r (BinOp BitwiseOr a b)  = bop r a b $ \al ah bl bh -> mFilPos al bl $
+      (maybe2 max al bl,maybe2 max (getN2P a ah) (getN2P b bh))
+    gr r (BinOp BitwiseAnd a b) = bop r a b $ \al ah bl bh -> mFilPos al bl $
+      (maybe2 min al bl,maybe2 min ah bh)
     gr r (Literal a) = (Just $ fromIntegral a,Just $ fromIntegral a)
     gr r a = (Nothing,Nothing)
+
+    getN2P :: (Num a, Scalar a, Integral a, Bits a) => Exp a -> Maybe Integer -> Maybe Integer
+    getN2P e a = do
+      b <- a
+      let c = fromInteger b
+          d = Literal c + e
+      return $ toInteger $ getNext2Powerm c
+    mFilPos al bl = mapPair (guard (al >= Just 0 && bl >= Just 0) >>)
 
     bop :: (Num a, Ord a, Scalar a, Integral a)
         => IMDataA a -> Exp a -> Exp a

@@ -582,7 +582,12 @@ phase i f arr =
   Push l $ \wf -> ForAll s12 $ \tid -> do
     let ix1 = tid .&. (bit i) .|. (tid .&. (complement $ bit i) `shiftL` 1)  -- iinsertZero i tid
         ix2 = complementBit ix1 i
-        ix3 = ix2 .&. (complement $ bit i - 1) - 1
+        ix3 = ix2 .&. (complement $ bit i - 1) -- - 1
+
+        i0 = (tid `mod` (bit i))
+        i3 = (tid - i0)
+        i1 = i0 + i3
+        i2 = complementBit ix1 i
     wf (arr ! ix1) ix1
     wf (f (arr ! ix3) (arr ! ix2)) ix2
   where
