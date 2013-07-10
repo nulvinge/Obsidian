@@ -2,7 +2,7 @@
              GADTs
              #-}
 
-module Inplace where
+module Obsidian.Inplace where
 
 import Obsidian.Program
 import Obsidian.Exp
@@ -12,6 +12,7 @@ import Obsidian.Memory
 import Obsidian.Force
 import Obsidian.Atomic
 import Obsidian.Types
+import Obsidian
 import Data.Word
 
 --------------------------------------------------------------------------
@@ -43,8 +44,8 @@ mkInplace s = do
   allocateArray snames s
   return $ inplace s snames
 
-writeInplace :: (Pushable p, Array p, MemoryOps a)
-             => p Word32 a -> BProgram (Inplace Word32 a)
+writeInplace :: (MemoryOps a)
+             => Push Block Word32 a -> BProgram (Inplace Word32 a)
 writeInplace a = do
   (p,ns) <- nameWrite a
   return $ inplace (len a) ns
@@ -54,32 +55,32 @@ forceInplace a = writeInplace a >>= idSync
 pullInplace :: Inplace s a -> Pull s a
 pullInplace (Inplace s w r) = Pull s r
 
-inplaceWrite :: (Pushable p, Array p, ASize s, MemoryOps a)
-             => Inplace s a -> p s a -> Program Block ()
+inplaceWrite :: (ASize s, MemoryOps a)
+             => Inplace s a -> Push Block s a -> Program Block ()
 inplaceWrite (Inplace s w r) arr | s == len arr = do
-  let (Push m p) = push Block arr
+  let (Push m p) = arr
   p (\a i -> w i a >> return ())
   return ()
 
 inplaceForce i arr = inplaceWrite i arr >>= idSync
 
-nameWrite :: forall a p. (Array p, Pushable p, MemoryOps a)
-          => p Word32 a -> BProgram (Pull Word32 a, Names)
+nameWrite :: (MemoryOps a)
+          => Push Block Word32 a -> BProgram (Pull Word32 a, Names)
 nameWrite arr = do
-  snames <- names (undefined :: a)
+  snames <- names (valType arr)
   let n = len arr
   allocateArray snames n
-  let (Push m p) = push Block arr
+  let (Push m p) = arr
   p (assignArray snames)
   return $ (pullFrom snames n, snames)
 
-nameInplaceWrite :: forall a p. (Array p, Pushable p, MemoryOps a)
-          => p Word32 a -> BProgram (Inplace Word32 a, Names)
+nameInplaceWrite :: (MemoryOps a)
+          => Push Block Word32 a -> BProgram (Inplace Word32 a, Names)
 nameInplaceWrite arr = do
-  snames <- names (undefined :: a)
+  snames <- names (valType arr)
   let n = len arr
   allocateArray snames n
-  let (Push m p) = push Block arr
+  let (Push m p) = arr
   p (assignArray snames)
   return $ (inplace n snames, snames)
 
@@ -89,8 +90,8 @@ inplaceAtomic f s ns =
   let Pull s' r = (pullFrom ns s)
   in Inplace s (\i a -> (atomicArray ns i f) >> return ()) r
 
-writeInplaceAtomic :: (Pushable p, Array p, Scalar a)
-    => Atomic a -> p Word32 (Exp a) -> BProgram (Inplace Word32 (Exp a))
+writeInplaceAtomic :: (Scalar a)
+    => Atomic a -> Push Block Word32 (Exp a) -> BProgram (Inplace Word32 (Exp a))
 writeInplaceAtomic f a = do
   (p,ns) <- nameWrite a
   return $ inplaceAtomic f (len a) ns
@@ -101,6 +102,14 @@ forceInplaceAtomic f a = writeInplaceAtomic f a >>= idSync
 -- APush
 --------------------------------------------------------------------------
 
+pusha :: (ASize l, ASize l2) => l -> l2
+      -> ((EWord32 -> a -> TProgram ()) -> EWord32 -> Program t ())
+      -> Push (Step t) l a
+pusha l n f =
+  Push l $ \wf ->
+    forAll (fromIntegral n) $ \i ->
+      f (flip wf) i
+
 data APush s a = APush s ((Exp Word32 -> a -> TProgram ()) -> Exp Word32 -> TProgram ())
 
 instance Array APush where
@@ -109,13 +118,15 @@ instance Array APush where
   aMap   f (APush s p) = APush s $ \wf i -> p (\ix e -> wf ix (f e)) i
   ixMap  f (APush s p) = APush s $ \wf i -> p (\ix e -> wf (f ix) e) i
 
+{-
 instance Pushable APush where
-  push Thread (APush n p) =
+  push (APush n p) =
     Push n $ \wf -> SeqFor (sizeConv n) $ \i -> p (flip wf) i
-  push Block (APush n p) =
+  push (APush n p) =
     Push n $ \wf -> ForAll (sizeConv n) $ \i -> p (flip wf) i
   push Grid (APush n p) =
     Push n $ \wf -> ForAllThreads (sizeConv n) $ \i -> p (flip wf) i
+-}
 
 class APushable a where
   apush  :: ASize s => a s e -> APush s e
@@ -126,6 +137,7 @@ instance APushable APush where
 instance APushable Pull where
   apush a = APush (len a) $ \wf i -> wf i (a!i)
 
+{-
 reducetest :: Name -> Word32 -> GProgram ()
 reducetest input n = do
   o <- Output (Pointer Int)
@@ -144,3 +156,4 @@ reducetest' i n = do
                   + (Index (i,[tid+(fromIntegral $ n`div`2)])))
   reducetest' o (n`div`2)
 
+-}

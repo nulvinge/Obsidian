@@ -110,7 +110,11 @@ getFactors d e = (sum consts, factors, nonLoopConst)
           Just l
 
 gcdTest :: Exp Word32 -> Bool
-gcdTest a = d >= 1 && a0 `mod` d /= 0
+gcdTest a =
+  case signum d of
+    0 -> a0 /= 0
+    1 -> a0 `mod` d /= 0
+    -1 -> False --dont know
   where
     (lins,factors) = partition ((==1).fst) $ linerizel a
     a0 = case lins of [] -> 0; [(_,a)] -> -a
@@ -196,7 +200,8 @@ insertHazards accesses edges (p,d) = map hazardEdge
     hazardEdge (a',b',t,c)
       | elem SyncDepEdge t && local = Nothing
       | not same && (sameThread || aa `sameWarp` ba) = Nothing
-      | otherwise = Just $ "with " ++ show b' ++ loc sameThread
+      | otherwise = Just $ show a' ++ " with " ++ show b' ++ loc sameThread 
+          -- ++ show (gcdTest (a-b), (a-b), partition ((==1).fst) $ linerizel (a-b))
       where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' aMap
             ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' aMap
 

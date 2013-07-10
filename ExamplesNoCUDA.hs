@@ -13,6 +13,7 @@ import qualified Data.Vector.Storable as V
 import Control.Monad.State
 import Debug.Trace
 import Obsidian.AddOn.Analysis
+import Obsidian.Inplace
 
 import Prelude hiding (zipWith,sum,replicate,take,drop)
 import qualified Prelude as P 
@@ -628,6 +629,28 @@ sklansky3 n op arr = do
   compose [phase i op | i <- [0..(n-1)]] im
 
 ts3 = printAnalysis ((pConcatMap $ sklansky3 10 (+)) . splitUpS 1024) (input2 :- ())
+
+scan1 :: (MemoryOps a) => (a -> a -> a) -> Pull Word32 a -> Program Block (Pull Word32 a)
+scan1 f a = do a' <- forceInplace (push a)
+               scan1' f 1 a'
+               return $ pullInplace a'
+
+scan1' :: (MemoryOps a) => (a -> a -> a) -> Word32 -> Inplace Word32 a -> Program Block ()
+scan1' f s' a = do
+  let s = sizeConv s'
+      al :: Word32
+      al = fromIntegral $ len a
+  when (s' < len a) $ do
+    inplaceForce a $ pusha (len a) (al`div`(s'*2)) $ \wf i -> do
+      let j = 2*s*i+2*s-1
+      wf j $ (a!j) `f` (a!(j-s))
+  when (s'*2 < len a) $ do
+    scan1' f (s'*2) a
+    inplaceForce a $ pusha (len a) (al`div`(s'*2)-1) $ \wf i -> do
+      let j = 2*s*i+2*s-1
+      wf j $ (a!(j+s)) `f` (a!j)
+
+ts4 = printAnalysis ((pConcatMap $ liftM push . scan1 (+)) . splitUpS 1024) (input2 :- ())
 
 load :: ASize l => Word32 -> Pull l a -> Push Block l a 
 load n arr =
