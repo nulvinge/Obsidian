@@ -39,7 +39,7 @@ namedPull name n = Pull n $ \gix -> index name gix
 ---------------------------------------------------------------------------
 -- Class ArraySize
 --------------------------------------------------------------------------- 
-class (Integral a, Num a) => ASize a where
+class (Integral a, Num a, OrdE a) => ASize a where
   sizeConv :: a -> Exp Word32
   sizeEither :: a -> Either Word32 (Exp Word32)
 

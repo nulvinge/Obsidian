@@ -34,8 +34,13 @@ mapFusion arr =
     imm <- force $ (fmap (+1) . fmap (*2)) arr
     force $ (fmap (+3) . fmap (*4)) imm
 
-splitUp :: (ASize l, Num l)
+splitUpD :: (ASize l, Num l)
            => l -> Pull (Exp Word32) a -> Pull (Exp Word32) (Pull l a)
+splitUpD n (Pull m ixf) = Pull (m `div` fromIntegral n) $ 
+                          \i -> Pull n $ \j -> ixf (i * (sizeConv n) + j)
+
+splitUp :: (ASize l, ASize l2, Num l)
+           => l -> Pull l2 a -> Pull l2 (Pull l a)
 splitUp n (Pull m ixf) = Pull (m `div` fromIntegral n) $ 
                           \i -> Pull n $ \j -> ixf (i * (sizeConv n) + j)
 
@@ -44,10 +49,11 @@ splitUpS :: Word32 -> Pull Word32 a -> Pull Word32 (Pull Word32 a)
 splitUpS n (Pull m ixf) = Pull (m `div` n) $ 
                           \i -> Pull n $ \j -> ixf (i * (fromIntegral n) + j)
 
-coalesce :: Word32 -> Pull Word32 a -> Pull Word32 (Pull Word32 a)
+coalesce :: (ASize l, Num l)
+         => l -> Pull l a -> Pull l (Pull l a)
 coalesce n arr =
   Pull s $ \i ->
-    Pull n $ \j -> arr ! (i + (fromIntegral s) * j)
+    Pull n $ \j -> arr ! (i + (sizeConv s) * j)
   where s = (len arr) `div` n
 
 --test1 :: Pull (Exp Word32) EInt -> GProgram (Push Grid (Exp Word32) EInt)
@@ -345,7 +351,6 @@ matMul x y = zipWithG body (replicate n x) (replicate m (transpose y))
 --        m  = len y'
 
 
- {- 
 matMulIn  a b = matMul (toMatrix 256 256 a) (toMatrix 256 256 b)
 
 
@@ -353,6 +358,7 @@ toMatrix :: Word32 -> Word32 -> Pull Word32 a -> SMatrix a
 toMatrix n m arr = Pull n $ \i -> Pull m $ \j -> arr ! (i * (sizeConv m) + j)
 
 
+{- 
 getMM =
   quickPrint matMulIn
              ((undefinedGlobal (256*256) {-(variable "X")-} :: Pull Word32 EFloat) :-
@@ -632,4 +638,52 @@ load n arr =
   where
     m = len arr
     n' = sizeConv m `div` fromIntegral n
+
+matMul a b = pConcatMap (matMulRow (transpose b)) a
+  where matMulRow mat row = return $ pConcatMap (dotP row) mat
+        dotP a b = return
+                 $ seqReduce (+)
+                 $ zipWith (*) a b
+
+tmm0 = printAnalysis matMulIn
+             ((undefinedGlobal (256*256) {-(variable "X")-} :: Pull Word32 EFloat) :-
+              (undefinedGlobal (256*256) {-(variable "Y")-} :: Pull Word32 EFloat) :- ())
+
+saxpy0 :: (Num a, ASize l)
+       => a -> Pull l a -> Pull l a -> Push Grid l a
+saxpy0 a x y = pConcatMap (return . push . fmap (\(x,y) -> y+a*x))
+                          (splitUp 256 $ zipp (x,y))
+
+saxpy2 :: (Num a, ASize l)
+       => a -> Pull l a -> Pull l a -> Push Grid l a
+saxpy2 a x y = pConcatMap (return . pConcatMap (return . seqMap (\(x,y) -> y+a*x)) . splitUp 8)
+                          (splitUp (8*256) $ zipp (x,y))
+
+--this is wrong
+saxpy4 :: (Num a, ASize l, MemoryOps a)
+       => a -> Pull l a -> Pull l a -> Push Grid l a
+saxpy4 a x y = pConcatMap (return . pConcatMap(return . seqMap (\(x,y) -> y+a*x)) . coalesce 8)
+                          (splitUp (8*256) $ zipp (x,y))
+
+--this is right, but pUnCoalesce isn't efficient
+saxpy6 :: (Num a, ASize l, MemoryOps a)
+       => a -> Pull l a -> Pull l a -> Push Grid l a
+saxpy6 a x y = pConcatMap (liftM push . pUnCoalesceMap (return . seqMap (\(x,y) -> y+a*x)) . coalesce 8)
+                          (splitUp (8*256) $ zipp (x,y))
+
+tsx0 = printAnalysis saxpy0 (2 :- input1 :- input1 :- ())
+tsx1 = printAnalysis saxpy0 (2 :- input2 :- input2 :- ())
+tsx2 = printAnalysis saxpy2 (2 :- input1 :- input1 :- ())
+tsx3 = printAnalysis saxpy2 (2 :- input2 :- input2 :- ())
+tsx4 = printAnalysis saxpy4 (2 :- input1 :- input1 :- ())
+tsx5 = printAnalysis saxpy4 (2 :- input2 :- input2 :- ())
+tsx6 = printAnalysis saxpy6 (2 :- input1 :- input1 :- ())
+tsx7 = printAnalysis saxpy6 (2 :- input2 :- input2 :- ())
+
+pUnCoalesceMap f = pUnCoalesce . pMap f
+pUnCoalesce :: (MemoryOps a) => Pull Word32 (SPush Thread a) -> Program Block (Pull Word32 a)
+pUnCoalesce arr = do
+  let s = len arr
+  a <- force $ pConcat arr
+  return $ joinM $ transpose $ splitUp s a
 

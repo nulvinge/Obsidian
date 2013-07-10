@@ -142,7 +142,7 @@ unzipp arr = (mkPullArray (len arr) (\ix -> fst (arr ! ix)) ,
               mkPullArray (len arr) (\ix -> snd (arr ! ix)) )
               
 zipp :: ASize l => (Pull l a, Pull l b) -> Pull l (a, b)             
-zipp (arr1,arr2) =  Pull (min (len arr1) (len arr2))
+zipp (arr1,arr2) =  Pull (minE (len arr1) (len arr2))
                       $ \ix -> (arr1 ! ix, arr2 ! ix) 
 
 unzipp3 :: ASize l => Pull l (a,b,c) 
@@ -155,13 +155,13 @@ unzipp3 arr = (fmap (\(x,_,_) -> x) arr,
 zipp3 :: ASize l =>  (Pull l a, Pull l b, Pull l c) 
          -> Pull l (a,b,c)             
 zipp3 (arr1,arr2,arr3) = 
-  mkPullArray (minimum [len arr1, len arr2, len arr3])
+  mkPullArray (len arr1 `minE` len arr2 `minE` len arr3)
   (\ix -> (arr1 ! ix, arr2 ! ix, arr3 ! ix))
     
 
 zipWith :: ASize l => (a -> b -> c) -> Pull l a -> Pull l b -> Pull l c
 zipWith op a1 a2 =  
-  mkPullArray (min (len a1) (len a2))
+  mkPullArray (minE (len a1) (len a2))
   (\ix -> (a1 ! ix) `op` (a2 ! ix))
                                       
 ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@
              FlexibleContexts,
              FlexibleInstances, 
              UndecidableInstances,
+             OverlappingInstances,
              RankNTypes #-} 
 
 {- Joel Svensson 2012 -} 
@@ -539,22 +540,23 @@ instance (Scalar a, Integral a) => Integral (Exp a) where
   
 infix 4 ==*, /=*, <*, >*, >=*, <=* 
 
-class (Choice a) => OrdE a where
+class OrdE a where
   (==*), (/=*), (<*), (<=*), (>*), (>=*) :: a -> a -> Exp Bool
   maxE,minE :: a -> a -> a
 
-  maxE a b = ifThenElse (a <=* b) b a
-  minE a b = ifThenElse (a <=* b) a b
 
 instance (Scalar a, Ord a) => OrdE (Exp a) where
   (==*) (Literal a) (Literal b) = Literal (a == b) 
   (==*) a b = BinOp Eq a b
+  (/=*) (Literal a) (Literal b) = Literal (a /= b) 
   (/=*) a b = BinOp NotEq a b 
   (<*)  (Literal a) (Literal b) = Literal (a < b) 
   (<*)  a b = BinOp Lt a b
   (<=*) (Literal a) (Literal b) = Literal (a <= b) 
   (<=*) a b = BinOp LEq a b
+  (>*)  (Literal a) (Literal b) = Literal (a > b) 
   (>*)  a b = BinOp Gt  a b
+  (>=*) (Literal a) (Literal b) = Literal (a >= b) 
   (>=*) a b = BinOp GEq a b
   maxE (Literal a) (Literal b) = Literal (max a b)
   maxE a b = BinOp Max a b
@@ -566,13 +568,26 @@ instance (OrdE (Exp a), Scalar a) => Ord (Exp a) where
   max = error "You should probably use maxE instead of max"
   min = error "You should probably use minE instead of min"
 
-instance (OrdE a, OrdE b) => OrdE (a,b) where
+instance (OrdE a, Choice a, OrdE b, Choice b) => OrdE (a,b) where
   (==*) (a1,a2) (b1,b2) = (a1 ==* b1) &&* (a2 ==* b2)
   (/=*) (a1,a2) (b1,b2) = (a1 /=* b1) ||* (a2 /=* b2)
   (<*)  (a1,a2) (b1,b2) = (a1 <* b1) ||* (a1 ==* b1 &&* a2 <* b2)
   (<=*) (a1,a2) (b1,b2) = (a1 <* b1) ||* (a1 ==* b1 &&* a2 <=* b2)
   (>*)  (a1,a2) (b1,b2) = (a1 >* b1) ||* (a1 ==* b1 &&* a2 >* b2)
   (>=*) (a1,a2) (b1,b2) = (a1 >* b1) ||* (a1 ==* b1 &&* a2 >=* b2)
+  maxE a b = ifThenElse (a <=* b) b a
+  minE a b = ifThenElse (a <=* b) a b
+
+instance (Scalar a, Ord a) => OrdE a where
+  (==*) a b = Literal (a == b) 
+  (/=*) a b = Literal (a /= b) 
+  (<*)  a b = Literal (a < b) 
+  (<=*) a b = Literal (a <= b) 
+  (>*)  a b = Literal (a > b) 
+  (>=*) a b = Literal (a >= b) 
+  maxE  a b = max a b
+  minE  a b = min a b
+
 
 --instance (Ord a, Ord b, Scalar a, Scalar b) => Ord (Exp a, Exp b) where
 --  max = maxE
