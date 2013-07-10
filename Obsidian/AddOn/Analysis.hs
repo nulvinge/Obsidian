@@ -61,10 +61,10 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
 
         imActions :: [IMList IMData -> IMList IMData]
         imActions = [id
-          -- , insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
+          , insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
           , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
           , insertStringsIM "Diverging"     $ diverges
-          -- , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>0) . Just . getInstruction . snd
+          , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>0) . Just . getInstruction . snd
           , insertStringsIM "Hazards"       $ insertHazards accesses depEdgesF
           , insertStringsIM "Unnessary sync"$ unneccessarySyncs accesses depEdgesF
           , mapIM $ \(p,d) -> insertCost (p,d)

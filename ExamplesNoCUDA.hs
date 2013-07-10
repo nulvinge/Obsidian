@@ -710,3 +710,24 @@ pUnCoalesce arr = do
   a <- force $ pConcat arr
   return $ joinM $ transpose $ splitUp s a
 
+bitonicMerge1 :: (MemoryOps a, OrdE a) => Word32 -> Word32 -> Pull Word32 a -> BProgram (Push Block Word32 a)
+bitonicMerge1 s m a = do
+  let s' = fromIntegral s
+      m' = fromIntegral m
+      b = pusha (len a) (len a) $ \wf i -> ifThenElse ((i .&. s' ==* 0) /=* (i .&. m' ==* 0))
+                                  (wf i (minE (a!i) (a!(i `xor` s'))))
+                                  (wf i (maxE (a!i) (a!(i `xor` s'))))
+  if s <= 1
+    then return b
+    else do b' <- force b
+            bitonicMerge1 (s`div`2) m b'
+
+bitonicSort1 :: (MemoryOps a, OrdE a) => Pull Word32 a -> BProgram (Pull Word32 a)
+bitonicSort1 a = f 2 a
+  where f m a | m >= len a = return a
+        f m a              = do b <- bitonicMerge1 m (2*m) a
+                                b' <- force b
+                                f (m*2) b'
+
+tb1 = printAnalysis ((pConcatMap $ liftM push . bitonicSort1) . splitUpS 256) (input2 :- ())
+

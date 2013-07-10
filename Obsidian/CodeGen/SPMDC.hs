@@ -259,7 +259,7 @@ ppValue (Word16Val w) = line$ showi w
 ppValue (Word32Val w) = line$ showi w
 ppValue (Word64Val w) = line$ showi w 
 
-showi 0 = "0"
+showi a | a<100 = show a
 showi a | 1 >= popCount (complement a)     = "~0x" ++ showHex (complement a) ""
 showi a | 1 >= popCount (complement (a+1)) = "~0x" ++ showHex (complement a) ""
 showi a | 1 >= popCount (1+complement a)   = "~0x" ++ showHex (complement a) ""
