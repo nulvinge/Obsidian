@@ -209,8 +209,8 @@ data Op a where
   BitwiseNeg :: Bits a => Op (a -> a)
 
   -- I DO NOT EVEN KNOW WHAT THIS MEANS: work around it! 
-  ShiftL     :: forall a b. (Num b, Bits a) => Op ((a, b) -> a)  
-  ShiftR     :: forall a b .(Num b, Bits a) => Op ((a, b) -> a)  
+  ShiftL     :: (Bits a) => Op ((a, Int) -> a)  
+  ShiftR     :: (Bits a) => Op ((a, Int) -> a)  
   
   -- built-ins
   Min        :: Ord (Exp a) => Op ((a,a) -> a) 
@@ -309,11 +309,13 @@ instance (Eq a, Scalar a) => Eq (Exp a) where
 -- INT Instances
 ---------------------------------------------------------------------------
 -- Added new cases for literal 0 (2012/09/25)
-instance Bits (Exp Int) where  
+instance (Scalar a, Bits a) => Bits (Exp a) where  
   (.&.) x (Literal 0) = Literal 0
   (.&.) (Literal 0) x = Literal 0 
   (.&.) (Literal a) (Literal b) = Literal (a .&. b) 
   (.&.) a b = BinOp BitwiseAnd a b
+  (.|.) x (Literal 0) = x
+  (.|.) (Literal 0) x = x
   (.|.) (Literal a) (Literal b) = Literal (a .|. b)
   (.|.) a b = BinOp BitwiseOr  a b
   xor (Literal a) (Literal b) = Literal (a `xor` b) 
@@ -323,12 +325,16 @@ instance Bits (Exp Int) where
   
   --TODO: See that this is not breaking something (32/64 bit, CUDA/Haskell)
   complement (Literal i) = Literal (complement i)
-  
   complement a = UnOp BitwiseNeg a
-  shiftL a i = BinOp ShiftL  a (Literal i)
-  shiftR a i = BinOp ShiftR  a (Literal i)
+
+  shiftL (Literal j) i = Literal (j `shiftL` i) 
+  shiftL a i = BinOp ShiftL a (fromIntegral i)
+  shiftR (Literal j) i = Literal (j `shiftL` i)
+  shiftR a i = BinOp ShiftR a (fromIntegral i)
   bitSize a  = sizeOf a * 8
-  isSigned a = True
+  isSigned a = isSigned (valType a)
+    where valType :: Exp a -> a
+          valType = undefined
 
   bit  = Literal . bit
   testBit = error "testBit: is undefined for Exp Int"
@@ -347,33 +353,6 @@ instance Enum (Exp Int) where
 ---------------------------------------------------------------------------
 -- Int32
 ---------------------------------------------------------------------------
--- Added new cases for literal 0 (2012/09/25)
-instance Bits (Exp Int32) where  
-  (.&.) x (Literal 0) = Literal 0
-  (.&.) (Literal 0) x = Literal 0 
-  (.&.) (Literal a) (Literal b) = Literal (a .&. b) 
-  (.&.) a b = BinOp BitwiseAnd a b
-  (.|.) (Literal a) (Literal b) = Literal (a .|. b)
-  (.|.) a b = BinOp BitwiseOr  a b
-  xor (Literal a) (Literal b) = Literal (a `xor` b) 
-  xor a (Literal 0) = a
-  xor (Literal 0) b = b
-  xor   a b = BinOp BitwiseXor a b 
-  
-  --TODO: See that this is not breaking something (32/64 bit, CUDA/Haskell)
-  complement (Literal i) = Literal (complement i)
-  
-  complement a = UnOp BitwiseNeg a
-  shiftL a i = BinOp ShiftL  a (Literal i)
-  shiftR a i = BinOp ShiftR  a (Literal i)
-  bitSize a  = 32 -- sizeeOf a * 8
-  isSigned a = True
-
-  bit  = Literal . bit
-  testBit = error "testBit: is undefined for Exp Int32"
-  popCount = error "popCoint: is undefined for Exp Int32"
-
-
 -- TODO: change undefined to some specific error.
 instance Real (Exp Int32) where
   toRational = error "toRational: not implemented for Exp Int32"
@@ -389,38 +368,11 @@ instance Enum (Exp Int32) where
 
 -- adding special shift operators for when both inputs are 
 -- runtime values (2013-01-08) 
-(<<*) :: (Scalar b, Scalar a, Bits a, Num b ) => Exp a -> Exp b -> Exp a 
+(<<*) :: (Scalar a, Bits a) => Exp a -> Exp Int -> Exp a 
 (<<*) a b = BinOp ShiftL a b 
 
-(>>*) :: (Scalar b, Scalar a, Bits a, Num b ) => Exp a -> Exp b -> Exp a 
+(>>*) :: (Scalar a, Bits a) => Exp a -> Exp Int -> Exp a 
 (>>*) a b = BinOp ShiftR a b 
-
- -- Added new cases for literal 0 (2012/09/25)
-instance Bits (Exp Word32) where 
-  (.&.) x (Literal 0) = Literal 0
-  (.&.) (Literal 0) x = Literal 0 
-  (.&.) (Literal a) (Literal b) = Literal (a .&. b) 
-  (.&.) a b = BinOp BitwiseAnd a b   
-  (.|.) (Literal a) (Literal b) = Literal (a .|. b) 
-  (.|.) a b = BinOp BitwiseOr  a b
-  xor (Literal a) (Literal b) = Literal (a `xor` b) 
-  xor a (Literal 0) = a
-  xor (Literal 0) b = b
-  xor   a b = BinOp BitwiseXor a b 
-  complement (Literal i) = Literal (complement i) 
-  complement a = UnOp BitwiseNeg a
-  
-  shiftL (Literal j) i = Literal (j `shiftL` i) 
-  shiftL a i = BinOp ShiftL a (Literal i)
-  
-  shiftR (Literal j) i = Literal (j `shiftL` i)
-  shiftR a i = BinOp ShiftR a (Literal i)
-  bitSize a  = 32
-  isSigned a = False
-
-  bit  = Literal . bit
-  testBit = error "testBit: is undefined for Exp Word32"
-  popCount = error "popCoint: is undefined for Exp Word32"
 
 instance Real (Exp Word32) where 
   toRational = error "toRational: not implemented for Exp Word32" 
@@ -639,6 +591,8 @@ printOp Sub = " - "
 printOp Mul = " * "
 printOp Div = " / "
 printOp Mod = " % "
+printOp ShiftL = " << "
+printOp ShiftR = " >> "
 
 -- printOp If  = " if "
 

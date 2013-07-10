@@ -60,11 +60,11 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
         imF = foldr (.) id (Prelude.reverse imActions) im2
 
         imActions :: [IMList IMData -> IMList IMData]
-        imActions =
-          [ insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
+        imActions = [id
+          -- , insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
           , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
           , insertStringsIM "Diverging"     $ diverges
-          , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>0) . Just . getInstruction . snd
+          -- , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>0) . Just . getInstruction . snd
           , insertStringsIM "Hazards"       $ insertHazards accesses depEdgesF
           , insertStringsIM "Unnessary sync"$ unneccessarySyncs accesses depEdgesF
           , mapIM $ \(p,d) -> insertCost (p,d)

@@ -26,6 +26,7 @@ import Data.Int
 import Data.List as L
 import Data.Maybe
 import Data.Either
+import Data.Bits
 import Control.Monad
 import qualified Data.Map as M
 import Debug.Trace
@@ -44,6 +45,7 @@ isIndependent aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
   -- | isJust d && fromJust d /= 0 = Nothing --banerjee
   | gcdTest (a-b)                = Nothing
   | banerjee aa ba               = Nothing
+  | bitTests aa ba               = Nothing
   | liftM2 rangeIntersect (getRange ad a) (getRange bd b) == Just False = Nothing
   | same && sameTBGroup          = Nothing
   | otherwise = Just $ loc sameTBGroup
@@ -112,13 +114,121 @@ getFactors d e = (sum consts, factors, nonLoopConst)
 gcdTest :: Exp Word32 -> Bool
 gcdTest a =
   case signum d of
-    0 -> a0 /= 0
+    0 -> False -- trace (show (a,factors,a0)) a0 /= 0
     1 -> a0 `mod` d /= 0
     -1 -> False --dont know
   where
     (lins,factors) = partition ((==1).fst) $ linerizel a
-    a0 = case lins of [] -> 0; [(_,a)] -> -a
+    a0 = case lins of [] -> 0; [(Literal 1,a)] -> -a
     d = if factors == [] then 0 else foldr1 gcd $ map snd factors
+
+
+bitTests :: (Name, Exp Word32, Bool, IMData, (Int,Int))
+         -> (Name, Exp Word32, Bool, IMData, (Int,Int)) -> Bool
+bitTests aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) = -- trace (show (ai,bi)) $
+  bitTests' same a b (getRange ad) (getRange bd)
+  where
+    same = ai == bi
+
+--( +  ( *  blockIdx.x 1024 ) ( |  ( &  threadIdx.x 511 ) ( <<  ( &  threadIdx.x 4294966784 ) 1 ) ) )
+testBitTest = bitTests' True e e gr gr
+  where t = ThreadIdx X
+        bt = BlockIdx X
+        a = (t .&. complement 1)
+        b = a <<* 1
+        c = (t .&. 1) .|. b
+        d = (t .&. 1) .|. t
+        e = t * 256 + t
+        gr (ThreadIdx X) = Just (0,255)
+        gr (Literal a) = Just (fromIntegral a,fromIntegral a)
+        gr _ = Nothing
+
+
+bitTests' same a b grad grbd = -- strace $ trace (show (same,tidRange,varTidBits,a,b,varBits)) $
+  if same
+    then varTidBits == getNext2Powerm tidRange
+    else or knownBits
+  where
+    --should check blocks for global accesses
+    varTidBits = foldr (.|.) 0
+               $ map (bit.fst)
+               $ filter ((==ThreadIdx X).snd) varBits
+    tidRange :: Word32
+    tidRange = fromIntegral $ snd $ fromJust $ grad (ThreadIdx X)
+    (varBits,knownBits) = partitionEithers  $ map bitTest [0..bitSize a-1]
+    isGood a = Right $ a == Right (Just True)
+
+    bitTest t = case (getBitVal t grad a,getBitVal t grbd b) of
+        (Right (Just False),b) -> isGood b
+        (Right (Just True), b) -> isGood $ notB b
+        (a,Right (Just False)) -> isGood a
+        (a,Right (Just True))  -> isGood $ notB a
+        (Left (True,a),Left (False,b)) | a==b -> Right True
+        (Left (False,a),Left (True,b)) | a==b -> Right True
+        (Left (_,a), Left (_,b))       | a==b -> Left a
+        (a,b) | a==b           -> Right False
+        _                      -> Right False
+
+    getBitVal :: Int -> (Exp Word32 -> Maybe (Integer,Integer)) -> Exp Word32 -> Either (Bool,(Int,Exp Word32)) (Maybe Bool)
+    getBitVal t d _ | t < 0 = Right $ Just False
+    getBitVal t d _ | t >= 32 = Right $ Just False
+    getBitVal t d (BinOp BitwiseAnd a b) =
+      case (getBitVal t d a,getBitVal t d b) of
+        (Right (Just True),b)           -> b
+        (a,Right (Just True))           -> a
+        (Right (Just False),b)          -> Right $ Just False
+        (a,Right (Just False))          -> Right $ Just False
+        -- (Right (Just a),Right (Just b)) -> Right $ Just $ a && b
+        (a,b) | a==b                    -> a
+        (Left (True,a),Left (False,b)) | a==b -> Right $ Just False
+        (Left (False,a),Left (True,b)) | a==b -> Right $ Just False
+        _                               -> Right Nothing
+    getBitVal t d (BinOp BitwiseOr a b) = -- trace (show (a,b,(getBitVal t d a,getBitVal t d b))) $ strace $
+      case (getBitVal t d a,getBitVal t d b) of
+        (Right (Just False),b)           -> b
+        (a,Right (Just False))           -> a
+        (Right (Just True),b)           -> Right $ Just True
+        (a,Right (Just True))           -> Right $ Just True
+        -- (Right (Just a),Right (Just b))  -> Right $ Just $ a && b
+        (a,b) | a==b                     -> a
+        (Left (True,a),Left (False,b)) | a==b -> Right $ Just True
+        (Left (False,a),Left (True,b)) | a==b -> Right $ Just True
+        _                                -> Right Nothing
+    getBitVal t d (BinOp BitwiseXor a b) =
+      case (getBitVal t d a,getBitVal t d b) of
+        (Right (Just False),b) -> b
+        (Right (Just True), b) -> notB b
+        (a,Right (Just False)) -> a
+        (a,Right (Just True))  -> notB a
+        (a,b) | a==b           -> Right $ Just False
+        (Left (True,a),Left (False,b)) | a==b -> Right $ Just True
+        (Left (False,a),Left (True,b)) | a==b -> Right $ Just True
+        _                      -> Right Nothing
+    getBitVal t d (BinOp ShiftL a (Literal b)) = getBitVal (t-b) d a
+    getBitVal t d (BinOp ShiftR a (Literal b)) = getBitVal (t+b) d a
+    getBitVal t d (UnOp BitwiseNeg a) = notB $ getBitVal t d a
+    getBitVal t d (BinOp Add a b) = case getBitVal (t-1) d (a .&. b) of --carry
+      Right (Just False) -> sum
+      Right (Just True)  -> notB sum
+      where sum = getBitVal t d (a .|. b)
+    getBitVal t d (BinOp Sub a b) = getBitVal t d (a+((complement b)+1))
+    getBitVal t d (BinOp Mul a (Literal b)) | popCount b == 1 =
+      getBitVal t d (a <<* fromIntegral (log2 b))
+    getBitVal t d (BinOp Mul (Literal a) b) | popCount a == 1 =
+      getBitVal t d (b <<* fromIntegral (log2 a))
+    getBitVal t d a = case d a of
+      Just (l,h) | l==h      -> Right $ Just $ testBit l t
+      Just (l,h) | h < bit t -> Right $ Just $ False
+      _                      -> Left (False,(t,a))
+
+    --log2 x = (\y -> y-1) $ Data.List.last $ takeWhile (not . testBit x) $ Prelude.reverse [0..bitSize x-1]
+    log2 n = length (takeWhile (<n) (iterate (*2) 1))
+
+
+    notB a = case a of 
+        Right (Just a) -> Right $ Just $ not a
+        Left (a,e)     -> Left (not a,e)
+        _              -> Right Nothing
 
 
 type DepEdge = ((Int,Int),(Int,Int),[DepEdgeType], [Exp Bool])
@@ -139,7 +249,7 @@ makeFlowDepEdges = map (\((a,b,c),t) -> (a,b,t,c))
                  . M.fromListWith (++)
                  . map (\(a,b,t,c)->((a,b,c),t))
                  . nub
-                 . (\(_,(_,_,globs,a)) -> processGlobals (strace globs) ++ a)
+                 . (\(_,(_,_,globs,a)) -> processGlobals globs ++ a)
                  . traverseIMaccDataPrePost pre post ([],[],[],[])
   where
     pre :: ((Statement IMData, IMData), ([Access], [Access], [Access], [DepEdge]))
@@ -223,16 +333,17 @@ insertHazards accesses edges (p,d) = map hazardEdge
 
 unneccessarySyncs :: [Access] -> [DepEdge] -> (Statement IMData,IMData) -> [Maybe String]
 unneccessarySyncs accesses edges (SSynchronize,d) =
-  if (not $ any makesNeccessary edges)
-    then [Just ""]
+  if not $ any isNothing nessesaries
+    then [Just $ concat $ catMaybes nessesaries]
     else []
   where
+    nessesaries = map makesNeccessary edges
     i = getInstruction d
     aMap = M.fromList $ map (\a@(_,_,_,_,i) -> (i,a)) accesses
     makesNeccessary (a'@(ai',_),b'@(bi',_),t,c)
-      | not $ ai' > i && bi' < i = False
-      | not same && (sameThread || aa `sameWarp` ba) = False
-      | otherwise = True
+      | not $ ai' > i && bi' < i = Just ""
+      | (not same && sameThread) || aa `sameWarp` ba = Just $ show (ai',bi',mds,same,sameThread, aa `sameWarp` ba)
+      | otherwise = Nothing
       where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' aMap
             ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' aMap
 
@@ -247,6 +358,8 @@ unneccessarySyncs accesses edges (SSynchronize,d) =
               where (_,af,bf) = fromMaybe (undefined,0,0) $ lookup e ds
             same = ai == bi
             local = isLocal an && isLocal bn
+
+            otherSyncs = accesses
 unneccessarySyncs _ _ _ = []
 
 
