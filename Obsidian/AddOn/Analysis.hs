@@ -40,7 +40,8 @@ printAnalysis p a = quickPrint (ins, sizes, insertAnalysis ins sizes im) ()
 insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
 insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) imF
                         -- ++ [(SComment (show $ M.assocs sizes),())]
-                        ++ [(SComment ("Total cost: " ++ showCost cost),())]
+                        ++ [(SComment "Depth:\t  Work:\tType:\tTotal cost:",())]
+                        ++ map (\s -> (SComment s,())) (showCost cost)
                         -- ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdgesF
                         -- ++ map (\s -> (SComment ("Accesses: " ++ show s),())) accesses
                         -- ++ [(SComment $ show $ getOutputs im,())]
@@ -62,9 +63,9 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
         imActions :: [IMList IMData -> IMList IMData]
         imActions = [id
           , insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
-          , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
+          -- , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
           , insertStringsIM "Diverging"     $ diverges
-          , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>0) . Just . getInstruction . snd
+          , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>=0) . Just . getInstruction . snd
           , insertStringsIM "Hazards"       $ insertHazards accesses depEdgesF
           , insertStringsIM "Unnessary sync"$ unneccessarySyncs accesses depEdgesF
           , mapIM $ \(p,d) -> insertCost (p,d)

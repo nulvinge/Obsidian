@@ -29,19 +29,17 @@ type Cost = (CostT,CostT)
 
 type CostT = (V.Vector Integer)
 
-showCost :: Cost -> String
-showCost = tail
-         . concat
-         . map (\(i,(s,p)) -> " " ++ i ++ ": " ++ show s ++ "/" ++ show p)
+showCost :: Cost -> [String]
+showCost = map (\(i,(s,p)) -> show s ++ "\t/ " ++ show p ++ "\t" ++ i)
          . filter (\(i,(s,p)) -> any (/=0) [s,p])
          . zip info
          . uncurry zip
          . mapPair V.toList
   where info = [a ++ c ++ " " ++ b
                | c <- [""," sequential"]
-               , b <- ["write","read"]
+               , b <- ["writes","reads"]
                , a <- ["global", "local"]
-               ] ++ ["Ops", "Sync"]
+               ] ++ ["Ops", "Syncs"]
 
 noCostT  = V.replicate 15 0
 accessCostT :: Bool -> Bool -> Bool -> CostT

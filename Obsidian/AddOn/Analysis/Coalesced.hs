@@ -47,13 +47,13 @@ isCoalesced (n,e,rw,cs) = appendCost (isLocal n) rw $
         nonConstantsAll = filter (not.isWarpConstant) $ M.keys $ linerize e
 
         isWarpConstant :: Scalar a => Exp a -> Bool
-        isWarpConstant = and . collectExp f
+        isWarpConstant (ThreadIdx X) = True --handled above with stride
+        isWarpConstant e = and $ collectExp f e
           where f :: Scalar a => Exp a -> [Bool]
                 f = (map (\a -> isWarpConstant' (witness a) a) . getLeaves)
 
         isWarpConstant' :: Witness a -> Exp a -> Bool
         isWarpConstant' _ (Literal a)   = True
-        isWarpConstant' _ (ThreadIdx X) = True --handled above with stride
         isWarpConstant' _ (BlockIdx X)  = True
         isWarpConstant' Word32Witness a = getBlockConstant cs a
         --isWarpConstant _ = False --further analysis required, but should be good for the most obious cases

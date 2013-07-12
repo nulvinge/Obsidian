@@ -47,6 +47,13 @@ inRange sizes (n,e,rw,cs) =
         range = mapPair sum $ unzip ranges
         outofrange = not (range `rangeInSize` fromJust size)
 
+getConst :: (Num a, Ord a, Scalar a, Integral a)
+         => IMDataA a -> Exp a -> Maybe a
+getConst d (Literal a) = Just a
+getConst d a = case getRangeM d a of
+  (Just l,Just h) | l==h -> Just $ fromInteger l
+  _                      -> Nothing
+
 getRange :: (Num a, Ord a, Scalar a, Integral a)
          => IMDataA a -> Exp a -> Maybe (Integer,Integer)
 getRange d = maybePair . getRangeM d
@@ -73,6 +80,8 @@ getRangeM = gr'
       (maybe2 max al bl,maybe2 max (getN2P a ah) (getN2P b bh))
     gr r (BinOp BitwiseAnd a b) = bop r a b $ \al ah bl bh -> mFilPos al bl $
       (maybe2 min al bl,maybe2 min ah bh)
+    gr r (BinOp ShiftL a (Literal b)) = gr' r (a *     fromIntegral (2^b))
+    gr r (BinOp ShiftR a (Literal b)) = gr' r (a `div` fromIntegral (2^b))
     gr r (Literal a) = (Just $ fromIntegral a,Just $ fromIntegral a)
     gr r a = (Nothing,Nothing)
 

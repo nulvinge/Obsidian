@@ -530,10 +530,10 @@ reverseL' :: MemoryOps a => SPull a -> BProgram (SPush Block a)
 reverseL' = liftM push . force . Obsidian.reverse
 
 reverses :: DPull a -> DPush Grid a
-reverses = pConcatMap reverseL . splitUp 256
+reverses = pConcatMap reverseL . splitUp 1024
 
 largeReverse :: DPull a -> DPush Grid a
-largeReverse = pConcat . Obsidian.reverse . pMap reverseL . splitUp 256
+largeReverse = pConcat . pMap reverseL . Obsidian.reverse . splitUp 1024
 
 trevl  = printAnalysis ((pConcatMap $ reverseL)  . splitUpS 1024) (input2 :- ())
 trevl' = printAnalysis ((pConcatMap $ reverseL') . splitUpS 1024) (input2 :- ())
@@ -677,31 +677,31 @@ saxpy0 :: (Num a, ASize l)
 saxpy0 a x y = pConcatMap (return . push . fmap (\(x,y) -> y+a*x))
                           (splitUp 256 $ zipp (x,y))
 
-saxpy2 :: (Num a, ASize l)
+saxpy1 :: (Num a, ASize l)
        => a -> Pull l a -> Pull l a -> Push Grid l a
-saxpy2 a x y = pConcatMap (return . pConcatMap (return . seqMap (\(x,y) -> y+a*x)) . splitUp 8)
+saxpy1 a x y = pConcatMap (return . pConcatMap (return . seqMap (\(x,y) -> y+a*x)) . splitUp 8)
                           (splitUp (8*256) $ zipp (x,y))
 
 --this is wrong
-saxpy4 :: (Num a, ASize l, MemoryOps a)
+saxpy2 :: (Num a, ASize l, MemoryOps a)
        => a -> Pull l a -> Pull l a -> Push Grid l a
-saxpy4 a x y = pConcatMap (return . pConcatMap(return . seqMap (\(x,y) -> y+a*x)) . coalesce 8)
+saxpy2 a x y = pConcatMap (return . pConcatMap(return . seqMap (\(x,y) -> y+a*x)) . coalesce 8)
                           (splitUp (8*256) $ zipp (x,y))
 
 --this is right, but pUnCoalesce isn't efficient
-saxpy6 :: (Num a, ASize l, MemoryOps a)
+saxpy3 :: (Num a, ASize l, MemoryOps a)
        => a -> Pull l a -> Pull l a -> Push Grid l a
-saxpy6 a x y = pConcatMap (liftM push . pUnCoalesceMap (return . seqMap (\(x,y) -> y+a*x)) . coalesce 8)
+saxpy3 a x y = pConcatMap (liftM push . pUnCoalesceMap (return . seqMap (\(x,y) -> y+a*x)) . coalesce 8)
                           (splitUp (8*256) $ zipp (x,y))
 
-tsx0 = printAnalysis saxpy0 (2 :- input1 :- input1 :- ())
-tsx1 = printAnalysis saxpy0 (2 :- input2 :- input2 :- ())
-tsx2 = printAnalysis saxpy2 (2 :- input1 :- input1 :- ())
-tsx3 = printAnalysis saxpy2 (2 :- input2 :- input2 :- ())
-tsx4 = printAnalysis saxpy4 (2 :- input1 :- input1 :- ())
-tsx5 = printAnalysis saxpy4 (2 :- input2 :- input2 :- ())
-tsx6 = printAnalysis saxpy6 (2 :- input1 :- input1 :- ())
-tsx7 = printAnalysis saxpy6 (2 :- input2 :- input2 :- ())
+tsx0' = printAnalysis saxpy0 (2 :- input1 :- input1 :- ())
+tsx0  = printAnalysis saxpy0 (2 :- input2 :- input2 :- ())
+tsx1' = printAnalysis saxpy1 (2 :- input1 :- input1 :- ())
+tsx1  = printAnalysis saxpy1 (2 :- input2 :- input2 :- ())
+tsx2' = printAnalysis saxpy2 (2 :- input1 :- input1 :- ())
+tsx2  = printAnalysis saxpy2 (2 :- input2 :- input2 :- ())
+tsx3' = printAnalysis saxpy3 (2 :- input1 :- input1 :- ())
+tsx3  = printAnalysis saxpy3 (2 :- input2 :- input2 :- ())
 
 pUnCoalesceMap f = pUnCoalesce . pMap f
 pUnCoalesce :: (MemoryOps a) => Pull Word32 (SPush Thread a) -> Program Block (Pull Word32 a)

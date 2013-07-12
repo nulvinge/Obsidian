@@ -126,36 +126,43 @@ gcdTest a =
 bitTests :: (Name, Exp Word32, Bool, IMData, (Int,Int))
          -> (Name, Exp Word32, Bool, IMData, (Int,Int)) -> Bool
 bitTests aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) = -- trace (show (ai,bi)) $
-  bitTests' same a b (getRange ad) (getRange bd)
+  bitTests' same local a b (getRange ad) (getRange bd)
   where
     same = ai == bi
+    local = isLocal an && isLocal bn
 
 --( +  ( *  blockIdx.x 1024 ) ( |  ( &  threadIdx.x 511 ) ( <<  ( &  threadIdx.x 4294966784 ) 1 ) ) )
-testBitTest = bitTests' True e e gr gr
+testBitTest = bitTests' True False e e gr gr
   where t = ThreadIdx X
         bt = BlockIdx X
         a = (t .&. complement 1)
         b = a <<* 1
         c = (t .&. 1) .|. b
         d = (t .&. 1) .|. t
-        e = t * 256 + t
+        e = bt * 256 + t
         gr (ThreadIdx X) = Just (0,255)
         gr (Literal a) = Just (fromIntegral a,fromIntegral a)
         gr _ = Nothing
 
-
-bitTests' same a b grad grbd = -- strace $ trace (show (same,tidRange,varTidBits,a,b,varBits)) $
+bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBits (ThreadIdx X),varIdBits (BlockIdx X),a,b,varBits)) $
   if same
-    then varTidBits == getNext2Powerm tidRange
+    then if local
+      then sameCheck (ThreadIdx X)
+      else sameCheck (ThreadIdx X) && sameCheck (BlockIdx X)
     else or knownBits
   where
-    --should check blocks for global accesses
-    varTidBits = foldr (.|.) 0
-               $ map (bit.fst)
-               $ filter ((==ThreadIdx X).snd) varBits
-    tidRange :: Word32
-    tidRange = fromIntegral $ snd $ fromJust $ grad (ThreadIdx X)
-    (varBits,knownBits) = partitionEithers  $ map bitTest [0..bitSize a-1]
+    sameCheck i = case idRange i of
+      Just ir -> getNext2Powerm ir == (varIdBits i)
+      Nothing -> let (t,i') = Prelude.last varBits --not wholy safe
+        in if i /= i'
+          then False
+          else 2^(t+1)-1 == (varIdBits i)
+    varIdBits i = foldr (.|.) 0
+                $ map (bit.fst)
+                $ filter ((==i).snd) varBits
+    idRange :: Exp Word32 -> Maybe Word32
+    idRange = liftM (fromIntegral . snd) . grad
+    (varBits,knownBits) = partitionEithers $ map bitTest [0..bitSize a-1]
     isGood a = Right $ a == Right (Just True)
 
     bitTest t = case (getBitVal t grad a,getBitVal t grbd b) of
@@ -207,15 +214,23 @@ bitTests' same a b grad grbd = -- strace $ trace (show (same,tidRange,varTidBits
     getBitVal t d (BinOp ShiftL a (Literal b)) = getBitVal (t-b) d a
     getBitVal t d (BinOp ShiftR a (Literal b)) = getBitVal (t+b) d a
     getBitVal t d (UnOp BitwiseNeg a) = notB $ getBitVal t d a
-    getBitVal t d (BinOp Add a b) = case getBitVal (t-1) d (a .&. b) of --carry
-      Right (Just False) -> sum
-      Right (Just True)  -> notB sum
-      where sum = getBitVal t d (a .|. b)
+    getBitVal t d (BinOp Add a b) = -- strace $ trace (show (getBitVal t a,getBitVal t b,getCarry (t-1), sum)) $
+      case getCarry (t-1) of
+        Just False -> sum
+        Just True  -> notB sum
+        _          -> Right Nothing
+        where sum = getBitVal t d (a .|. b)
+              getCarry t | getBitVal t d (a .|. b) == Right (Just False) = (Just False)
+              getCarry t | getBitVal t d (a .&. b) == Right (Just True)  = (Just True)
+              getCarry t | getBitVal t d (a .|. b) == Right (Just True)  = getCarry (t-1)
+              getCarry t = Nothing
     getBitVal t d (BinOp Sub a b) = getBitVal t d (a+((complement b)+1))
-    getBitVal t d (BinOp Mul a (Literal b)) | popCount b == 1 =
+    getBitVal t d (BinOp Mul a (Literal b)) | is2Power b =
       getBitVal t d (a <<* fromIntegral (log2 b))
-    getBitVal t d (BinOp Mul (Literal a) b) | popCount a == 1 =
+    getBitVal t d (BinOp Mul (Literal a) b) | is2Power a =
       getBitVal t d (b <<* fromIntegral (log2 a))
+    getBitVal t d (BinOp Div a (Literal b)) | is2Power b =
+      getBitVal t d (a >>* fromIntegral (log2 b))
     getBitVal t d a = case d a of
       Just (l,h) | l==h      -> Right $ Just $ testBit l t
       Just (l,h) | h < bit t -> Right $ Just $ False
@@ -334,7 +349,8 @@ insertHazards accesses edges (p,d) = map hazardEdge
 unneccessarySyncs :: [Access] -> [DepEdge] -> (Statement IMData,IMData) -> [Maybe String]
 unneccessarySyncs accesses edges (SSynchronize,d) =
   if not $ any isNothing nessesaries
-    then [Just $ concat $ catMaybes nessesaries]
+    then [Just $ concat 
+               $ catMaybes nessesaries]
     else []
   where
     nessesaries = map makesNeccessary edges
@@ -342,7 +358,11 @@ unneccessarySyncs accesses edges (SSynchronize,d) =
     aMap = M.fromList $ map (\a@(_,_,_,_,i) -> (i,a)) accesses
     makesNeccessary (a'@(ai',_),b'@(bi',_),t,c)
       | not $ ai' > i && bi' < i = Just ""
-      | (not same && sameThread) || aa `sameWarp` ba = Just $ show (ai',bi',mds,same,sameThread, aa `sameWarp` ba)
+      | (not same && sameThread) =
+          Just $ show ai' ++ " depends on " ++ show bi' ++ " within same thread "
+          -- (ai',bi',mds,same,sameThread, aa `sameWarp` ba)
+      | aa `sameWarp` ba =
+          Just $ show ai' ++ " depends on " ++ show bi' ++ " within same warp "
       | otherwise = Nothing
       where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' aMap
             ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' aMap
