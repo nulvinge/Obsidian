@@ -6,9 +6,10 @@
              FlexibleInstances #-}
 
 module Obsidian.AddOn.Analysis.Hazards
-  (insertHazards
+  (insertEdges
+  ,keepHazards
   ,makeFlowDepEdges
-  ,eliminateDepEdges
+  ,eliminateIndependent
   ,unneccessarySyncs)  where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
@@ -38,32 +39,19 @@ combinations l = concat $ map (\(i,ll) -> map (i,) ll) $ zip l (prefixes l)
 prefixes :: [a] -> [[a]]
 prefixes l = map (`L.take` l) $ L.take (length l) [0..]
 
-isIndependent :: Access -> Access -> Maybe String
+isIndependent :: Access -> Access -> Bool
 isIndependent aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
-  | an /= bn                     = Nothing --different arrays
-  | arw && brw                   = Nothing --read read
-  -- | isJust d && fromJust d /= 0 = Nothing --banerjee
-  | gcdTest (a-b)                = Nothing
-  | banerjee aa ba               = Nothing
-  | bitTests aa ba               = Nothing
-  | liftM2 rangeIntersect (getRange ad a) (getRange bd b) == Just False = Nothing
-  | same && sameTBGroup          = Nothing
-  | otherwise = Just $ loc sameTBGroup
-                    ++ show (same,local,arw,a,brw,b,mds) -- getRange ad ae `rangeIntersects` getRange bd be
-      where mds = aa `diffs` ba
-            (d0,ds) = fromJust mds
-            sameThread = sameGroup (ThreadIdx X)
-            sameBlock  = sameGroup (BlockIdx  X)
+  | an /= bn            = True --different arrays
+  | arw && brw          = True --read read
+  -- | isJust d && fromJust d /= 0 = True --banerjee
+  | gcdTest (a-b)       = True
+  | banerjee aa ba      = True
+  | bitTests aa ba      = True
+  | liftM2 rangeIntersect (getRange ad a) (getRange bd b) == Just False = True
+  | same && sameTBGroup = True
+  | otherwise           = False
+      where (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
             sameTBGroup = sameThread && (local || sameBlock)
-            sameGroup e = isJust mds && d0 == 0 &&
-                        (  (af == bf && af /= 0)
-                        || (getRange ad e == Just (0,0)))
-              where (_,af,bf) = fromMaybe (undefined,0,0) $ lookup e ds
-            loc True                 = "same thread dependence "
-            loc _ | aa `sameWarp` ba = "same warp dependence   "
-            loc _                    = ""
-            same = ai == bi
-            local = isLocal an && isLocal bn
 
 sameWarp :: Access -> Access -> Bool
 sameWarp aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
@@ -75,6 +63,20 @@ rangeSize (l,h) = h-l
 warprange d = mapPair (*warpsize) (tl `div` warpsize, (th+1)`cdiv`warpsize)
   where Just (tl,th) = getRange d (ThreadIdx X)
 sameWarpRange d1 d2 = mapPair2 (==) (warprange d1) (warprange d2) == (True,True)
+
+whatSame aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
+    = (local, same, sameThread, sameBlock, aa `sameWarp` ba)
+  where mds = aa `diffs` ba
+        (d0,ds) = fromJust mds
+        sameThread = sameGroup (ThreadIdx X)
+        sameBlock  = sameGroup (BlockIdx  X)
+        sameTBGroup = sameThread && (local || sameBlock)
+        sameGroup e = isJust mds && d0 == 0 &&
+                    (  (af == bf && af /= 0)
+                    || (getRange ad e == Just (0,0)))
+          where (_,af,bf) = fromMaybe (undefined,0,0) $ lookup e ds
+        local = isLocal an && isLocal bn
+        same = ai == bi
 
 --should be extended a lot
 banerjee aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) = maybe False (0>) h
@@ -214,7 +216,7 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
     getBitVal t d (BinOp ShiftL a (Literal b)) = getBitVal (t-b) d a
     getBitVal t d (BinOp ShiftR a (Literal b)) = getBitVal (t+b) d a
     getBitVal t d (UnOp BitwiseNeg a) = notB $ getBitVal t d a
-    getBitVal t d (BinOp Add a b) = -- strace $ trace (show (getBitVal t a,getBitVal t b,getCarry (t-1), sum)) $
+    getBitVal t d (BinOp Add a b) = -- strace $ trace (show (getBitVal (t-1) d (a .|. b),getBitVal (t-1) d (a .&. b),getCarry (t-1), sum)) $
       case getCarry (t-1) of
         Just False -> sum
         Just True  -> notB sum
@@ -223,6 +225,7 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
               getCarry t | getBitVal t d (a .|. b) == Right (Just False) = (Just False)
               getCarry t | getBitVal t d (a .&. b) == Right (Just True)  = (Just True)
               getCarry t | getBitVal t d (a .|. b) == Right (Just True)  = getCarry (t-1)
+              getCarry t | isLeft (getBitVal t d (a .|. b))              = getCarry (t-1)
               getCarry t = Nothing
     getBitVal t d (BinOp Sub a b) = getBitVal t d (a+((complement b)+1))
     getBitVal t d (BinOp Mul a (Literal b)) | is2Power b =
@@ -238,7 +241,6 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
 
     --log2 x = (\y -> y-1) $ Data.List.last $ takeWhile (not . testBit x) $ Prelude.reverse [0..bitSize x-1]
     log2 n = length (takeWhile (<n) (iterate (*2) 1))
-
 
     notB a = case a of 
         Right (Just a) -> Right $ Just $ not a
@@ -296,57 +298,45 @@ makeEdges conds local nosync (aa@(an,a,arw,ad,ai),ba@(bn,b,brw,bd,bi))
             else [(ai, bi, [BlockDepEdge], conds)]
       -}
       )
-  where mds = aa `diffs` ba
-        (d0,ds) = fromJust mds
-        sameThread = sameGroup (ThreadIdx X)
-        sameBlock  = sameGroup (BlockIdx  X)
-        sameTBGroup = sameThread && (local || sameBlock)
-        sameGroup e = isJust mds && d0 == 0 &&
-                    (  (af == bf && af /= 0)
-                    || (getRange ad e == Just (0,0)))
-          where (_,af,bf) = fromMaybe (undefined,0,0) $ lookup e ds
+  where (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
 
-eliminateDepEdges :: [Access] -> [DepEdge] -> [DepEdge]
-eliminateDepEdges accesses edges = catMaybes $ map tryEdge edges
+eliminateIndependent :: M.Map (Int,Int) Access -> [DepEdge] -> [DepEdge]
+eliminateIndependent accesses edges = catMaybes $ map tryEdge edges
   where
-    aMap = M.fromList $ map (\a@(_,_,_,_,i) -> (i,a)) accesses
-    tryEdge (a',b',t,c) = if isJust (isIndependent aa ba)
-        then Just (a',b',t,c)
-        else Nothing
-      where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' aMap
-            ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' aMap
+    tryEdge (a',b',t,c) = if isIndependent aa ba
+        then Nothing
+        else Just (a',b',t,c)
+      where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' accesses
+            ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' accesses
 
-insertHazards :: [Access] -> [DepEdge] -> (Statement IMData,IMData) -> [Maybe String]
-insertHazards accesses edges (p,d) = map hazardEdge
-                                   $ filter (\((i,_),_,_,_) -> i == getInstruction d)
-                                   $ edges
+
+keepHazards :: M.Map (Int,Int) Access -> [DepEdge] -> [DepEdge]
+keepHazards accesses = filter (not.hazardFree)
   where
-    aMap = M.fromList $ map (\a@(_,_,_,_,i) -> (i,a)) accesses
-    hazardEdge (a',b',t,c)
-      | elem SyncDepEdge t && local = Nothing
-      | not same && (sameThread || aa `sameWarp` ba) = Nothing
-      | otherwise = Just $ show a' ++ " with " ++ show b' ++ loc sameThread 
-          -- ++ show (gcdTest (a-b), (a-b), partition ((==1).fst) $ linerizel (a-b))
-      where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' aMap
-            ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' aMap
+    hazardFree (a',b',t,c)
+      | elem SyncDepEdge t && local = True
+      | not same && (sameThread || sameWarp) = True
+      | otherwise = False
+      where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' accesses
+            ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' accesses
+            (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
 
-            mds = aa `diffs` ba
-            (d0,ds) = fromJust mds
-            sameThread = sameGroup (ThreadIdx X)
-            sameBlock  = sameGroup (BlockIdx  X)
-            sameTBGroup = sameThread && (local || sameBlock)
-            sameGroup e = isJust mds && d0 == 0 &&
-                        (  (af == bf && af /= 0)
-                        || (getRange ad e == Just (0,0)))
-              where (_,af,bf) = fromMaybe (undefined,0,0) $ lookup e ds
-            loc True                 = ": same thread dependence"
-            loc _ | aa `sameWarp` ba = ": same warp dependence"
-            loc _                    = ""
-            same = ai == bi
-            local = isLocal an && isLocal bn
+insertEdges :: M.Map (Int,Int) Access -> [DepEdge] -> (Statement IMData,IMData) -> [Maybe String]
+insertEdges accesses edges (p,d) = map showEdge
+                                 $ filter (\((i,_),_,_,_) -> i == getInstruction d)
+                                 $ edges
+  where
+    showEdge (a',b',t,c) = Just $ show a' ++ " with " ++ show b' ++ loc sameThread 
+      where aa = fromJust $ M.lookup a' accesses
+            ba = fromJust $ M.lookup b' accesses
+            (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
+
+            loc True         = ": same thread dependence"
+            loc _ | sameWarp = ": same warp dependence"
+            loc _            = ""
 
 
-unneccessarySyncs :: [Access] -> [DepEdge] -> (Statement IMData,IMData) -> [Maybe String]
+unneccessarySyncs :: M.Map (Int,Int) Access -> [DepEdge] -> (Statement IMData,IMData) -> [Maybe String]
 unneccessarySyncs accesses edges (SSynchronize,d) =
   if not $ any isNothing nessesaries
     then [Just $ concat 
@@ -355,30 +345,17 @@ unneccessarySyncs accesses edges (SSynchronize,d) =
   where
     nessesaries = map makesNeccessary edges
     i = getInstruction d
-    aMap = M.fromList $ map (\a@(_,_,_,_,i) -> (i,a)) accesses
     makesNeccessary (a'@(ai',_),b'@(bi',_),t,c)
       | not $ ai' > i && bi' < i = Just ""
       | (not same && sameThread) =
           Just $ show ai' ++ " depends on " ++ show bi' ++ " within same thread "
           -- (ai',bi',mds,same,sameThread, aa `sameWarp` ba)
-      | aa `sameWarp` ba =
+      | sameWarp =
           Just $ show ai' ++ " depends on " ++ show bi' ++ " within same warp "
       | otherwise = Nothing
-      where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' aMap
-            ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' aMap
-
-            mds = aa `diffs` ba
-            (d0,ds) = fromJust mds
-            sameThread = sameGroup (ThreadIdx X)
-            sameBlock  = sameGroup (BlockIdx  X)
-            sameTBGroup = sameThread && (local || sameBlock)
-            sameGroup e = isJust mds && d0 == 0 &&
-                        (  (af == bf && af /= 0)
-                        || (getRange ad e == Just (0,0)))
-              where (_,af,bf) = fromMaybe (undefined,0,0) $ lookup e ds
-            same = ai == bi
-            local = isLocal an && isLocal bn
-
+      where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' accesses
+            ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' accesses
+            (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
             otherSyncs = accesses
 unneccessarySyncs _ _ _ = []
 

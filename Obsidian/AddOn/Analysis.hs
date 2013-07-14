@@ -42,8 +42,8 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
                         -- ++ [(SComment (show $ M.assocs sizes),())]
                         ++ [(SComment "Depth:\t  Work:\tType:\tTotal cost:",())]
                         ++ map (\s -> (SComment s,())) (showCost cost)
-                        -- ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdgesF
-                        -- ++ map (\s -> (SComment ("Accesses: " ++ show s),())) accesses
+                        ++ map (\s -> (SComment ("Hazard: " ++ show s),())) depEdgesF
+                        -- ++ map (\s -> (SComment ("Accesses: " ++ show s),())) (M.elems accesses)
                         -- ++ [(SComment $ show $ getOutputs im,())]
   where (inScalars,inConstSizes) = mapFst (map fst)
                                  $ partition ((==0).snd)
@@ -66,7 +66,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           -- , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
           , insertStringsIM "Diverging"     $ diverges
           , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>=0) . Just . getInstruction . snd
-          , insertStringsIM "Hazards"       $ insertHazards accesses depEdgesF
+          , insertStringsIM "Hazards"       $ insertEdges accesses depEdgesF
           , insertStringsIM "Unnessary sync"$ unneccessarySyncs accesses depEdgesF
           , mapIM $ \(p,d) -> insertCost (p,d)
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
@@ -74,9 +74,13 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           ]
 
         cost = sumCost $ collectIM (list.getCost.snd) imF
-        accesses = concat $ map getAccessesIM instructions
+        accesses = M.fromList
+                 $ map (\a@(_,_,_,_,i) -> (i,a))
+                 $ concat
+                 $ map getAccessesIM instructions
         depEdges1 = makeFlowDepEdges im2
-        depEdgesF = eliminateDepEdges accesses depEdges1
+        depEdges2 = eliminateIndependent accesses depEdges1
+        depEdgesF = keepHazards accesses depEdges2
 
 insertStringsIM :: String -> ((Statement IMData, IMData) -> [Maybe String])
                 -> IMList IMData -> IMList IMData

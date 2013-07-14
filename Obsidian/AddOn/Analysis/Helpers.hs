@@ -170,4 +170,7 @@ partitionMaybes p = partitionEithers . map g
                 Nothing -> Right a
                 Just b  -> Left  b
 
+isLeft (Left _)  = True
+isLeft (Right _) = False
+isRight = not . isLeft
 
