@@ -29,6 +29,7 @@ import Data.Maybe
 import Data.Either
 import Data.Bits
 import Control.Monad
+import Control.DeepSeq
 import qualified Data.Map as M
 import Debug.Trace
 
@@ -44,11 +45,12 @@ isIndependent aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
   | an /= bn            = True --different arrays
   | arw && brw          = True --read read
   -- | isJust d && fromJust d /= 0 = True --banerjee
+  | liftM2 rangeIntersect (getRange ad a) (getRange bd b) == Just False = True
+  | same && sameTBGroup = True
+  -- slowest tests last
   | gcdTest (a-b)       = True
   | banerjee aa ba      = True
   | bitTests aa ba      = True
-  | liftM2 rangeIntersect (getRange ad a) (getRange bd b) == Just False = True
-  | same && sameTBGroup = True
   | otherwise           = False
       where (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
             sameTBGroup = sameThread && (local || sameBlock)
@@ -134,7 +136,7 @@ bitTests aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) = -- trace (show (ai,bi)) $
     local = isLocal an && isLocal bn
 
 --( +  ( *  blockIdx.x 1024 ) ( |  ( &  threadIdx.x 511 ) ( <<  ( &  threadIdx.x 4294966784 ) 1 ) ) )
-testBitTest = bitTests' True False e e gr gr
+testBitTest = bitTests' True True c c gr gr
   where t = ThreadIdx X
         bt = BlockIdx X
         a = (t .&. complement 1)
@@ -146,7 +148,16 @@ testBitTest = bitTests' True False e e gr gr
         gr (Literal a) = Just (fromIntegral a,fromIntegral a)
         gr _ = Nothing
 
+-- ((threadIdx.x&1)|((threadIdx.x&~0x1)<<1)
+-- (((threadIdx.x&1)|((threadIdx.x&~0x1)<<1))^2)
+
+type Bit a = Either (Bool,(Int,Exp a)) (Maybe Bool)
+
+instance (Scalar a) => NFData (Exp a) where
+  rnf e = traverseExp (\a -> a`seq`a) e `seq` ()
+
 bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBits (ThreadIdx X),varIdBits (BlockIdx X),a,b,varBits)) $
+  (grad,grbd) `deepseq`
   if same
     then if local
       then sameCheck (ThreadIdx X)
@@ -164,10 +175,11 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
                 $ filter ((==i).snd) varBits
     idRange :: Exp Word32 -> Maybe Word32
     idRange = liftM (fromIntegral . snd) . grad
-    (varBits,knownBits) = partitionEithers $ map bitTest [0..bitSize a-1]
-    isGood a = Right $ a == Right (Just True)
 
-    bitTest t = case (getBitVal t grad a,getBitVal t grbd b) of
+    (varBits,knownBits) = partitionEithers
+                        $ map final
+                        $! zip (getBits grad a) (getBits grbd b)
+    final ab = case ab of
         (Right (Just False),b) -> isGood b
         (Right (Just True), b) -> isGood $ notB b
         (a,Right (Just False)) -> isGood a
@@ -177,12 +189,59 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
         (Left (_,a), Left (_,b))       | a==b -> Left a
         (a,b) | a==b           -> Right False
         _                      -> Right False
+    isGood a = Right $ a == Right (Just True)
 
-    getBitVal :: Int -> (Exp Word32 -> Maybe (Integer,Integer)) -> Exp Word32 -> Either (Bool,(Int,Exp Word32)) (Maybe Bool)
-    getBitVal t d _ | t < 0 = Right $ Just False
-    getBitVal t d _ | t >= 32 = Right $ Just False
-    getBitVal t d (BinOp BitwiseAnd a b) =
-      case (getBitVal t d a,getBitVal t d b) of
+    getBits :: (Exp Word32 -> Maybe (Integer,Integer)) -> Exp Word32 -> [Bit Word32]
+    getBits d a = case d a of
+      Just (l,h) | l==h      -> map (Right . Just) $ makeBits l
+      Just (l,h)             -> map (findCandidate a)
+                              $ zip3 (getBits' d a) [0..31]
+                              $ makeBits
+                              $ getNext2Powerm (fromIntegral h :: Word32)
+      _                      -> map (findCandidate a)
+                              $ zip3 (getBits' d a) [0..31]
+                              $ map (const True) [0..31]
+
+    findCandidate a (_,_,False) = Right $ Just False
+    findCandidate a (Right Nothing,t,_) = (Left (False,(t,a)))
+    findCandidate a (r,_,_) = r
+    makeBits a = map (testBit a) [0..31]
+
+    getBits' :: (Bits a, Num a, Ord a, Scalar a) => (Exp Word32 -> Maybe (Integer,Integer)) -> Exp a -> [Bit a]
+    getBits' d (BinOp Sub a b) =
+      rec d (a+((complement b)+1))
+    getBits' d (BinOp Mul a (Literal b)) | is2Power b =
+      rec d (a <<* fromIntegral (log2 b))
+    getBits' d (BinOp Mul (Literal a) b) | is2Power a =
+      rec d (b <<* fromIntegral (log2 a))
+    getBits' d (BinOp Div a (Literal b)) | is2Power b =
+      rec d (a >>* fromIntegral (log2 b))
+    getBits' d (BinOp ShiftL a (Literal b)) =
+          L.take (bitSize a)
+        $ L.replicate b (Right $ Just False)
+       ++ rec d a
+    getBits' d (BinOp ShiftR a (Literal b)) =
+          L.take (bitSize a)
+        $ rec d a
+       ++ L.replicate b (Right $ Just False)
+    getBits' d e@(BinOp bop a b) = (a',b') `deepseq`
+        map (\t -> getBitVal t bop a' b') [0..bitSize e-1]
+      where a' = (rec d a)
+            b' = (rec d b)
+    getBits' d (UnOp BitwiseNeg a) = map notB $ rec d a
+    getBits' d a = L.replicate (bitSize a) $ Right Nothing
+
+    rec :: (Scalar a) => (Exp Word32 -> Maybe (Integer,Integer)) -> Exp a -> [Bit a]
+    rec d a = rec' (witness a) a
+      where rec' Word32Witness x = getBits d x
+            rec' _             _ = L.replicate (32) $ Right Nothing --weird default
+
+    getBitVal :: (Scalar a, Scalar b, Scalar c, Bits c)
+              => Int -> Op ((a,b) -> c) -> [Bit a] -> [Bit b] -> Bit c
+    getBitVal t _ _ _ | t < 0 = Right $ Just False
+    getBitVal t _ _ _ | t >= 32 = Right $ Just False
+    getBitVal t BitwiseAnd a b =
+      case (a!!t,b!!t) of
         (Right (Just True),b)           -> b
         (a,Right (Just True))           -> a
         (Right (Just False),b)          -> Right $ Just False
@@ -192,8 +251,8 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
         (Left (True,a),Left (False,b)) | a==b -> Right $ Just False
         (Left (False,a),Left (True,b)) | a==b -> Right $ Just False
         _                               -> Right Nothing
-    getBitVal t d (BinOp BitwiseOr a b) = -- trace (show (a,b,(getBitVal t d a,getBitVal t d b))) $ strace $
-      case (getBitVal t d a,getBitVal t d b) of
+    getBitVal t BitwiseOr a b = -- trace (show (a,b,(getBitVal t d a,getBitVal t d b))) $ strace $
+      case (a!!t,b!!t) of
         (Right (Just False),b)           -> b
         (a,Right (Just False))           -> a
         (Right (Just True),b)           -> Right $ Just True
@@ -203,8 +262,8 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
         (Left (True,a),Left (False,b)) | a==b -> Right $ Just True
         (Left (False,a),Left (True,b)) | a==b -> Right $ Just True
         _                                -> Right Nothing
-    getBitVal t d (BinOp BitwiseXor a b) =
-      case (getBitVal t d a,getBitVal t d b) of
+    getBitVal t BitwiseXor a b =
+      case (a!!t,b!!t) of
         (Right (Just False),b) -> b
         (Right (Just True), b) -> notB b
         (a,Right (Just False)) -> a
@@ -213,31 +272,27 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
         (Left (True,a),Left (False,b)) | a==b -> Right $ Just True
         (Left (False,a),Left (True,b)) | a==b -> Right $ Just True
         _                      -> Right Nothing
-    getBitVal t d (BinOp ShiftL a (Literal b)) = getBitVal (t-b) d a
-    getBitVal t d (BinOp ShiftR a (Literal b)) = getBitVal (t+b) d a
-    getBitVal t d (UnOp BitwiseNeg a) = notB $ getBitVal t d a
-    getBitVal t d (BinOp Add a b) = -- strace $ trace (show (getBitVal (t-1) d (a .|. b),getBitVal (t-1) d (a .&. b),getCarry (t-1), sum)) $
-      case getCarry (t-1) of
+    getBitVal t Add a b = -- strace $ trace (show (getBitVal (t-1) d (a .|. b),getBitVal (t-1) d (a .&. b),getCarry (t-1), sum)) $
+      case getCarry (t-1) a b of
         Just False -> sum
         Just True  -> notB sum
         _          -> Right Nothing
-        where sum = getBitVal t d (a .|. b)
-              getCarry t | getBitVal t d (a .|. b) == Right (Just False) = (Just False)
-              getCarry t | getBitVal t d (a .&. b) == Right (Just True)  = (Just True)
-              getCarry t | getBitVal t d (a .|. b) == Right (Just True)  = getCarry (t-1)
-              getCarry t | isLeft (getBitVal t d (a .|. b))              = getCarry (t-1)
-              getCarry t = Nothing
-    getBitVal t d (BinOp Sub a b) = getBitVal t d (a+((complement b)+1))
-    getBitVal t d (BinOp Mul a (Literal b)) | is2Power b =
-      getBitVal t d (a <<* fromIntegral (log2 b))
-    getBitVal t d (BinOp Mul (Literal a) b) | is2Power a =
-      getBitVal t d (b <<* fromIntegral (log2 a))
-    getBitVal t d (BinOp Div a (Literal b)) | is2Power b =
-      getBitVal t d (a >>* fromIntegral (log2 b))
-    getBitVal t d a = case d a of
-      Just (l,h) | l==h      -> Right $ Just $ testBit l t
-      Just (l,h) | h < bit t -> Right $ Just $ False
-      _                      -> Left (False,(t,a))
+        where sum = getBitVal t BitwiseXor a b
+              getCarry :: (Scalar a, Bits a)
+                       => Int -> [Bit a] -> [Bit a] -> Maybe Bool
+              getCarry t a b
+                | bor  == Right (Just False) = (Just False)
+                | band == Right (Just True)  = (Just True)
+                | bor  == Right (Just True)  = getCarry (t-1) a b
+                | isLeft bor                 = getCarry (t-1) a b
+                | otherwise                  = Nothing
+                where bor  = getBitVal t BitwiseOr  a b
+                      band = getBitVal t BitwiseAnd a b
+    getBitVal t _ _ _ = Right Nothing
+
+    findBit t a | t<0 = Right False
+    findBit t a | t>= length a = Right False
+    findBit t a = a !! t
 
     --log2 x = (\y -> y-1) $ Data.List.last $ takeWhile (not . testBit x) $ Prelude.reverse [0..bitSize x-1]
     log2 n = length (takeWhile (<n) (iterate (*2) 1))

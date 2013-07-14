@@ -106,6 +106,11 @@ linerize' (BinOp Add a b) = linerize' a ++ linerize' b
 linerize' (BinOp Sub a b) = linerize' a ++ (map (\(v,n) -> (v,-n)) $ linerize' b)
 linerize' (BinOp Mul (Literal a) b) = map (\(v,n) -> (v,n*fromIntegral a)) $ linerize' b
 linerize' (BinOp Mul a (Literal b)) = map (\(v,n) -> (v,n*fromIntegral b)) $ linerize' a
+linerize' (BinOp Div a (Literal b)) = ((unLinerizel ins)`div`fromIntegral b,1)
+                                    : map (mapSnd (`div`fromIntegral b)) outs
+  where (outs,ins) = partition ((==0).(`mod`fromIntegral b).snd) $ linerizel a
+linerize' (BinOp Mod a (Literal b)) = [((unLinerizel ins)`mod`fromIntegral b,1)]
+  where ins = filter ((/=0).(`mod`fromIntegral b).snd) $ linerizel a
 linerize' (Literal a)     = [(Literal 1, fromIntegral a)]
 linerize' a@(ThreadIdx X) = [(ThreadIdx X,1)]
 linerize' a@(BlockIdx X)  = [(BlockIdx X, 1)]
@@ -124,8 +129,8 @@ collectIndices a = map (\(_,[r]) -> r) $ collectIndex a
 type Access = (Name, Exp Word32, Bool, IMData, (Int,Int))
 getAccessesIM :: (Statement IMData, IMData) -> [Access]
 getAccessesIM (p,d) = map g
-                    $ zip [0..]
                     $ Data.List.reverse --makes reads come before writes
+                    $ zip [0..]
                     $ getIndicesIM (p,d)
   where g (i,(n,e,l,d)) = (n,e,l,d,(getInstruction d,i))
 

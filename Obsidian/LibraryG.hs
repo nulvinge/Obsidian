@@ -32,6 +32,7 @@ import Data.Word
 --       m = len (as ! 0)
 
 pConcatMap f = pConcat . pMap f
+pUnCoalesceMap f = pUnCoalesce . pMap f
 
 ---------------------------------------------------------------------------
 --
@@ -63,6 +64,19 @@ pConcat arr =
   where
     n  = len arr
     rn = len $ arr ! 0
+
+pUnCoalesce :: ASize l => Pull l (SPush t a) -> Push (Step t) l a
+pUnCoalesce arr =
+  Push (n * fromIntegral rn) $ \wf ->
+  do
+    forAll (sizeConv n) $ \bix ->
+      let (Push _ p) = arr ! bix
+      in p (g wf)
+  where
+    n  = len arr
+    rn = len $ arr ! 0
+    s  = sizeConv rn
+    g wf a i = wf a (i `div` s + (i`mod`s)*(sizeConv n))
 
 ---------------------------------------------------------------------------
 -- Parallel ZipWith 
