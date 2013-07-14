@@ -136,20 +136,20 @@ bitTests aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) = -- trace (show (ai,bi)) $
     local = isLocal an && isLocal bn
 
 --( +  ( *  blockIdx.x 1024 ) ( |  ( &  threadIdx.x 511 ) ( <<  ( &  threadIdx.x 4294966784 ) 1 ) ) )
-testBitTest = bitTests' True True c c gr gr
+testBitTest = bitTests' True True h h gr gr
   where t = ThreadIdx X
         bt = BlockIdx X
-        a = (t .&. complement 1)
+        i = 1
+        a = (t .&. complement i)
         b = a <<* 1
-        c = (t .&. 1) .|. b
-        d = (t .&. 1) .|. t
+        c = (t .&. i) .|. b
+        d = (t .&. i) .|. (b `xor` i+1)
         e = bt * 256 + t
-        gr (ThreadIdx X) = Just (0,255)
+        f = (t .&. 1) .|. ((t .&. 4294967294) <<* 1)
+        h = 128*t+128 + (4294967295)
+        gr (ThreadIdx X) = Just (0,511)
         gr (Literal a) = Just (fromIntegral a,fromIntegral a)
         gr _ = Nothing
-
--- ((threadIdx.x&1)|((threadIdx.x&~0x1)<<1)
--- (((threadIdx.x&1)|((threadIdx.x&~0x1)<<1))^2)
 
 type Bit a = Either (Bool,(Int,Exp a)) (Maybe Bool)
 
@@ -164,21 +164,19 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
       else sameCheck (ThreadIdx X) && sameCheck (BlockIdx X)
     else or knownBits
   where
-    sameCheck i = case idRange i of
-      Just ir -> getNext2Powerm ir == (varIdBits i)
-      Nothing -> let (t,i') = Prelude.last varBits --not wholy safe
+    sameCheck i = case (grad i) of
+      Just (_,ir) -> possibleBits ir == (varIdBits i)
+      Nothing     -> let (t,i') = Prelude.last varBits --not wholy safe
         in if i /= i'
           then False
           else 2^(t+1)-1 == (varIdBits i)
     varIdBits i = foldr (.|.) 0
                 $ map (bit.fst)
                 $ filter ((==i).snd) varBits
-    idRange :: Exp Word32 -> Maybe Word32
-    idRange = liftM (fromIntegral . snd) . grad
 
     (varBits,knownBits) = partitionEithers
                         $ map final
-                        $! zip (getBits grad a) (getBits grbd b)
+                        $ zip (getBits grad a) (getBits grbd b)
     final ab = case ab of
         (Right (Just False),b) -> isGood b
         (Right (Just True), b) -> isGood $ notB b
@@ -186,7 +184,7 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
         (a,Right (Just True))  -> isGood $ notB a
         (Left (True,a),Left (False,b)) | a==b -> Right True
         (Left (False,a),Left (True,b)) | a==b -> Right True
-        (Left (_,a), Left (_,b))       | a==b -> Left a
+        (Left fa@(_,a), Left fb@(_,b)) |fa==fb-> Left a
         (a,b) | a==b           -> Right False
         _                      -> Right False
     isGood a = Right $ a == Right (Just True)
@@ -195,14 +193,15 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
     getBits d a = case d a of
       Just (l,h) | l==h      -> map (Right . Just) $ makeBits l
       Just (l,h)             -> map (findCandidate a)
-                              $ zip3 (getBits' d a) [0..31]
+                              $ zip3 (getBits' d a) [0..]
                               $ makeBits
-                              $ getNext2Powerm (fromIntegral h :: Word32)
+                              $ possibleBits h
       _                      -> map (findCandidate a)
-                              $ zip3 (getBits' d a) [0..31]
+                              $ zip3 (getBits' d a) [0..]
                               $ map (const True) [0..31]
 
-    findCandidate a (_,_,False) = Right $ Just False
+    findCandidate a (r,t,False) = -- if r == Right (Just False) || r == Right Nothing then Right $ Just False else trace (show ("fc",a,r,t)) $
+      Right $ Just False
     findCandidate a (Right Nothing,t,_) = (Left (False,(t,a)))
     findCandidate a (r,_,_) = r
     makeBits a = map (testBit a) [0..31]
@@ -232,9 +231,10 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
     getBits' d a = L.replicate (bitSize a) $ Right Nothing
 
     rec :: (Scalar a) => (Exp Word32 -> Maybe (Integer,Integer)) -> Exp a -> [Bit a]
-    rec d a = rec' (witness a) a
-      where rec' Word32Witness x = getBits d x
-            rec' _             _ = L.replicate (32) $ Right Nothing --weird default
+    rec d a = c -- trace (show ("testtest",a,L.take 4 c)) c 
+      where c = rec' (witness a) a
+            rec' Word32Witness x = getBits d x
+            rec' _             _ = L.replicate 32 $ Right Nothing --weird default
 
     getBitVal :: (Scalar a, Scalar b, Scalar c, Bits c)
               => Int -> Op ((a,b) -> c) -> [Bit a] -> [Bit b] -> Bit c
@@ -296,6 +296,7 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
 
     --log2 x = (\y -> y-1) $ Data.List.last $ takeWhile (not . testBit x) $ Prelude.reverse [0..bitSize x-1]
     log2 n = length (takeWhile (<n) (iterate (*2) 1))
+    possibleBits x = getNext2Powerm (1+fromIntegral x :: Word32)
 
     notB a = case a of 
         Right (Just a) -> Right $ Just $ not a
