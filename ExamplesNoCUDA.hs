@@ -628,6 +628,16 @@ sklansky3 n op arr = do
   im <- force $ load 2 arr
   compose [phase i op | i <- [0..(n-1)]] im
 
+load :: ASize l => Word32 -> Pull l a -> Push Block l a 
+load n arr =
+  Push m $ \wf ->
+    forAll (sizeConv n') $ \tid ->
+      seqFor (fromIntegral n) $ \ix -> 
+        wf (arr ! (tid + (ix*n'))) (tid + (ix*n')) 
+  where
+    m = len arr
+    n' = sizeConv m `div` fromIntegral n
+
 ts3 = printAnalysis ((pConcatMap $ sklansky3 10 (+)) . splitUpS 1024) (input2 :- ())
 
 scan1 :: (MemoryOps a) => (a -> a -> a) -> Pull Word32 a -> Program Block (Pull Word32 a)
@@ -651,16 +661,6 @@ scan1' f s' a = do
       wf j $ (a!(j+s)) `f` (a!j)
 
 ts4 = printAnalysis ((pConcatMap $ liftM push . scan1 (+)) . splitUpS 1024) (input2 :- ())
-
-load :: ASize l => Word32 -> Pull l a -> Push Block l a 
-load n arr =
-  Push m $ \wf ->
-    forAll (sizeConv n') $ \tid ->
-      seqFor (fromIntegral n) $ \ix -> 
-        wf (arr ! (tid + (ix*n'))) (tid + (ix*n')) 
-  where
-    m = len arr
-    n' = sizeConv m `div` fromIntegral n
 
 matMul a b = pConcatMap (matMulRow (transpose b)) a
   where matMulRow mat row = return $ pConcatMap (dotP row) mat

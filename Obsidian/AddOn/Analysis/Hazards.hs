@@ -402,7 +402,7 @@ unneccessarySyncs accesses edges (SSynchronize,d) =
     nessesaries = map makesNeccessary edges
     i = getInstruction d
     makesNeccessary (a'@(ai',_),b'@(bi',_),t,c)
-      | not $ ai' > i && bi' < i = Just ""
+      | not $ ai' > i && bi' < i = Just $ show (ai,bi)
       | (not same && sameThread) =
           Just $ show ai' ++ " depends on " ++ show bi' ++ " within same thread "
           -- (ai',bi',mds,same,sameThread, aa `sameWarp` ba)
