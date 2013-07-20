@@ -59,12 +59,12 @@ sameWarp :: Access -> Access -> Bool
 sameWarp aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
   | ad `sameWarpRange` bd && rangeSize (warprange ad) <= 32 = True
   | otherwise = False --needs better analysis
+  where
+    sameWarpRange d1 d2 = mapPair2 (==) (warprange d1) (warprange d2) == (True,True)
+    warprange d = mapPair (*warpsize) (tl `div` warpsize, (th+1)`cdiv`warpsize)
+      where Just (tl,th) = getRange d (ThreadIdx X)
 
 rangeSize (l,h) = h-l
-
-warprange d = mapPair (*warpsize) (tl `div` warpsize, (th+1)`cdiv`warpsize)
-  where Just (tl,th) = getRange d (ThreadIdx X)
-sameWarpRange d1 d2 = mapPair2 (==) (warprange d1) (warprange d2) == (True,True)
 
 whatSame aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
     = (local, same, sameThread, sameBlock, aa `sameWarp` ba)
@@ -242,26 +242,24 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
     getBitVal t _ _ _ | t >= 32 = Right $ Just False
     getBitVal t BitwiseAnd a b =
       case (a!!t,b!!t) of
-        (Right (Just True),b)           -> b
-        (a,Right (Just True))           -> a
-        (Right (Just False),b)          -> Right $ Just False
-        (a,Right (Just False))          -> Right $ Just False
-        -- (Right (Just a),Right (Just b)) -> Right $ Just $ a && b
-        (a,b) | a==b                    -> a
+        (Right (Just True),b)  -> b
+        (a,Right (Just True))  -> a
+        (Right (Just False),b) -> Right $ Just False
+        (a,Right (Just False)) -> Right $ Just False
+        (a,b) | a==b           -> a
         (Left (True,a),Left (False,b)) | a==b -> Right $ Just False
         (Left (False,a),Left (True,b)) | a==b -> Right $ Just False
-        _                               -> Right Nothing
+        _                      -> Right Nothing
     getBitVal t BitwiseOr a b = -- trace (show (a,b,(getBitVal t d a,getBitVal t d b))) $ strace $
       case (a!!t,b!!t) of
-        (Right (Just False),b)           -> b
-        (a,Right (Just False))           -> a
-        (Right (Just True),b)           -> Right $ Just True
-        (a,Right (Just True))           -> Right $ Just True
-        -- (Right (Just a),Right (Just b))  -> Right $ Just $ a && b
-        (a,b) | a==b                     -> a
+        (Right (Just False),b) -> b
+        (a,Right (Just False)) -> a
+        (Right (Just True),b)  -> Right $ Just True
+        (a,Right (Just True))  -> Right $ Just True
+        (a,b) | a==b           -> a
         (Left (True,a),Left (False,b)) | a==b -> Right $ Just True
         (Left (False,a),Left (True,b)) | a==b -> Right $ Just True
-        _                                -> Right Nothing
+        _                      -> Right Nothing
     getBitVal t BitwiseXor a b =
       case (a!!t,b!!t) of
         (Right (Just False),b) -> b
@@ -281,13 +279,16 @@ bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBi
               getCarry :: (Scalar a, Bits a)
                        => Int -> [Bit a] -> [Bit a] -> Maybe Bool
               getCarry t a b
-                | bor  == Right (Just False) = (Just False)
-                | band == Right (Just True)  = (Just True)
-                | bor  == Right (Just True)  = getCarry (t-1) a b
-                | isLeft bor                 = getCarry (t-1) a b
+                -- | bor  == Right (Just False) = (Just False)
+                | band == Right (Just True)  = Just True
+                | bxor == Right (Just False) = Just False
+                | bxor == Right (Just True)  = getCarry (t-1) a b
+                | getCarry (t-1) a b == Just False
+                  && isLeft bxor             = Just False
                 | otherwise                  = Nothing
                 where bor  = getBitVal t BitwiseOr  a b
                       band = getBitVal t BitwiseAnd a b
+                      bxor = getBitVal t BitwiseXor a b
     getBitVal t _ _ _ = Right Nothing
 
     findBit t a | t<0 = Right False
@@ -392,28 +393,35 @@ insertEdges accesses edges (p,d) = map showEdge
             loc _            = ""
 
 
-unneccessarySyncs :: M.Map (Int,Int) Access -> [DepEdge] -> (Statement IMData,IMData) -> [Maybe String]
-unneccessarySyncs accesses edges (SSynchronize,d) =
+unneccessarySyncs :: IMList IMData -> M.Map (Int,Int) Access -> [DepEdge] -> (Statement IMData,IMData) -> [Maybe String]
+unneccessarySyncs instructions accesses edges (SSynchronize,d) =
   if not $ any isNothing nessesaries
-    then [Just $ concat 
+    then [Just $ (++"...")
+               $ L.take (80-4-3-3)
+               $ concat 
                $ catMaybes nessesaries]
     else []
   where
     nessesaries = map makesNeccessary edges
     i = getInstruction d
+    syncs = mapMaybe isSync instructions
+      where isSync (SSynchronize,d) = Just $ getInstruction d
+            isSync _               = Nothing
     makesNeccessary (a'@(ai',_),b'@(bi',_),t,c)
-      | not $ ai' > i && bi' < i = Just $ show (ai,bi)
+      | not $ ai' > i && bi' < i = Just $ "" -- show (ai,bi)
       | (not same && sameThread) =
           Just $ show ai' ++ " depends on " ++ show bi' ++ " within same thread "
           -- (ai',bi',mds,same,sameThread, aa `sameWarp` ba)
       | sameWarp =
           Just $ show ai' ++ " depends on " ++ show bi' ++ " within same warp "
+      | otherSyncs /= [] = Just $ show ai' ++ " depends on " ++ show bi'
+                        ++ " but syncs at " ++ show otherSyncs ++ " makes this unnessary "
       | otherwise = Nothing
       where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' accesses
             ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' accesses
             (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
-            otherSyncs = accesses
-unneccessarySyncs _ _ _ = []
+            otherSyncs = filter (\s -> s /= i && ai' > s && bi' < s) syncs
+unneccessarySyncs _ _ _ _ = []
 
 
 
