@@ -2,6 +2,7 @@
              TypeFamilies,
              ScopedTypeVariables,
              FlexibleContexts,
+             TupleSections,
              FlexibleInstances #-}
 
 module Obsidian.AddOn.Analysis.Coalesced (isCoalesced) where
@@ -27,18 +28,18 @@ import qualified Data.Map as M
 isCoalesced :: (Num Word32, Ord Word32, Scalar Word32, Integral Word32)
             => (String, Exp Word32, Bool, IMData)
             -> (CostT,Maybe String)
-isCoalesced (n,e,rw,cs) = appendCost (isLocal n) rw $
-  if nonConstants /= []
-    then Just $ "The following variables are not warp constant: " ++ (show nonConstants)
-    else if stride == 0 --broadcast
-         || stride == 1 --coalesced
-      then if nonConstantsAll /= []
-        then Just $ "The following variables are not warp constant: " ++ (show nonConstantsAll)
-        else Nothing
-      else if (32 `mod` stride /= 0 --different banks
-           && stride `mod` 32 /= 0) --unnecesary since `mod`32 is already done.
-        then Nothing
-        else Just $ "Bank conflicts with a factor of: " ++ (show stride)
+isCoalesced (n,e,rw,cs) = appendCost $ case local of
+  GlobalMem |  nonConstantsAll /= [] -> (Sequential,) $ Just $ "The following variables are not warp constant: " ++ (show nonConstantsAll)
+  GlobalMem | stride == 0 -> (Broadcast,Nothing)
+  GlobalMem | stride == 1 -> (Coalesced,Nothing)
+  GlobalMem -> (Sequential, Nothing)
+  LocalMem  | nonConstants /= [] -> (Sequential,) $ Just $ "The following variables are not warp constant: " ++ (show nonConstants)
+  LocalMem  | stride == 0 -> (Broadcast,Nothing)
+  LocalMem  | stride == 1 -> (Parallel,Nothing)
+  LocalMem  | (32 `mod` stride /= 0 --different banks
+            && stride `mod` 32 /= 0) --unnecesary since `mod`32 is already done.
+            -> (Parallel,Nothing)
+  LocalMem  -> (BankConflict,) $ Just $ "Bank conflicts with a factor of: " ++ (show stride)
                   -- ++ " gives a slowdown of about " ++ (show $ stride)
   where e' = simplifyMod' 32 e
         m = linerize e
@@ -57,8 +58,9 @@ isCoalesced (n,e,rw,cs) = appendCost (isLocal n) rw $
         isWarpConstant' _ (BlockIdx X)  = True
         isWarpConstant' Word32Witness a = getBlockConstant cs a
         --isWarpConstant _ = False --further analysis required, but should be good for the most obious cases
-        appendCost :: Bool -> Bool -> Maybe String -> (CostT, Maybe String)
-        appendCost gl rw s = (accessCostT gl rw (isJust s), s)
+        appendCost :: (CostAccessType,Maybe String) -> (CostT, Maybe String)
+        appendCost (c,s) = (accessCostT rw local c, s)
+        local = if isLocal n then LocalMem else GlobalMem
 
  
 simplifyMod :: (Num a, Bounded a, Ord a, Scalar a, Integral a)

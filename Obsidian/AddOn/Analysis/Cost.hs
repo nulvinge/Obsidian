@@ -22,7 +22,7 @@ import Data.Either
 import Data.List
 import Control.Monad
 import qualified Data.Map as M
-import qualified Data.Vector as V
+import qualified Data.VMultiSet as MS
 import Debug.Trace
 
 insertCost :: (Statement a, IMData) -> IMData
@@ -51,11 +51,10 @@ insertCost (p,d) = addIMCostT d costt
 
 mkCost t c = (c,c`mulCostT`t)
 
-addCostT :: CostT -> CostT -> CostT
-addCostT = V.zipWith (+)
-addCost = mapPair2 addCostT
+mulCostT ms a = MS.mul a ms
+addCostT = MS.union
 
-mulCostT a t = V.map (*fromIntegral t) a
+addCost = mapPair2 addCostT
 
 mulCost c t = mapPair ((flip mulCostT) t) c
 

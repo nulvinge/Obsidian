@@ -688,11 +688,18 @@ saxpy2 :: (Num a, ASize l, MemoryOps a)
 saxpy2 a x y = pConcatMap (return . pConcatMap(return . seqMap (\(x,y) -> y+a*x)) . coalesce 8)
                           (splitUp (8*256) $ zipp (x,y))
 
---this is right, but pUnCoalesce isn't efficient
 saxpy3 :: (Num a, ASize l, MemoryOps a)
        => a -> Pull l a -> Pull l a -> Push Grid l a
 saxpy3 a x y = pConcatMap (return . pUnCoalesceMap (return . seqMap (\(x,y) -> y+a*x)) . coalesce 8)
                           (splitUp (8*256) $ zipp (x,y))
+
+saxpy4 :: (Num a, ASize l, MemoryOps a)
+       => a -> Pull l a -> Pull l a -> Push Grid l a
+saxpy4 a x y = pSplitMap (8*256) (return . pCoalesceMap 8 (return . seqMap (\(x,y) -> y+a*x)))
+             $ zipp (x,y)
+
+pSplitMap n f = pConcat . pMap f . splitUp n
+pCoalesceMap n f = pUnCoalesce . pMap f . coalesce n
 
 tsx0' = printAnalysis saxpy0 (2 :- input1 :- input1 :- ())
 tsx0  = printAnalysis saxpy0 (2 :- input2 :- input2 :- ())
@@ -702,6 +709,8 @@ tsx2' = printAnalysis saxpy2 (2 :- input1 :- input1 :- ())
 tsx2  = printAnalysis saxpy2 (2 :- input2 :- input2 :- ())
 tsx3' = printAnalysis saxpy3 (2 :- input1 :- input1 :- ())
 tsx3  = printAnalysis saxpy3 (2 :- input2 :- input2 :- ())
+tsx4' = printAnalysis saxpy4 (2 :- input1 :- input1 :- ())
+tsx4  = printAnalysis saxpy4 (2 :- input2 :- input2 :- ())
 
 bitonicMerge1 :: (MemoryOps a, OrdE a) => Word32 -> Word32 -> Pull Word32 a -> BProgram (Push Block Word32 a)
 bitonicMerge1 s m a = do

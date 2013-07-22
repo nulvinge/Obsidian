@@ -2,6 +2,7 @@
              TypeFamilies,
              ScopedTypeVariables,
              FlexibleContexts,
+             NoMonomorphismRestriction,
              FlexibleInstances #-}
 
 module Obsidian.AddOn.Analysis.Helpers where
@@ -15,39 +16,60 @@ import Obsidian
 
 import Data.Word
 import Data.Tuple
+import Data.Tuple.Enum
 import Data.Int
 import Data.List
 import Data.Maybe
 import Data.Either
+import Data.Bits
 import Control.Monad
+import qualified Data.VMultiSet as MS
 import qualified Data.Map as M
 import qualified Data.Set as S
-import qualified Data.Vector as V
 import Debug.Trace
 
 type Cost = (CostT,CostT)
 
-type CostT = (V.Vector Integer)
+data CostLocation = GlobalMem | LocalMem
+  deriving (Show, Eq, Enum, Bounded)
+data CostAccessType = Coalesced | Parallel | Broadcast | BankConflict | Sequential
+  deriving (Show, Eq, Enum, Bounded)
+data CostType = Writes CostLocation CostAccessType
+              | Reads  CostLocation CostAccessType
+              | Operations
+              | Syncs
+  deriving (Show)
+instance Enum CostType where
+  fromEnum (Operations) = 0
+  fromEnum (Syncs) = 1
+  fromEnum (Writes a b) = 2+fromEnum (False,a,b)
+  fromEnum (Reads  a b) = 2+fromEnum (True,a,b) 
+  toEnum 0 = Operations
+  toEnum 1 = Syncs
+  toEnum i = let (rw,a,b) = toEnum (i-2)
+             in (if rw then Reads else Writes) a b
+
+--maxAcces = fromEnum (maxBound :: (CostLocation,CostAccessType))
+
+
+instance Bounded CostType where
+  minBound = Operations
+  maxBound = let (rw,a,b) = (maxBound :: (Bool,CostLocation,CostAccessType))
+             in (if rw then Reads else Writes) a b
+
+
+type CostT = MS.MultiSet CostType
 
 showCost :: Cost -> [String]
-showCost = map (\(i,(s,p)) -> show s ++ "\t/ " ++ show p ++ "\t" ++ i)
-         . filter (\(i,(s,p)) -> any (/=0) [s,p])
-         . zip info
+showCost = map (\((i,s),(i',p)) -> show s ++ "\t/ " ++ show p ++ "\t" ++ show i)
          . uncurry zip
-         . mapPair V.toList
-  where info = [a ++ c ++ " " ++ b
-               | c <- [""," sequential"]
-               , b <- ["writes","reads"]
-               , a <- ["global", "local"]
-               ] ++ ["Ops", "Syncs"]
+         . mapPair MS.toOccurList
 
-noCostT  = V.replicate 15 0
-accessCostT :: Bool -> Bool -> Bool -> CostT
-accessCostT gl rw ps = noCostT V.// [(n,1)]
-  where n :: Int
-        n = 4*fromEnum ps + 2*fromEnum rw + 1*fromEnum gl
-opCostT  = noCostT V.// [(8,1)]
-syncCostT= noCostT V.// [(9,1)]
+noCostT = MS.empty
+accessCostT :: Bool -> CostLocation -> CostAccessType -> CostT
+accessCostT rw gl ps = MS.singleton $ (if rw then Reads else Writes) gl ps
+opCostT  = MS.singleton Operations
+syncCostT= MS.singleton Syncs
 noCost = (noCostT, noCostT)
 
 type IMData = IMDataA Word32
