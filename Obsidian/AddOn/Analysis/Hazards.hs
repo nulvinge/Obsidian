@@ -40,15 +40,47 @@ combinations l = concat $ map (\(i,ll) -> map (i,) ll) $ zip l (prefixes l)
 prefixes :: [a] -> [[a]]
 prefixes l = map (`L.take` l) $ L.take (length l) [0..]
 
+
+updateDependence :: Access -> Access -> [(Direction,(Exp Word32,Bool))] -> [(Direction,(Exp Word32,Bool))]
+updateDependence aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) t
+  | liftM2 rangeIntersect (getRange ad a) (getRange bd b) == Just False = []
+  | gcdTest (a-b)       = []
+  | any ((==DNone).fst) t2 = []
+  | otherwise = t2
+    where (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
+          t2 = map testFunctions t
+          testFunctions a@(d,(e,ps)) = (,(e,ps))
+                                     $ intersectionsD
+                                     $ catMaybes
+                                     $ trace (show (ai,bi))
+                                     $ strace
+                                     $ map (\f -> f a)
+                                     $ funcs
+          funcs :: [(Direction, (Exp Word32, Bool)) -> Maybe Direction]
+          funcs =
+            [Just . fst
+            , \(d,(e,ps)) -> guard (sameGroup e)  >> return DEqual
+            , \_          -> guard same           >> return DNEqual
+            ]
+
+          mds = aa `diffs` ba
+          (d0,ds) = fromJust mds
+          sameGroup e = isJust mds && d0 == 0 &&
+                      (  (af == bf && af /= 0)
+                      || (getRange ad e == Just (0,0)))
+            where (_,af,bf) = fromMaybe (undefined,0,0) $ lookup e ds
+
+
+
 isIndependent :: Access -> Access -> Bool
 isIndependent aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
   | an /= bn            = True --different arrays
   | arw && brw          = True --read read
-  -- | isJust d && fromJust d /= 0 = True --banerjee
-  | liftM2 rangeIntersect (getRange ad a) (getRange bd b) == Just False = True
+  -- -- | isJust d && fromJust d /= 0 = True --banerjee
+  -- | liftM2 rangeIntersect (getRange ad a) (getRange bd b) == Just False = True
   | same && sameTBGroup = True
   -- slowest tests last
-  | gcdTest (a-b)       = True
+  -- | gcdTest (a-b)       = True
   | banerjee aa ba      = True
   | bitTests aa ba      = True
   | otherwise           = False
@@ -311,10 +343,39 @@ data DepEdgeType = SyncDepEdge
                  | BlockDepEdge
                  | ThreadDepEdge
                  | DataDep [(Direction,(Exp Word32,Bool))]
+                 | DataAnyDep
   deriving (Show,Eq)
 
-data Direction = DAny | DEqual | DLess | DMore
+data Direction = DAny | DEqual | DNEqual | DLess | DMore | DELess | DEMore | DNone
   deriving (Show,Eq)
+
+intersectionsD :: [Direction] -> Direction
+intersectionsD = foldl intersectD DAny
+
+intersectD :: Direction -> Direction -> Direction
+intersectD DAny x          = x
+intersectD x DAny          = x
+intersectD DNone _         = DNone
+intersectD _ DNone         = DNone
+intersectD a b | a == b = a
+intersectD a b | isJust $ intersectD' a b = fromJust $ intersectD' a b
+intersectD a b | isJust $ intersectD' b a = fromJust $ intersectD' b a
+intersectD' DEqual  DNEqual = Just DNone
+intersectD' DEqual  DLess   = Just DNone
+intersectD' DEqual  DMore   = Just DNone
+intersectD' DEqual  DELess  = Just DEqual
+intersectD' DEqual  DEMore  = Just DEqual
+intersectD' DNEqual DLess   = Just DLess
+intersectD' DNEqual DMore   = Just DMore
+intersectD' DNEqual DELess  = Just DLess
+intersectD' DNEqual DEMore  = Just DMore
+intersectD' DLess   DMore   = Just DNone
+intersectD' DLess   DELess  = Just DLess
+intersectD' DLess   DEMore  = Just DNone
+intersectD' DMore   DELess  = Just DNone
+intersectD' DMore   DEMore  = Just DMore
+intersectD' DELess  DEMore  = Just DEqual
+intersectD' _ _ = Nothing
 
 --thid does not handle synchronization within loops yet
 makeFlowDepEdges :: IMList IMData -> [DepEdge]
@@ -344,7 +405,7 @@ makeEdges :: [Exp Bool] -> Bool -> Bool -> (Access,Access) -> [DepEdge]
 makeEdges conds local nosync (aa@(an,a,arw,ad,ai),ba@(bn,b,brw,bd,bi))
   | an /= bn   = [] --different arrays
   | arw && brw = [] --read read
-  | otherwise  = [(ai, bi, [DataDep $ map (DAny,) $ getLoops ad], conds)]
+  | otherwise  = [(ai, bi, loops, conds)]
        ++(if not (local && nosync) then []
             else [(ai, bi, [SyncDepEdge], conds)]
       {- )++(if not (sameThread && sameTBGroup) then []
@@ -356,15 +417,29 @@ makeEdges conds local nosync (aa@(an,a,arw,ad,ai),ba@(bn,b,brw,bd,bi))
       -}
       )
   where (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
+        loops = if getLoops ad == getLoops bd
+                  then [DataDep $ map (DAny,) $ getLoops ad]
+                  else [DataAnyDep]
 
 eliminateIndependent :: M.Map (Int,Int) Access -> [DepEdge] -> [DepEdge]
 eliminateIndependent accesses edges = catMaybes $ map tryEdge edges
   where
-    tryEdge (a',b',t,c) = if isIndependent aa ba
-        then Nothing
-        else Just (a',b',t,c)
+    tryEdge :: DepEdge -> Maybe DepEdge
+    tryEdge (a',b',t,c) =
+        if tf == [] -- || isIndependent aa ba
+          then Nothing
+          else Just (a',b',tf,c)
       where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' accesses
             ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' accesses
+            tf = t2' ++ (mapMaybe (fmap DataDep
+                                  .mfilter (/=[])
+                                  .Just
+                                  .updateDependence aa ba)
+                        t')
+            (t',t2') = partitionMaybes getDataDep t
+            getDataDep (DataDep l) = Just l
+            getDataDep _           = Nothing
+
 
 
 keepHazards :: M.Map (Int,Int) Access -> [DepEdge] -> [DepEdge]

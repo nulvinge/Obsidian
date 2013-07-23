@@ -30,7 +30,7 @@ import Debug.Trace
 
 type Cost = (CostT,CostT)
 
-data CostLocation = GlobalMem | LocalMem
+data CostLocation = GlobalMem | SharedMem | LocalMem | ConstantMem | ImageMem
   deriving (Show, Eq, Enum, Bounded)
 data CostAccessType = Coalesced | Parallel | Broadcast | BankConflict | Sequential
   deriving (Show, Eq, Enum, Bounded)

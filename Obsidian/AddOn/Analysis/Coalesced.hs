@@ -31,15 +31,15 @@ isCoalesced :: (Num Word32, Ord Word32, Scalar Word32, Integral Word32)
 isCoalesced (n,e,rw,cs) = appendCost $ case local of
   GlobalMem |  nonConstantsAll /= [] -> (Sequential,) $ Just $ "The following variables are not warp constant: " ++ (show nonConstantsAll)
   GlobalMem | stride == 0 -> (Broadcast,Nothing)
-  GlobalMem | stride == 1 -> (Coalesced,Nothing)
+  GlobalMem | stride == 1 || stride == -1 -> (Coalesced,Nothing)
   GlobalMem -> (Sequential, Nothing)
-  LocalMem  | nonConstants /= [] -> (Sequential,) $ Just $ "The following variables are not warp constant: " ++ (show nonConstants)
-  LocalMem  | stride == 0 -> (Broadcast,Nothing)
-  LocalMem  | stride == 1 -> (Parallel,Nothing)
-  LocalMem  | (32 `mod` stride /= 0 --different banks
-            && stride `mod` 32 /= 0) --unnecesary since `mod`32 is already done.
-            -> (Parallel,Nothing)
-  LocalMem  -> (BankConflict,) $ Just $ "Bank conflicts with a factor of: " ++ (show stride)
+  SharedMem  | nonConstants /= [] -> (Sequential,) $ Just $ "The following variables are not warp constant: " ++ (show nonConstants)
+  SharedMem  | nonConstantsAll == [] && stride == 0 -> (Broadcast,Nothing)
+  SharedMem  | nonConstantsAll == [] && stride == 1 -> (Parallel,Nothing)
+  SharedMem  | (32 `mod` stride /= 0 --different banks
+             && stride `mod` 32 /= 0) --unnecesary since `mod`32 is already done.
+             -> (Parallel,Nothing)
+  SharedMem  -> (BankConflict,) $ Just $ "Bank conflicts with a factor of: " ++ (show stride)
                   -- ++ " gives a slowdown of about " ++ (show $ stride)
   where e' = simplifyMod' 32 e
         m = linerize e
@@ -60,7 +60,7 @@ isCoalesced (n,e,rw,cs) = appendCost $ case local of
         --isWarpConstant _ = False --further analysis required, but should be good for the most obious cases
         appendCost :: (CostAccessType,Maybe String) -> (CostT, Maybe String)
         appendCost (c,s) = (accessCostT rw local c, s)
-        local = if isLocal n then LocalMem else GlobalMem
+        local = if isLocal n then SharedMem else GlobalMem
 
  
 simplifyMod :: (Num a, Bounded a, Ord a, Scalar a, Integral a)
