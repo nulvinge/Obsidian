@@ -80,6 +80,7 @@ data IMDataA a = IMDataA
   , getBlockConstantSet :: S.Set (Exp a)
   , getCost :: Cost
   , getLoops :: [(Exp Word32, Bool)]
+  -- , getArrayScope :: M.Map Name (Exp Word32)
   , getInstruction :: Int
   }
 
@@ -110,6 +111,14 @@ getBlockConstant d e = S.member e (getBlockConstantSet d)
 getSeqLoops, getParLoops :: IMData -> [Exp Word32]
 getSeqLoops = map fst . filter ((==False).snd) . getLoops
 getParLoops = map fst . filter ((==True ).snd) . getLoops
+
+getLoopsBelow n d = dropWhile ((/= getMemoryLevel n d) . fst) $ getLoops d
+
+getMemoryLevel n d  --this is all guesswork
+  | "arr"    `isPrefixOf` n = ThreadIdx X
+  | "input"  `isPrefixOf` n = BlockIdx X
+  | "output" `isPrefixOf` n = BlockIdx X
+  | otherwise = error n
 
 strace a = trace (show a) a
 

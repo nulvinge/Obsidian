@@ -52,15 +52,17 @@ updateDependence aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) t
           testFunctions a@(d,(e,ps)) = (,(e,ps))
                                      $ intersectionsD
                                      $ catMaybes
-                                     $ trace (show (ai,bi))
-                                     $ strace
+                                     -- $ trace (show (ai,bi))
+                                     -- $ strace
                                      $ map (\f -> f a)
                                      $ funcs
           funcs :: [(Direction, (Exp Word32, Bool)) -> Maybe Direction]
           funcs =
             [Just . fst
-            , \(d,(e,ps)) -> guard (sameGroup e)  >> return DEqual
-            , \_          -> guard same           >> return DNEqual
+            , \(d,l) -> guard (sameGroup $ fst l)     >> return DEqual
+            , \_     -> guard same                    >> return DNEqual
+            , \_     -> guard diffBits                >> return DNone
+            , \(d,l) -> (lookup l sameBits) >>= guard >> return DEqual
             ]
 
           mds = aa `diffs` ba
@@ -69,8 +71,7 @@ updateDependence aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) t
                       (  (af == bf && af /= 0)
                       || (getRange ad e == Just (0,0)))
             where (_,af,bf) = fromMaybe (undefined,0,0) $ lookup e ds
-
-
+          (diffBits,sameBits) = bitTests aa ba $ map snd t
 
 isIndependent :: Access -> Access -> Bool
 isIndependent aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
@@ -82,7 +83,7 @@ isIndependent aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
   -- slowest tests last
   -- | gcdTest (a-b)       = True
   | banerjee aa ba      = True
-  | bitTests aa ba      = True
+  | fst $ bitTests aa ba (getLoops ad) = True
   | otherwise           = False
       where (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
             sameTBGroup = sameThread && (local || sameBlock)
@@ -124,7 +125,7 @@ diffs aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) = do
   guard $ getLoops ad == getLoops bd
   (c0,afs,bfs) <- getFactors2 aa ba
   return (c0
-         , map (\((e,sp,a),(_,_,b)) -> (e,(sp,a,b))) $ zip afs bfs)
+         ,map (\((e,sp,a),(_,_,b)) -> (e,(sp,a,b))) $ zip afs bfs)
 
 getFactors2 :: Access -> Access -> Maybe (Integer, [(Exp Word32,Bool,Integer)], [(Exp Word32,Bool,Integer)])
 getFactors2 aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) = do
@@ -160,15 +161,14 @@ gcdTest a =
 
 
 bitTests :: (Name, Exp Word32, Bool, IMData, (Int,Int))
-         -> (Name, Exp Word32, Bool, IMData, (Int,Int)) -> Bool
-bitTests aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) = -- trace (show (ai,bi)) $
-  bitTests' same local a b (getRange ad) (getRange bd)
-  where
-    same = ai == bi
-    local = isLocal an && isLocal bn
+         -> (Name, Exp Word32, Bool, IMData, (Int,Int))
+         -> [(Exp Word32,Bool)]
+         -> (Bool, [((Exp Word32,Bool),Bool)])
+bitTests aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) loops = -- trace (show (ai,bi)) $
+  bitTests' a b (getRange ad) (getRange bd) loops
 
 --( +  ( *  blockIdx.x 1024 ) ( |  ( &  threadIdx.x 511 ) ( <<  ( &  threadIdx.x 4294966784 ) 1 ) ) )
-testBitTest = bitTests' True True h h gr gr
+testBitTest = undefined -- bitTests' True True h h gr gr
   where t = ThreadIdx X
         bt = BlockIdx X
         i = 1
@@ -188,13 +188,9 @@ type Bit a = Either (Bool,(Int,Exp a)) (Maybe Bool)
 instance (Scalar a) => NFData (Exp a) where
   rnf e = traverseExp (\a -> a`seq`a) e `seq` ()
 
-bitTests' same local a b grad grbd = -- strace $ trace (show (same,local,varIdBits (ThreadIdx X),varIdBits (BlockIdx X),a,b,varBits)) $
-  (grad,grbd) `deepseq`
-  if same
-    then if local
-      then sameCheck (ThreadIdx X)
-      else sameCheck (ThreadIdx X) && sameCheck (BlockIdx X)
-    else or knownBits
+bitTests' a b grad grbd loops = -- strace $ trace (show (same,local,varIdBits (ThreadIdx X),varIdBits (BlockIdx X),a,b,varBits)) $
+    (or knownBits
+    ,map (\(e,ps) -> ((e,ps),sameCheck e)) loops)
   where
     sameCheck i = case (grad i) of
       Just (_,ir) -> possibleBits ir == (varIdBits i)
@@ -418,7 +414,7 @@ makeEdges conds local nosync (aa@(an,a,arw,ad,ai),ba@(bn,b,brw,bd,bi))
       )
   where (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
         loops = if getLoops ad == getLoops bd
-                  then [DataDep $ map (DAny,) $ getLoops ad]
+                  then [DataDep $ map (DAny,) $ getLoopsBelow an ad]
                   else [DataAnyDep]
 
 eliminateIndependent :: M.Map (Int,Int) Access -> [DepEdge] -> [DepEdge]
