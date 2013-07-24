@@ -14,7 +14,6 @@ import Obsidian.Program
 import Obsidian.Exp
 import Obsidian.Array
 import Obsidian.Memory
-import Obsidian.Names
 
 import Data.Word
 
@@ -23,11 +22,11 @@ import Data.Word
 ---------------------------------------------------------------------------
 -- seqReduce (actually reduce) 
 ---------------------------------------------------------------------------
-seqReduceTI :: (ASize l, MemoryOps a)
-           => (EWord32 -> a -> a -> TProgram a)
-           -> Pull l a
-           -> Push Thread l a
-seqReduceTI op arr =
+seqReduceTI1 :: (ASize l, MemoryOps a)
+             => (EWord32 -> a -> a -> Program a)
+             -> Pull l a
+             -> Push l a
+seqReduceTI1 op arr =
   Push 1 $ \wf -> 
   do
     ns <- names (valType arr)
@@ -35,7 +34,7 @@ seqReduceTI op arr =
 
     assignScalar ns init  
  
-    SeqFor (n-1) $ \ ix ->
+    seqFor (n-1) $ \ ix ->
       do
         v <- (op ix (readFrom ns) (arr ! (ix + 1)))
         assignScalar ns v
@@ -46,10 +45,10 @@ seqReduceTI op arr =
     init = arr ! 0 
 
 seqReduce :: (ASize l, MemoryOps a)
-           => (a -> a -> a)
-           -> Pull l a
-           -> Push Thread l a
-seqReduce op = seqReduceTI (\i a b -> return (op a b))
+          => (a -> a -> a)
+          -> Pull l a
+          -> Push l a
+seqReduce op = seqReduceTI1 (\i a b -> return (op a b))
 
 -- TODO: This is dangerous when array lengths are unknown! 
 
@@ -57,10 +56,10 @@ seqReduce op = seqReduceTI (\i a b -> return (op a b))
 -- Iterate
 ---------------------------------------------------------------------------
 seqIterate :: (ASize l, MemoryOps a)
-              => EWord32
-              -> (EWord32 -> a -> a)
-              -> a
-              -> Push Thread l a
+           => EWord32
+           -> (EWord32 -> a -> a)
+           -> a
+           -> Push l a
 seqIterate n f init =
   Push 1 $  \wf -> 
   do
@@ -68,7 +67,7 @@ seqIterate n f init =
     allocateScalar ns 
 
     assignScalar ns init
-    SeqFor n $ \ix ->
+    seqFor n $ \ix ->
       do
         assignScalar ns $ f ix (readFrom ns)
 
@@ -99,10 +98,10 @@ seqIterate n f init =
 
 
 seqUntil :: (ASize l, MemoryOps a) 
-            => (a -> a)
-            -> (a -> EBool)
-            -> a
-            -> Push Thread l a
+         => (a -> a)
+         -> (a -> EBool)
+         -> a
+         -> Push l a
 seqUntil f p (init :: a) =
   Push 1 $ \wf -> 
   do 
@@ -123,16 +122,16 @@ seqUntil f p (init :: a) =
 ---------------------------------------------------------------------------
 
 seqScan :: (ASize l, MemoryOps a)
-           => (a -> a -> a)
-           -> Pull l a
-           -> Push Thread l a
+        => (a -> a -> a)
+        -> Pull l a
+        -> Push l a
 seqScan op arr@(Pull n ixf)  =
   Push n $ \wf -> do
     ns <- names (valType arr)
     allocateScalar ns -- (ixf 0)
     assignScalar ns (ixf 0)
     wf (readFrom ns) 0 
-    SeqFor (sizeConv (n-1)) $ \ix -> do
+    seqFor (sizeConv (n-1)) $ \ix -> do
       wf (readFrom ns) ix                  
       assignScalar ns  $ readFrom ns `op` (ixf (ix + 1))
      
@@ -141,13 +140,10 @@ seqScan op arr@(Pull n ixf)  =
 -- Sequential Map (here for uniformity) 
 ---------------------------------------------------------------------------
 
-seqMap :: ASize l
-          => (a -> b)
-          -> Pull l a
-          -> Push Thread l b
-seqMap f arr =
-  Push (len arr) $ \wf -> do
-    SeqFor (sizeConv (len arr)) $ \ix ->
-      wf (f (arr ! ix)) ix 
-
+seqPush :: ASize l
+        => Pull l a
+        -> Push l a
+seqPush arr = Push (len arr) $ \wf ->
+                seqFor (sizeConv (len arr)) $ \ix ->
+                  wf (arr!ix) ix 
 

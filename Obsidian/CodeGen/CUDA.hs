@@ -187,8 +187,6 @@ imToSPMDC nt im = concatMap (process nt) im
     process nt (SCond bexp im,_) =
       [cIf (expToCExp bexp) (imToSPMDC nt im) []]
 
-    process nt (SSeqFor name e im,_) =
-      [cFor name (expToCExp e) (imToSPMDC nt im)]
     process nt (SSeqWhile b im,_) =
       [cWhile (expToCExp b) (imToSPMDC nt im)]
     process nt (SBreak,_) =
@@ -196,26 +194,26 @@ imToSPMDC nt im = concatMap (process nt) im
     process nt (SComment s,_) =
       [cComment s]
 
-    process nt (SForAll (Literal n) im,_) =
+    -- This one is tricky (since no corresponding CUDA construct exists) 
+    process nt (SFor P.Par name [(P.Block,_)] n im,_) =
+      -- TODO: there should be "number of blocks"-related conditionals here (possibly) 
+      (cAssign (cVar name (typeToCType Word32)) [] (cBlockIdx X))
+      : imToSPMDC nt im
+    process nt (SFor P.Par name [(P.Thread,_)] (Literal n) im,_) =
       if (n < nt) 
       then 
         [cIf (cBinOp CLt (cThreadIdx X)  (cLiteral (Word32Val n) CWord32) CInt)
-         code []]
+         (cAssign (cVar name (typeToCType Word32)) [] (cThreadIdx X) : code) []]
       else 
         code 
       where 
         code = imToSPMDC nt im
+    process nt (SFor _ name pl e im,_) =
+      [cFor name (expToCExp e) (imToSPMDC nt im)]
 
-    -- This one is tricky (since no corresponding CUDA construct exists) 
-    process nt (SForAllBlocks n im,_) =
-      -- TODO: there should be "number of blocks"-related conditionals here (possibly) 
-      imToSPMDC nt im
-    -- This one is even more tricky
-    process nt (SForAllThreads n im,_) =
-      imToSPMDC nt im 
     process nt (SAllocate name size t,_) = []
     process nt (SDeclare name t,_) =
       [cDecl (typeToCType t) name]
     process nt (SOutput name t,_) = [] -- RIGHT!
     process nt (SSynchronize,_)   = [CSync]
-    
+

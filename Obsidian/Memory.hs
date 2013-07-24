@@ -41,8 +41,8 @@ inNames n (Tuple names) = any (inNames n) names
 ---------------------------------------------------------------------------
 class MemoryOps a where
   createNames    :: a -> Name -> Names
-  assignArray    :: Names -> a -> Exp Word32 -> TProgram ()
-  assignScalar   :: Names -> a -> TProgram () 
+  assignArray    :: Names -> a -> Exp Word32 -> Program ()
+  assignScalar   :: Names -> a -> Program () 
   pullFrom       :: (ASize s) => Names -> s -> Pull s a
   readFrom       :: Names -> a
 
@@ -105,7 +105,7 @@ atomicArray  (Single name t s) ix f = AtomicOp name ix f --what about a?
 valType :: a b m -> m
 valType = (undefined :: m)
 
-names :: (MemoryOps a) => a -> Program t Names 
+names :: (MemoryOps a) => a -> Program Names 
 names a = do
   n <- uniqueSM
   return $ createNames a n
@@ -121,19 +121,19 @@ getNames (Tuple ns) = concat $ map getNames ns
 typesArray ns = map (\(n,t) -> (n, Pointer t))
                     (typesScalar ns)
 
-allocateScalar :: Names -> Program t () 
+allocateScalar :: Names -> Program () 
 allocateScalar (Single name t s) =
   Declare name t
 allocateScalar (Tuple ns) =
   mapM_ (allocateScalar) ns
 
-allocateArray  :: Names -> Word32 -> Program Block ()
+allocateArray  :: Names -> Word32 -> Program ()
 allocateArray (Single name t s) n = 
   Allocate name (n * fromIntegral s) (Pointer t)
 allocateArray (Tuple ns) n =
   mapM_ (\a -> allocateArray a n) ns
 
-outputArray :: (MemoryOps a) => p s a -> Program Grid Names
+outputArray :: (MemoryOps a) => p s a -> Program Names
 outputArray a = do
   let ns = createNames (valType a) "dummyOutput"
   outputArray' ns

@@ -9,8 +9,7 @@ module Obsidian (module Obsidian.Array,
                  module Obsidian.CodeGen.CUDA,
                  module Obsidian.Atomic, 
                  module Obsidian.SeqLoop, 
-                 module Obsidian.Memory, 
-                 module Obsidian.Names ) where
+                 module Obsidian.Memory ) where
 
 
 
@@ -26,4 +25,4 @@ import Obsidian.CodeGen.CUDA
 import Obsidian.Atomic
 import Obsidian.SeqLoop
 import Obsidian.Memory
-import Obsidian.Names
+

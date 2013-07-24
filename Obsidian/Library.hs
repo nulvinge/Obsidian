@@ -23,11 +23,7 @@ import Obsidian.Array
 import Obsidian.Exp 
 import Obsidian.Program
 import Obsidian.Types
-
 import Obsidian.Force
-
--- needed for threadsPerBlock analysis 
-import qualified Obsidian.CodeGen.Program as P 
 
 import Data.Bits 
 import Data.Word
@@ -67,6 +63,8 @@ halve arr = splitAt n2 arr
 replicate n a = mkPullArray n (\ix -> a)
 
 singleton a = replicate 1 a 
+
+iterations n = mkPullArray n id
 
 ---------------------------------------------------------------------------
 -- last
@@ -229,12 +227,12 @@ concP pt arr1 arr2 =
 -}
 
 -- More general versions of this can be imagined 
-mergeL :: (EWord32 -> a -> a -> a) -> Pull Word32 a -> Pull Word32 a -> Push Block Word32 a
+mergeL :: (EWord32 -> a -> a -> a) -> Pull Word32 a -> Pull Word32 a -> Push Word32 a
 mergeL _ arr1 arr2 | len arr1 /= len arr2 = error "incorrect lengths" 
 mergeL f arr1 arr2 =
   Push (len arr1) $ \wf ->
   do
-    ForAll (sizeConv (len arr1)) $
+    forAll (sizeConv (len arr1)) $
       \ tid -> wf (f tid (arr1 ! tid) (arr2 ! tid)) tid 
 
 
@@ -247,3 +245,23 @@ singletonP a =
   do
     a' <- a
     wf a' 0 
+
+---------------------------------------------------------------------------
+-- Matrixes
+---------------------------------------------------------------------------
+
+type SMatrix a = Pull Word32 (Pull Word32 a)
+type DMatrix a = Pull EWord32 (Pull EWord32 a)
+
+splitUp :: (ASize l, ASize l2, Num l)
+           => l -> Pull l2 a -> Pull l2 (Pull l a)
+splitUp n (Pull m ixf) = Pull (m `div` fromIntegral n) $ 
+                          \i -> Pull n $ \j -> ixf (i * (sizeConv n) + j)
+
+coalesce :: (ASize l, Num l)
+         => l -> Pull l a -> Pull l (Pull l a)
+coalesce n arr =
+  Pull s $ \i ->
+    Pull n $ \j -> arr ! (i + (sizeConv s) * j)
+  where s = (len arr) `div` n
+

@@ -20,7 +20,6 @@ import Obsidian.Exp
 import Obsidian.Types
 import Obsidian.Globs
 import Obsidian.Atomic
-import Obsidian.Names
 
 -- Package value-supply
 import Data.Supply
@@ -32,109 +31,60 @@ import Data.Text
 -- Thread/Block/Grid 
 ---------------------------------------------------------------------------
 
--- A hierarchy! 
-data Step a -- A step in the hierarchy
-data Zero
-  
-type Thread = Zero 
-type Block  = Step Thread 
-type Grid   = Step Block  
-
-
-type family Below a
-
-type instance Below Zero = Zero
-type instance Below (Step Zero) = Zero
-type instance Below (Step (Step Zero)) = Step Zero 
-
 type Identifier = Int 
-      
+
+architecture =
+  [(Kernel,0)
+  ,(Grid,65536)
+  ,(Block,1024)
+  ,(Thread,0)
+  ,(Vector,4)
+  ]
+
+data LoopLocationType = Kernel | Grid | Block | Thread | Vector
+  deriving (Show,Eq,Enum,Bounded)
+type PreferredLoopLocation = [(LoopLocationType,Int)]
+data LoopType = Seq | Par
+  deriving (Show,Eq)
+
 ---------------------------------------------------------------------------
 -- Program datatype
 --------------------------------------------------------------------------
-data Program t a where
-  
-  Identifier :: Program t Identifier 
-  
+data Program a where
+  --Combiners
+  For :: LoopType
+      -> PreferredLoopLocation
+      -> EWord32
+      -> (EWord32 -> Program ())
+      -> Program ()
+
+  Cond     :: Exp Bool -> Program () -> Program ()
+  SeqWhile :: Exp Bool -> Program () -> Program () 
+  ParBind  :: Program a -> Program b -> Program (a,b)
+  Return   :: a -> Program a
+  Bind     :: Program a -> (a -> Program b) -> Program b
+
+  --Statements
   Assign :: Scalar a
-            => Name
-            -> [Exp Word32]
-            -> (Exp a)
-            -> Program Thread ()
+         => Name
+         -> [Exp Word32]
+         -> (Exp a)
+         -> Program ()
            
-            
   AtomicOp :: Scalar a
-              => Name 
-              -> Exp Word32
-              -> Atomic a
-              -> Program Thread (Exp a)
+           => Name 
+           -> Exp Word32
+           -> Atomic a
+           -> Program (Exp a)
 
-  Cond :: Exp Bool
-          -> Program t ()
-          -> Program t ()
-  
-  -- DONE: Code generation for this.
-  -- TODO: Generalize this loop! (Replace Thread with t) 
-  SeqFor :: EWord32 -> (EWord32 -> Program t ())
-            -> Program t ()
-            
-  SeqWhile :: Exp Bool ->
-              Program Thread () ->
-              Program Thread () 
-  
+  Identifier :: Program Identifier 
+  Break      :: Program () 
+  Allocate   :: Name -> Word32 -> Type -> Program () 
+  Declare    :: Name -> Type -> Program () 
+  Output     :: Type -> Program Name
+  --Sync       :: Program ()
+  Comment    :: String -> Program ()
 
-            
-  Break  :: Program Thread () 
- 
-  ForAll :: EWord32 
-            -> (EWord32 -> Program t ())
-            -> Program (Step t) ()
-
-  --ForAllBlocks :: EWord32 -> (EWord32 -> Program Block ()) 
-  --                -> Program Grid ()
-
-  ForAllThreads :: (EWord32) -> (EWord32 -> Program Thread ())
-                   -> Program Grid ()
-
-  -- Allocate shared memory in each MP
-
-  -- TODO: Change the Liveness analysis to a two-pass algo
-  --       and remove the Allocate constructor. 
-  Allocate :: Name -> Word32 -> Type -> Program Block () 
-
-  -- Automatic Variables
-  Declare :: Name -> Type -> Program t () 
-              
-  {- About Output (Creates a named output array). 
-     This is similar to Allocate but concerning global arrays.
-
-     Since we cannot synchronize writes to a global array inside of an
-     kernel, global arrays will only be written as outputs of the kernel
-
-     Also used this when doing 
-  -}
-  
-  Output   :: Type -> Program t Name
-  -- (Output may be replaced by AllocateG) 
-  
-  Sync     :: Program Block ()
-  -- Two very experimental threadfence constructs.
-  -- should correspond to cuda __threadfence();
-  -- and __threadfenceBlock(); 
-  ThreadFence :: Program Grid ()
-  ThreadFenceBlock :: Program Block () 
-
-  Comment :: String -> Program t ()
-
-  -- Parallel composition of Programs
-  -- TODO: Will I use this ? 
-  --Par :: Program p () ->
-  --       Program p () ->
-  --       Program p () 
-
-  -- Monad
-  Return :: a -> Program t a
-  Bind   :: Program t a -> (a -> Program t b) -> Program t b
 
 ---------------------------------------------------------------------------
 -- Helpers 
@@ -150,55 +100,29 @@ uniqueNamed pre = do
 ---------------------------------------------------------------------------
 -- forAll 
 ---------------------------------------------------------------------------
-forAll :: EWord32 -> (EWord32 -> Program t ()) -> Program (Step t) ()
-forAll n f = ForAll n f
+forAll :: EWord32 -> (EWord32 -> Program ()) -> Program ()
+forAll n f = For Par [] n f
 
 ---------------------------------------------------------------------------
 -- SeqFor
 ---------------------------------------------------------------------------
-seqFor :: EWord32 -> (EWord32 -> Program Thread ())
-            -> Program Thread ()
+seqFor :: EWord32 -> (EWord32 -> Program ()) -> Program ()
 seqFor (Literal 1) f = f 0
-seqFor n f = SeqFor n f
-
-
----------------------------------------------------------------------------
--- forAllT
---------------------------------------------------------------------------- 
--- When we know that all threads are independent and
--- independent of "blocksize".
--- Also any allocation of local storage is impossible.
--- Composition of something using forAllT with something
--- that performs local computations is impossible.
--- Using the hardcoded BlockDim may turn out to be a problem when
--- we want to compute more than one thing per thread (may be fine though). 
-forAllT :: EWord32 -> (EWord32 -> Program Thread ())
-           -> Program Grid ()
-forAllT n f = ForAllThreads n 
-            $ \gtid -> f gtid 
-
-
+seqFor n f = For Seq [] n f
 
 forAllBlocks = forAll
 
 ---------------------------------------------------------------------------
 -- Monad
 --------------------------------------------------------------------------
-instance Monad (Program t) where
+instance Monad (Program) where
   return = Return
   (>>=) = Bind
 
 ---------------------------------------------------------------------------
--- Aliases 
----------------------------------------------------------------------------
-type TProgram = Program Thread
-type BProgram = Program Block
-type GProgram = Program Grid 
-
----------------------------------------------------------------------------
 -- runPrg (RETHINK!) (Works for Block programs, but all?)
 ---------------------------------------------------------------------------
-runPrg :: Int -> Program t a -> (a,Int)
+runPrg :: Int -> Program a -> (a,Int)
 runPrg i Identifier = (i,i+1)
 
 -- Maybe these two are the most interesting cases!
@@ -208,8 +132,7 @@ runPrg i (Bind m f) =
   let (a,i') = runPrg i m
   in runPrg i' (f a)
      
-runPrg i (Sync) = ((),i)
-runPrg i (ForAll n ixf) =
+runPrg i (For t [] n ixf) =
   let (p,i') = runPrg i (ixf (variable "tid")) 
   in  (p,i')
 -- What can this boolean depend upon ? its quite general!
@@ -232,7 +155,7 @@ runPrg i (AtomicOp _ _ _) = (variable ("new"++show i),i+1)
 ---------------------------------------------------------------------------
 printPrg prg = (\(_,x,_) -> x) $ printPrg' 0 prg
 
-printPrg' :: Int -> Program t a -> (a,Text,Int)
+printPrg' :: Int -> Program a -> (a,Text,Int)
 printPrg' i Identifier = (i,pack "getId;\n",i+1) 
 -- printPrg' i Skip = ((),";\n", i)
 printPrg' i (Assign n ix e) =
@@ -248,37 +171,21 @@ printPrg' i (Allocate id n t) =
 printPrg' i (Declare id t) =
   let newname = id -- "arr" ++ show id
   in ((),pack $ show t ++ " " ++ newname ++ "\n",i+1)
-printPrg' i (Output t) =
-  let newname = "globalOut" ++ show i
-  in (newname,pack $ newname ++ " = new Global output;\n",i+1)
 printPrg' i (Cond p f) =
   let (a,prg2,i') = printPrg' i f
   in ( a,pack ("if (" ++ show p ++  ")" ++ "{\n")
          `append` prg2
          `append` pack "\n}",
        i')
-printPrg' i (SeqFor n f) =
+printPrg' i (For t [] n f) =
   let (a,prg2,i') = printPrg' i (f (variable "i"))
-  in ( a, pack ("for (i in 0.." ++ show n ++ ")" ++ "{\n")
+  in ( a, pack (show t ++ "for (i in 0.." ++ show n ++ ")" ++ "{\n")
           `append` prg2
           `append` pack "\n}",
        i')
-printPrg' i (ForAll n f) =
-  let (a,prg2,i') = printPrg' i (f (variable "i"))
-  in ( a, pack ("par (i in 0.." ++ show n ++ ")" ++ "{\n")
-          `append` prg2
-          `append` pack "\n}",
-       i')
---printPrg' i (ForAllBlocks n f) =
---  let (d,prg2,i') = printPrg' i (f (variable "BIX"))
---  in (d, pack ("blocks (i)" ++ "{\n")
---         `append` prg2
---         `append` pack "\n}",
---      i')
 printPrg' i (Return a) = (a,pack "MonadReturn;\n",i)
 printPrg' i (Bind m f) =
   let (a1, str1,i1) = printPrg' i m
       (a2,str2,i2) = printPrg' i1 (f a1)
   in (a2,str1 `append` str2, i2)
-printPrg' i Sync = ((),pack "Sync;\n",i)
 

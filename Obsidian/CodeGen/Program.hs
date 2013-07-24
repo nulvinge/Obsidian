@@ -2,15 +2,6 @@
              ExistentialQuantification,
              FlexibleInstances #-}
 
-{- CodeGen.Program.
-
-   Joel Svensson 2012, 2013
-
-   Notes:
-     2013-03-17: Codegeneration is changing
--} 
-
-
 module Obsidian.CodeGen.Program where
 
 import Obsidian.Exp
@@ -19,7 +10,7 @@ import Obsidian.Types
 import Obsidian.Atomic
 
 import qualified Obsidian.Program as P
-import Obsidian.Program (Step,Zero)
+import Obsidian.Program (LoopType)
 
 import Data.Word
 import Data.Supply
@@ -39,38 +30,31 @@ type IM = IMList ()
 out a = [(a,())]
 
 
-data Statement t =
-  forall a. (Show a, Scalar a) => SAssign Name [Exp Word32] (Exp a)
-  | forall a. (Show a, Scalar a) => SAtomicOp Name Name (Exp Word32) (Atomic a)
+data Statement t
+  --Combiners
+  = SFor LoopType Name P.PreferredLoopLocation EWord32 (IMList t) 
   | SCond (Exp Bool) (IMList t) 
-  | SSeqFor String (Exp Word32) (IMList t)
-  | SBreak
   | SSeqWhile (EBool) (IMList t)
-    
-  | SForAll (Exp Word32) (IMList t) 
-  | SForAllBlocks (Exp Word32) (IMList t)
+  | SPar [(IMList t)]
 
-    -- a special loop over all threads..
-  | SForAllThreads (Exp Word32) (IMList t)
-    
+  --Statements
+  | forall a. (Show a, Scalar a) => SAssign Name [Exp Word32] (Exp a)
+  | forall a. (Show a, Scalar a) => SAtomicOp Name Name (Exp Word32) (Atomic a)
+  | SBreak
     -- Memory Allocation..
   | SAllocate Name Word32 Type
   | SDeclare  Name Type
   | SOutput   Name Type
-
   | SComment String
-
-    -- Synchronisation
   | SSynchronize
 
-    
 -- compileStep1 :: P.Program t a -> IM
 -- compileStep1 p = snd $ cs1 ns p
 --   where
 --     ns = unsafePerformIO$ newEnumSupply
 
 
-compileStep1 :: Compile t => P.Program t a -> IM
+compileStep1 :: P.Program a -> IM
 compileStep1 p = snd $ compile ns p
   where
     ns = unsafePerformIO$ do
@@ -86,34 +70,18 @@ supplySplit (a,b) = ((a1,b1),(a2,b2))
   where (a1,a2) = split2 a
         (b1,b2) = split2 b
 
-class Compile t where
-  compile :: VarSupply -> P.Program t a -> (a,IM)
-
--- Compile Thread program 
-instance Compile Zero  where 
-  compile s p = cs s p 
-
--- Compile Block program 
-instance Compile (Step Zero) where
-  compile s (P.ForAll n f) = (a,out (SForAll n im))
+compile :: VarSupply -> P.Program a -> (a,IM)
+compile s (P.For t pl n f) = (a,out (SFor t var pl n im))
     where
-      p = f (ThreadIdx X)
+      p = f (variable var)
       (a,im) = compile s p
-  compile s p = cs s p 
-
--- Compile a Grid Program 
-instance Compile (Step (Step (Zero))) where
-  compile s (P.ForAll n f) = (a, out (SForAllBlocks n im))
-    where 
-      p = f (BlockIdx X)
-      (a,im) = compile s p
-  compile s p = cs s p
-
+      var = "i" ++ show (supplyVar s)
+compile s p = cs s p 
 
 ---------------------------------------------------------------------------
 -- General compilation
 ---------------------------------------------------------------------------
-cs :: Compile t => VarSupply -> P.Program t a -> (a,IM) 
+cs :: VarSupply -> P.Program a -> (a,IM) 
 cs i P.Identifier = (supplyVar i, [])
 
 cs i (P.Assign name ix e) =
@@ -128,13 +96,6 @@ cs i (P.AtomicOp name ix at) = (v,out im)
 cs i (P.Cond bexp p) = ((),out (SCond bexp im)) 
   where ((),im) = compile i p
 
-cs i (P.SeqFor n f) = (a,out (SSeqFor nom n im))
-  where
-    (i1,i2) = supplySplit i
-    nom = "i" ++ show (supplyVar i1)
-    v = variable nom
-    p = f v
-    (a,im) = compile i2 p
 cs i (P.SeqWhile b p) = (a, out (SSeqWhile b im))
   where
     (a,im) = compile i p
@@ -160,9 +121,12 @@ cs i (P.Declare  id t)   = ((),out (SDeclare id t))
 --  Uniformity! (Allocate Declare Output) 
 cs i (P.Output   t)      = (nom,out (SOutput nom t))
   where nom = "output" ++ show (supplyOutput i) 
-cs i (P.Sync)            = ((),out (SSynchronize))
 cs i (P.Comment c)       = ((),out (SComment c))
 
+cs i (P.ParBind a b) = ((a',b'),out $ SPar [ima, imb])
+  where (s1,s2) = supplySplit i
+        (a',ima) = compile s1 a
+        (b',imb) = compile s2 b
 
 cs i (P.Bind p f) = (b,im1 ++ im2) 
   where
@@ -259,11 +223,9 @@ numThreads :: IMList a -> Either Word32 (EWord32)
 numThreads im = foldl maxCheck (Left 0) $ map process im
   where
     process (SCond bexp im,_) = numThreads im
-    process (SSeqFor _ _ _,_) = Left 1
-    process (SForAll (Literal n) _,_) = Left n
-    process (SForAll n _,_) = Right n
-    process (SForAllBlocks _ im,_) = numThreads im
-    process (SForAllThreads n im,_) = Right (variable "UNKNOWN") --fix this!
+    process (SFor P.Seq _ _ _ _,_) = Left 1
+    process (SFor P.Par _ _ (Literal n) _,_) = Left n
+    process (SFor P.Par _ _ n _,_) = Right n
     process a = Left 0 -- ok ? 
 
     maxCheck (Left a) (Right b)  = Right $ maxE (fromIntegral a) b
@@ -276,10 +238,7 @@ getOutputs :: IMList a -> [(Name,Type)]
 getOutputs im = concatMap process im
   where
     process (SOutput name t,_)      = [(name,t)]
-    process (SSeqFor _ _ im,_)      = getOutputs im
-    process (SForAll _ im,_)        = getOutputs im
-    process (SForAllBlocks _ im,_)  = getOutputs im
-    process (SForAllThreads _ im,_) = getOutputs im
+    process (SFor _ _ _ _ im,_)     = getOutputs im
     process a = []
     
 
@@ -313,23 +272,10 @@ printStm (SCond bexp im,m) =
 printStm (SSynchronize,m) =
   "sync();" ++ meta m
   
-printStm (SSeqFor name n im,m) =
-  "for " ++ name  ++ " in [0.." ++ show n ++"] do" ++ meta m ++ 
+printStm (SFor t name pl n im,m) =
+  "for" ++ (show t) ++ " " ++ show name  ++ " in [0.." ++ show n ++"] do" ++ meta m ++ 
   concatMap printStm im ++ "\ndone;\n"
 
-printStm (SForAll n im,m) =
-  "forAll i in [0.." ++ show n ++"] do" ++ meta m ++
-  concatMap printStm im ++ "\ndone;\n"
-
-printStm (SForAllBlocks n im,m) =
-  "forAllBlocks i in [0.." ++ show n ++"] do" ++ meta m ++
-  concatMap printStm im ++ "\ndone;\n"
-printStm (SForAllThreads n im,m) =
-  "forAllThreads i in [0.." ++ show n ++"] do" ++ meta m ++ 
-  concatMap printStm im ++ "\ndone;\n"
-
-
-  
 -- printStm (a,m) = error $ show m 
 
 meta :: Show a => a -> String

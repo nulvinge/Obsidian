@@ -35,8 +35,6 @@ import Obsidian.Program
 import Obsidian.Force
 import Obsidian.Memory
 
-import Obsidian.Names -- PHASE OUT! 
-
 import qualified Obsidian.CodeGen.Program as CG 
 
 import Data.Word
@@ -93,10 +91,10 @@ instance (GetTypes a, GetTypes b) => GetTypes (a,b) where
     where (i1,s1,a) = getTypes a (name ++ "a")
           (i2,s2,b) = getTypes b (name ++ "b")
 
-instance ToProgram (GProgram a) where
+instance ToProgram (Program a) where
   toProgram i prg () = ([], [], CG.compileStep1 prg)
 
-instance (MemoryOps a, ASize l) => ToProgram (Push Grid l a) where
+instance (MemoryOps a, ASize l) => ToProgram (Push l a) where
   toProgram i a@(Push _ p) () = (ins
                                 ,s ++ sizes
                                 ,b)
@@ -128,7 +126,7 @@ infixr 5 :-
 
 type family InputList a
 
-type instance InputList (a -> b)        = a :- (InputList b)
-type instance InputList (Push Grid l b) = ()
-type instance InputList (GProgram b)    = () 
+type instance InputList (a -> b)    = a :- (InputList b)
+type instance InputList (Push l b)  = ()
+type instance InputList (Program b) = () 
 

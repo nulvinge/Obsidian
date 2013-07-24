@@ -105,14 +105,6 @@ cl im = mapM process im
         -- Is this correct ?  Same question, all below
         return (SCond bexp iml,ns)
 
-    process (SSeqFor nom n im,_) = 
-      do 
-        s <- get
-        let iml = computeLiveness1 s im 
-            l   = safeHead iml
-            ns  = s `Set.union` l
-        put ns
-        return (SSeqFor nom n iml,ns) 
     process (SSeqWhile b im,_) = 
       do 
         s <- get 
@@ -131,30 +123,13 @@ cl im = mapM process im
         return (SComment ss,s)
 
 
-    process (SForAll n im,_) =  
+    process (SFor t nom pl n im,_) =  
       do 
         s <- get 
         let iml = computeLiveness1 s im 
             l   = safeHead iml 
             ns  = s `Set.union` l
         put ns
-        return (SForAll n iml,ns) 
+        return (SFor t nom pl n iml,ns) 
     
-    process (SForAllBlocks n im,_) = 
-      do 
-        s <- get 
-        let iml = computeLiveness1 s im 
-            l   = safeHead iml 
-            ns  = s `Set.union` l
-        put ns
-        return (SForAllBlocks n iml,ns)
-
-    process (SForAllThreads n im,_) = 
-      do 
-        s <- get 
-        let iml = computeLiveness1 s im 
-            l   = safeHead iml 
-            ns  = s `Set.union` l
-        put ns 
-        return (SForAllThreads n iml,ns)
 
