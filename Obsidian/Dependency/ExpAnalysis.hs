@@ -226,7 +226,7 @@ concatMap (traverseIM' f)
 -}
 
 traverseIMaccDown :: (b -> (P.Statement a,a) -> [((P.Statement a,c),b)])
-              -> b -> P.IMList a -> P.IMList c
+                  -> b -> P.IMList a -> P.IMList c
 traverseIMaccDown f acc = map g . concat . map (f acc)
   where
     g ((b,c),acc') = case b of

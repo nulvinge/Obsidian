@@ -72,6 +72,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , mapIM $ \(p,d) -> insertCost (p,d)
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
+          , transformLoops depEdgesF
           ]
 
         cost = sumCost $ collectIM (list.getCost.snd) imF
@@ -225,4 +226,22 @@ instructionNumbering ((p,d),il) =
             SAssign n l e -> Just $ SAssign n l e
             SSynchronize  -> Just SSynchronize
             _             -> Nothing
+
+
+
+transformLoops :: a -> IMList IMData -> IMList IMData
+transformLoops _ = traverseIMaccDown trav architecture
+  where
+    trav :: [(LoopLocationType, Integer)]
+         -> (Statement IMData, IMData)
+         -> [((Statement IMData, IMData), [(LoopLocationType, Integer)])]
+    trav ((loc,size):as) (SFor Par name [] n l,d) | tryLess n size
+                                   = [((SFor Par name [(loc,0)] n l,d),as)]
+    trav as (SFor t name pl n l,d) = [((SFor Seq name [] n l,d),as)]
+    trav as p                      = [(p,as)]
+
+    tryLess (Literal n) size = fromIntegral n < size
+    tryLess _ _ = True
+
+
 

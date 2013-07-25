@@ -224,8 +224,9 @@ numThreads im = foldl maxCheck (Left 0) $ map process im
   where
     process (SCond bexp im,_) = numThreads im
     process (SFor P.Seq _ _ _ _,_) = Left 1
-    process (SFor P.Par _ _ (Literal n) _,_) = Left n
-    process (SFor P.Par _ _ n _,_) = Right n
+    process (SFor P.Par _ [(P.Thread,_)] (Literal n) _,_) = Left n
+    process (SFor P.Par _ [(P.Thread,_)] n _,_) = Right n
+    process (SFor P.Par _ _              n im,_) = numThreads im
     process a = Left 0 -- ok ? 
 
     maxCheck (Left a) (Right b)  = Right $ maxE (fromIntegral a) b

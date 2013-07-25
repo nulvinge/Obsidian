@@ -34,10 +34,10 @@ import Data.Text
 type Identifier = Int 
 
 architecture =
-  [(Kernel,0)
-  ,(Grid,65536)
-  ,(Block,1024)
-  ,(Thread,0)
+  [-- (Kernel,0)
+   (Block,65536)
+  ,(Thread,1024)
+  -- ,(Thread,0)
   ,(Vector,4)
   ]
 

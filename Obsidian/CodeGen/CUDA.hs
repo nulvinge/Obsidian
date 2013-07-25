@@ -202,12 +202,12 @@ imToSPMDC nt im = concatMap (process nt) im
     process nt (SFor P.Par name [(P.Thread,_)] (Literal n) im,_) =
       if (n < nt) 
       then 
-        [cIf (cBinOp CLt (cThreadIdx X)  (cLiteral (Word32Val n) CWord32) CInt)
-         (cAssign (cVar name (typeToCType Word32)) [] (cThreadIdx X) : code) []]
+        [cIf (cBinOp CLt (cThreadIdx X)  (cLiteral (Word32Val n) CWord32) CInt) code []]
       else 
-        code 
+        code
       where 
-        code = imToSPMDC nt im
+        code = (cAssign (cVar name (typeToCType Word32)) [] (cThreadIdx X))
+             : imToSPMDC nt im
     process nt (SFor _ name pl e im,_) =
       [cFor name (expToCExp e) (imToSPMDC nt im)]
 
