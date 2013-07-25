@@ -5,15 +5,15 @@
              TupleSections,
              FlexibleInstances #-}
 
-module Obsidian.AddOn.Analysis.Coalesced (isCoalesced) where
+module Obsidian.Dependency.Coalesced (isCoalesced) where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut
 import Obsidian.CodeGen.Program
 import Obsidian
-import Obsidian.AddOn.Analysis.ExpAnalysis
-import Obsidian.AddOn.Analysis.Helpers
-import Obsidian.AddOn.Analysis.Range
+import Obsidian.Dependency.ExpAnalysis
+import Obsidian.Dependency.Helpers
+import Obsidian.Dependency.Range
 
 import Data.Word
 import Data.Tuple

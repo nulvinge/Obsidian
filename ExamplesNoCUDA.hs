@@ -12,7 +12,7 @@ import qualified Data.Vector.Storable as V
 
 import Control.Monad.State
 import Debug.Trace
-import Obsidian.AddOn.Analysis
+import Obsidian.Dependency.Analysis
 import Obsidian.Inplace
 
 import Prelude hiding (zipWith,sum,replicate,take,drop)
@@ -29,41 +29,28 @@ quickPrint prg input =
 -- MapFusion example
 ---------------------------------------------------------------------------
 
-mapFusion :: Pull Word32 EInt -> BProgram (Pull Word32 EInt)
+mapFusion :: Pull Word32 EInt -> Program (Pull Word32 EInt)
 mapFusion arr =
   do
-    imm <- force $ (fmap (+1) . fmap (*2)) arr
-    force $ (fmap (+3) . fmap (*4)) imm
+    imm <- force $ fmap (+1) $ fmap (*2) arr
+    force $ fmap (+3) $ fmap (*4) imm
 
 splitUpD :: (ASize l, Num l)
            => l -> Pull (Exp Word32) a -> Pull (Exp Word32) (Pull l a)
 splitUpD n (Pull m ixf) = Pull (m `div` fromIntegral n) $ 
                           \i -> Pull n $ \j -> ixf (i * (sizeConv n) + j)
 
-splitUp :: (ASize l, ASize l2, Num l)
-           => l -> Pull l2 a -> Pull l2 (Pull l a)
-splitUp n (Pull m ixf) = Pull (m `div` fromIntegral n) $ 
-                          \i -> Pull n $ \j -> ixf (i * (sizeConv n) + j)
-
-
 splitUpS :: Word32 -> Pull Word32 a -> Pull Word32 (Pull Word32 a)
 splitUpS n (Pull m ixf) = Pull (m `div` n) $ 
                           \i -> Pull n $ \j -> ixf (i * (fromIntegral n) + j)
 
-coalesce :: (ASize l, Num l)
-         => l -> Pull l a -> Pull l (Pull l a)
-coalesce n arr =
-  Pull s $ \i ->
-    Pull n $ \j -> arr ! (i + (sizeConv s) * j)
-  where s = (len arr) `div` n
-
---test1 :: Pull (Exp Word32) EInt -> GProgram (Push Grid (Exp Word32) EInt)
+--test1 :: Pull (Exp Word32) EInt -> Program (Push (Exp Word32) EInt)
 --test1 input = liftG  $ fmap mapFusion (splitUp 256 input) 
 
 input1 :: Pull (Exp Word32) EInt 
 input1 = namedGlobal "apa" (variable "X")
 
-test :: Pull EWord32 EInt -> GProgram ()
+test :: Pull EWord32 EInt -> Program ()
 test a = do
   Comment "test"
   return ()
@@ -144,7 +131,7 @@ kStoneP n op arr =
 -- Brent Kung
 --------------------------------------------------------------------------- 
 bKung :: (Choice a, MemoryOps a) 
-         => (a -> a -> a) -> Pull Word32 a -> BProgram (Pull Word32 a)
+         => (a -> a -> a) -> Pull Word32 a -> Program (Pull Word32 a)
 bKung op arr | len arr == 1 = return arr
 bKung op arr = undefined 
 
@@ -160,10 +147,10 @@ bKung op arr = undefined
 ---------------------------------------------------------------------------
 -- Go Towards Counting sort again.  
 --------------------------------------------------------------------------- 
-histogram :: Pull EWord32 EInt32 -> GProgram ()
+histogram :: Pull EWord32 EInt32 -> Program ()
 histogram arr = do
   global <- Output $ Pointer Word32
-  forAllT (len arr) $ \gix -> atomicOp global (i32ToW32 (arr ! gix)) AtomicInc
+  forAll (len arr) $ \gix -> atomicOp global (i32ToW32 (arr ! gix)) AtomicInc
 
   
 atomicOp n e1 a = AtomicOp n e1 a >> return () 
@@ -172,12 +159,12 @@ getHist =
   quickPrint histogram
              ((undefinedGlobal (variable "X") :: Pull (Exp Word32) EInt32) :- ())
   
-reconstruct :: Pull EWord32 EWord32 -> Push Grid EWord32 EInt32
+reconstruct :: Pull EWord32 EWord32 -> Push EWord32 EInt32
 reconstruct arr = Push (len arr) f
   where
-    f k = do forAllT (len arr) $ \gix ->
+    f k = do forAll (len arr) $ \gix ->
                let startIx = arr ! gix
-               in  SeqFor (arr ! (gix+1) - startIx) $ \ix ->
+               in  seqFor (arr ! (gix+1) - startIx) $ \ix ->
                    do 
                      k (w32ToI32 gix) (ix + startIx)
                  
@@ -201,7 +188,7 @@ testFold3 :: Pull EWord32 EWord32
              -> Pull EWord32 (BProgram (Pull Word32 EWord32))
 testFold3 arr =  fmap (testFold2) (splitUp 256 arr)
 
-testFold4 :: Pull EWord32 EWord32 -> Program Grid ()
+testFold4 :: Pull EWord32 EWord32 -> Program ()
 testFold4 = join . liftM forceG . liftG . testFold3 
 
 flatten :: ASize l => Pull EWord32 (Pull l a) -> Pull EWord32 a
@@ -224,8 +211,8 @@ revG arr = mkPullArray n $ \ix -> arr ! (sizeConv n - 1 - ix)
  where
    n = len arr
 
-testRev :: Scalar a=>  Pull EWord32 (Exp a) -> GProgram () 
-testRev = forceG . push Grid . revG
+testRev :: Scalar a=>  Pull EWord32 (Exp a) -> Program () 
+testRev = forceG . push . revG
 -} 
    
 ---------------------------------------------------------------------------
@@ -233,14 +220,14 @@ testRev = forceG . push Grid . revG
 ---------------------------------------------------------------------------
 
 s1 :: ( Num a, MemoryOps a) =>
-     Pull Word32 a -> BProgram (Pull Word32 a)
+     Pull Word32 a -> Program (Pull Word32 a)
 s1 arr = do
   a1 <- force (fmap (+3) arr)
   a2 <- force (fmap (+2) a1) 
   force (fmap (+1) a2)  
 
 --gs1 :: (Num a, MemoryOps a) =>
---     Pull EWord32 a -> Program Grid (Push Grid EWord32 a)
+--     Pull EWord32 a -> Program (Push EWord32 a)
 --gs1 = liftG . (fmap s1) . splitUp 256 
 
 
@@ -252,8 +239,6 @@ s1 arr = do
 ---------------------------------------------------------------------------
 -- Matrix Mul
 ---------------------------------------------------------------------------
-
-type SMatrix a = Pull Word32 (Pull Word32 a)
 
 {-
 transpose0 :: (ASize l1, ASize l2) => Pull l1 (Pull l2 a) -> Pull l2 (Pull l1 a)
@@ -274,7 +259,7 @@ joinM a = mkPullArray n $ \i -> (a!(i`div`m))!(i`mod`m) --(a!(i`div`m)) ! (i`mod
           n = len (a!0)*(len a)
 
 joinPushNG a = pushNG l $ joinM a
-    where pushNG :: ASize s => Word32 -> Pull s e -> Push Grid s e
+    where pushNG :: ASize s => Word32 -> Pull s e -> Push s e
           pushNG = pushN
           l = len (a!0)
 
@@ -298,7 +283,7 @@ transpose arr = mkPullArray m
 {-      
 matMul :: (Num a1, ASize l1, ASize l, MemoryOps a1, LiftB a1)
           => Pull l1 (Pull l a1)
-          -> Pull l (Pull Word32 a1) -> Program Grid (Push Grid l1 a1)    
+          -> Pull l (Pull Word32 a1) -> Program (Push l1 a1)    
 matMul x y = liftG
              -- Pull l (BProgram (Pull l EFloat))  
              $ fmap liftB
@@ -317,7 +302,7 @@ mkMatrix n m f = mkPullArray n $ \i -> mkPullArray m $ \j -> f i j
 
 {-
 matMul :: (Num a, MemoryOps a, LiftB a)
-          => SMatrix a -> SMatrix a -> Program Grid (Push Grid Word32 a)    
+          => SMatrix a -> SMatrix a -> Program (Push Word32 a)    
 matMul x y = liftG
              -- :: Pull l (BProgram (Pull l a))  
              $ fmap liftB
@@ -331,11 +316,11 @@ matMul x y = liftG
 -} 
 
 --matMul2 :: Num a 
---          => SMatrix a -> SMatrix a -> Push Grid Word32 a
+--          => SMatrix a -> SMatrix a -> Push Word32 a
 {- 
 matMul :: (Num c, MemoryOps c)
           => SPull (SPull c)
-          -> SPull (SPull c) -> SPush Grid c
+          -> SPull (SPull c) -> SPush c
 matMul x y = zipWithG body (replicate n x) (replicate m (transpose y))
   where
     n = len x
@@ -382,7 +367,7 @@ getIncP = putStrLn $ genKernel "incP" incP (input :- ())
 input :: DPull EFloat
 input = namedGlobal "apa" (variable "X")
 
-incP :: DPull EFloat -> DPush Grid EFloat
+incP :: DPull EFloat -> DPush EFloat
 incP arr = mapG (return . inc) ((splitUp 512 . ixMap (vperm2 12 3 1. vperm 11 1 0)) arr)
 
 
@@ -408,7 +393,7 @@ vperm2 l m r = swapBitBlocks l (r+l-m) r . bitBlockXor (l-1) (r+l-m-1)
 -} 
 
 
-convToPush :: SPull a -> SPush Block a
+convToPush :: SPull a -> SPush a
 convToPush arr =
   Push n $ \wf ->
    forAll (fromIntegral n) $ \tid -> wf (arr ! tid) tid
@@ -419,7 +404,7 @@ convToPush arr =
 red1 :: MemoryOps a
      => (a -> a -> a)
      -> SPull a
-     -> BProgram (SPush Block a)
+     -> Program (SPush a)
 red1 f arr
     | len arr == 1 = return $ push arr
     | otherwise    = do
@@ -430,7 +415,7 @@ red1 f arr
 red2 :: MemoryOps a
      => (a -> a -> a)
      -> SPull a
-     -> BProgram (SPush Block a)
+     -> Program (SPush a)
 red2 f arr
     | len arr == 1 = return $ push arr
     | otherwise    = do
@@ -441,7 +426,7 @@ red2 f arr
 red3 :: MemoryOps a
      => (a -> a -> a)
      -> SPull a
-     -> BProgram (SPush Block a)
+     -> Program (SPush a)
 red3 f arr
     | len arr == 2 = return $ push $ singleton $ f (arr!0) (arr!1)
     | otherwise    = do
@@ -452,67 +437,67 @@ red3 f arr
 red4 :: MemoryOps a
      => (a -> a -> a)
      -> SPull a
-     -> BProgram (SPush Block a)
+     -> Program (SPush a)
 red4 f arr = do
-    arr' <- force $ pConcatMap (return . seqReduce f)
+    arr' <- force $ pConcatMap (seqReduce f)
                                (splitUpS 8 arr)
     red3 f arr'
 
 red5 :: MemoryOps a
      => (a -> a -> a)
      -> SPull a
-     -> BProgram (SPush Block a)
+     -> Program (SPush a)
 red5 f arr = do
-    arr' <- force $ pConcatMap (return . seqReduce f)
+    arr' <- force $ pConcatMap (seqReduce f)
                                (coalesce 8 arr)
     red3 f arr'
 
 red6 :: MemoryOps a
      => (a -> a -> a)
      -> SPull a
-     -> BProgram (SPush Block a)
+     -> Program (SPush a)
 red6 f arr = do
-    arr' <- force $ pConcatMap (return . seqReduce f)
+    arr' <- force $ pConcatMap (seqReduce f)
                                (coalesce 16 arr)
     red3 f arr'
 
 red7 :: MemoryOps a
      => (a -> a -> a)
      -> SPull a
-     -> BProgram (SPush Block a)
+     -> Program (SPush a)
 red7 f arr = do
-    arr' <- force $ pConcatMap (return . seqReduce f)
+    arr' <- force $ pConcatMap (seqReduce f)
                                (coalesce 32 arr)
     red3 f arr'
 
-tr1 = printAnalysis ((pConcatMap $ red1 (+)) . splitUpS 1024) (input2 :- ())
-tr2 = printAnalysis ((pConcatMap $ red2 (+)) . splitUpS 1024) (input2 :- ())
-tr3 = printAnalysis ((pConcatMap $ red3 (+)) . splitUpS 1024) (input2 :- ())
-tr4 = printAnalysis ((pConcatMap $ red4 (+)) . splitUpS 1024) (input2 :- ())
-tr5 = printAnalysis ((pConcatMap $ red5 (+)) . splitUpS 1024) (input2 :- ())
-tr6 = printAnalysis ((pConcatMap $ red6 (+)) . splitUpS 1024) (input2 :- ())
-tr7 = printAnalysis ((pConcatMap $ red7 (+)) . splitUpS 1024) (input2 :- ())
+tr1 = printAnalysis ((pConcatMapJoin $ red1 (+)) . splitUpS 1024) (input2 :- ())
+tr2 = printAnalysis ((pConcatMapJoin $ red2 (+)) . splitUpS 1024) (input2 :- ())
+tr3 = printAnalysis ((pConcatMapJoin $ red3 (+)) . splitUpS 1024) (input2 :- ())
+tr4 = printAnalysis ((pConcatMapJoin $ red4 (+)) . splitUpS 1024) (input2 :- ())
+tr5 = printAnalysis ((pConcatMapJoin $ red5 (+)) . splitUpS 1024) (input2 :- ())
+tr6 = printAnalysis ((pConcatMapJoin $ red6 (+)) . splitUpS 1024) (input2 :- ())
+tr7 = printAnalysis ((pConcatMapJoin $ red7 (+)) . splitUpS 1024) (input2 :- ())
 
 or4 = printPrg $ do
-  let a@(Push n p) = (pConcatMap $ red4 (+)) $ splitUpS 1024 input2
+  let a@(Push n p) = (pConcatMapJoin $ red4 (+)) $ splitUpS 1024 input2
   output <- outputArray a
   p (\a ix -> assignArray output a ix)
 
-err5 :: (MemoryOps a, Num a) => SPull a -> BProgram (SPush Block a)
+err5 :: (MemoryOps a, Num a) => SPull a -> Program (SPush a)
 err5 arr = do
-  arr' <- force $ pConcatMap (return . seqReduce (+) . ixMap (+1))
+  arr' <- force $ pConcatMap (seqReduce (+) . ixMap (+1))
                              (splitUpS 8 arr)
   arr'' <- force $ Push (len arr') $ \wf ->
-            ForAll (fromIntegral $ len arr') $ \i -> wf 0 0 >> f (flip wf $ i) i (arr'!i)
+            forAll (fromIntegral $ len arr') $ \i -> wf 0 0 >> f (flip wf $ i) i (arr'!i)
   err3 arr''
   where 
-    --f :: (Num a, MemoryOps a) => Exp Word32 -> Exp a -> TProgram ()
+    --f :: (Num a, MemoryOps a) => Exp Word32 -> Exp a -> Program ()
     f wf i a = ifThenElse ((i .&. 1) ==* 0)
                   (wf a)
                   (wf (-a))
     --f i a b = ifThenElse ((i .&. 1) ==* 0) (return $ a+b) (return $ b+a)
 
-err3 :: (MemoryOps a, Num a) => SPull a -> BProgram (SPush Block a)
+err3 :: (MemoryOps a, Num a) => SPull a -> Program (SPush a)
 err3 arr
     | len arr == 2 = return $ push $ singleton $ (arr!0) + (arr!1)
     | otherwise    = do
@@ -520,27 +505,27 @@ err3 arr
         arr' <- unsafeForce $ zipWith (+) a1 a2
         err3 arr'
 
-te5 = printAnalysis ((pConcatMap $ err5) . splitUpS 1024) (input2 :- ())
+te5 = printAnalysis ((pConcatMapJoin $ err5) . splitUpS 1024) (input2 :- ())
 
-reverseL :: SPull a -> BProgram (SPush Block a)
+reverseL :: SPull a -> Program (SPush a)
 reverseL = liftM push . return . Obsidian.reverse
 
 
-reverseL' :: MemoryOps a => SPull a -> BProgram (SPush Block a)
+reverseL' :: MemoryOps a => SPull a -> Program (SPush a)
 reverseL' = liftM push . force . Obsidian.reverse
 
-reverses :: DPull a -> DPush Grid a
-reverses = pConcatMap reverseL . splitUp 1024
+reverses :: DPull a -> DPush a
+reverses = pConcatMapJoin reverseL . splitUp 1024
 
-largeReverse :: DPull a -> DPush Grid a
-largeReverse = pConcat . pMap reverseL . Obsidian.reverse . splitUp 1024
+largeReverse :: DPull a -> DPush a
+largeReverse = pConcatMapJoin reverseL . Obsidian.reverse . splitUp 1024
 
-trevl  = printAnalysis ((pConcatMap $ reverseL)  . splitUpS 1024) (input2 :- ())
-trevl' = printAnalysis ((pConcatMap $ reverseL') . splitUpS 1024) (input2 :- ())
+trevl  = printAnalysis ((pConcatMapJoin $ reverseL)  . splitUpS 1024) (input2 :- ())
+trevl' = printAnalysis ((pConcatMapJoin $ reverseL') . splitUpS 1024) (input2 :- ())
 trevs  = printAnalysis reverses (input1 :- ())
 trevL  = printAnalysis largeReverse (input1 :- ())
 
-mandel :: Push Grid Word32 EWord8
+mandel :: Push Word32 EWord8
 mandel = genRect 512 512 iters
   where
     xmax =  1.2 :: EFloat
@@ -558,16 +543,16 @@ mandel = genRect 512 512 iters
 
     cond (x,y,iter) = ((x*x + y*y) <* 4) &&* iter <* 512
 
-    iters :: EWord32 -> EWord32 -> TProgram (SPush Thread EWord8)
-    iters bid tid = return $ fmap extract $ seqUntil (f bid tid) cond (0,0,1)
+    iters :: EWord32 -> EWord32 -> SPush EWord8
+    iters bid tid = fmap extract $ seqUntil (f bid tid) cond (0,0,1)
     extract (_,_,c) = ((w32ToW8 c) `mod` 16) * 16
 
-    genRect bs ts p = generate bs (return . generate ts . p)
+    genRect bs ts p = generate bs (generate ts . p)
 
 tm0 = printAnalysis mandel ()
 
 sklansky :: (Choice a, MemoryOps a)
-         => Int -> (a -> a -> a) -> SPull a -> BProgram (SPush Block a)
+         => Int -> (a -> a -> a) -> SPull a -> Program (SPush a)
 sklansky 0 op arr = return $ push arr
 sklansky n op arr = do
   let arr1 = binSplit (n-1) (fan op) arr
@@ -581,12 +566,12 @@ sklansky n op arr = do
       where (a1,a2) = halve arr
             c = a1 ! fromIntegral (len a1-1)
 
-ts1 = printAnalysis ((pConcatMap $ sklansky 10 (+)) . splitUpS 1024) (input2 :- ())
+ts1 = printAnalysis ((pConcatMapJoin $ sklansky 10 (+)) . splitUpS 1024) (input2 :- ())
 
 phase :: Choice a
-      => Int -> (a -> a -> a) -> SPull a -> SPush Block a
+      => Int -> (a -> a -> a) -> SPull a -> SPush a
 phase i f arr =
-  Push l $ \wf -> ForAll s12 $ \tid -> do
+  Push l $ \wf -> forAll s12 $ \tid -> do
     let ix1 = tid .&. (bit i -1) .|. ((tid .&. (complement $ bit i - 1)) <<* 1)  -- iinsertZero i tid
         ix2 = complementBit ix1 i
         ix3 = ix2 .&. (complement $ bit i - 1) -- - 1
@@ -608,8 +593,8 @@ phase i f arr =
 
 
 compose :: MemoryOps a
-        => [SPull a -> SPush Block a]
-        -> SPull a -> BProgram (SPush Block a)
+        => [SPull a -> SPush a]
+        -> SPull a -> Program (SPush a)
 compose [f] arr    = return $ f arr
 compose (f:fs) arr = do
   arr2 <- force $ f arr
@@ -617,18 +602,18 @@ compose (f:fs) arr = do
 
 
 sklansky2 :: (Choice a, MemoryOps a)
-          => Int -> (a -> a -> a) -> SPull a -> BProgram (SPush Block a)
+          => Int -> (a -> a -> a) -> SPull a -> Program (SPush a)
 sklansky2 n op = compose [phase i op | i <- [0..(n-1)]]
 
-ts2 = printAnalysis ((pConcatMap $ sklansky2 10 (+)) . splitUpS 1024) (input2 :- ())
+ts2 = printAnalysis ((pConcatMapJoin $ sklansky2 10 (+)) . splitUpS 1024) (input2 :- ())
 
 sklansky3 :: (Choice a, MemoryOps a)
-          => Int -> (a -> a -> a) -> SPull a -> BProgram (SPush Block a)
+          => Int -> (a -> a -> a) -> SPull a -> Program (SPush a)
 sklansky3 n op arr = do
   im <- force $ load 2 arr
   compose [phase i op | i <- [0..(n-1)]] im
 
-load :: ASize l => Word32 -> Pull l a -> Push Block l a 
+load :: ASize l => Word32 -> Pull l a -> Push l a 
 load n arr =
   Push m $ \wf ->
     forAll (sizeConv n') $ \tid ->
@@ -638,14 +623,14 @@ load n arr =
     m = len arr
     n' = sizeConv m `div` fromIntegral n
 
-ts3 = printAnalysis ((pConcatMap $ sklansky3 10 (+)) . splitUpS 1024) (input2 :- ())
+ts3 = printAnalysis ((pConcatMapJoin $ sklansky3 10 (+)) . splitUpS 1024) (input2 :- ())
 
-scan1 :: (MemoryOps a) => (a -> a -> a) -> Pull Word32 a -> Program Block (Pull Word32 a)
+scan1 :: (MemoryOps a) => (a -> a -> a) -> Pull Word32 a -> Program (Pull Word32 a)
 scan1 f a = do a' <- forceInplace (push a)
                scan1' f 1 a'
                return $ pullInplace a'
 
-scan1' :: (MemoryOps a) => (a -> a -> a) -> Word32 -> Inplace Word32 a -> Program Block ()
+scan1' :: (MemoryOps a) => (a -> a -> a) -> Word32 -> Inplace Word32 a -> Program ()
 scan1' f s' a = do
   let s = sizeConv s'
       al :: Word32
@@ -660,10 +645,10 @@ scan1' f s' a = do
       let j = 2*s*i+2*s-1
       wf j $ (a!(j+s)) `f` (a!j)
 
-ts4 = printAnalysis ((pConcatMap $ liftM push . scan1 (+)) . splitUpS 1024) (input2 :- ())
+ts4 = printAnalysis ((pConcatMap $ pJoinPush . scan1 (+)) . splitUpS 1024) (input2 :- ())
 
-matMul a b = pConcatMap (matMulRow (transpose b)) a
-  where matMulRow mat row = return $ pConcatMap (dotP row) mat
+matMul a b = pConcatMapJoin (matMulRow (transpose b)) a
+  where matMulRow mat row = return $ pConcatMapJoin (dotP row) mat
         dotP a b = return
                  $ seqReduce (+)
                  $ zipWith (*) a b
@@ -673,33 +658,30 @@ tmm0 = printAnalysis matMulIn
               (undefinedGlobal (256*256) {-(variable "Y")-} :: Pull Word32 EFloat) :- ())
 
 saxpy0 :: (Num a, ASize l)
-       => a -> Pull l a -> Pull l a -> Push Grid l a
-saxpy0 a x y = pConcatMap (return . push . fmap (\(x,y) -> y+a*x))
+       => a -> Pull l a -> Pull l a -> Push l a
+saxpy0 a x y = pConcatMap (push . fmap (\(x,y) -> y+a*x))
                           (splitUp 256 $ zipp (x,y))
 
 saxpy1 :: (Num a, ASize l)
-       => a -> Pull l a -> Pull l a -> Push Grid l a
-saxpy1 a x y = pConcatMap (return . pConcatMap (return . seqMap (\(x,y) -> y+a*x)) . splitUp 8)
+       => a -> Pull l a -> Pull l a -> Push l a
+saxpy1 a x y = pConcatMap (pConcatMap (seqMap (\(x,y) -> y+a*x)) . splitUp 8)
                           (splitUp (8*256) $ zipp (x,y))
 
 --this is wrong
 saxpy2 :: (Num a, ASize l, MemoryOps a)
-       => a -> Pull l a -> Pull l a -> Push Grid l a
-saxpy2 a x y = pConcatMap (return . pConcatMap(return . seqMap (\(x,y) -> y+a*x)) . coalesce 8)
+       => a -> Pull l a -> Pull l a -> Push l a
+saxpy2 a x y = pConcatMap (pConcatMap(seqMap (\(x,y) -> y+a*x)) . coalesce 8)
                           (splitUp (8*256) $ zipp (x,y))
 
 saxpy3 :: (Num a, ASize l, MemoryOps a)
-       => a -> Pull l a -> Pull l a -> Push Grid l a
-saxpy3 a x y = pConcatMap (return . pUnCoalesceMap (return . seqMap (\(x,y) -> y+a*x)) . coalesce 8)
+       => a -> Pull l a -> Pull l a -> Push l a
+saxpy3 a x y = pConcatMap (pUnCoalesceMap (seqMap (\(x,y) -> y+a*x)) . coalesce 8)
                           (splitUp (8*256) $ zipp (x,y))
 
 saxpy4 :: (Num a, ASize l, MemoryOps a)
-       => a -> Pull l a -> Pull l a -> Push Grid l a
-saxpy4 a x y = pSplitMap (8*256) (return . pCoalesceMap 8 (return . seqMap (\(x,y) -> y+a*x)))
+       => a -> Pull l a -> Pull l a -> Push l a
+saxpy4 a x y = pSplitMap (8*256) (pCoalesceMap 8 (seqMap (\(x,y) -> y+a*x)))
              $ zipp (x,y)
-
-pSplitMap n f = pConcat . pMap f . splitUp n
-pCoalesceMap n f = pUnCoalesce . pMap f . coalesce n
 
 tsx0' = printAnalysis saxpy0 (2 :- input1 :- input1 :- ())
 tsx0  = printAnalysis saxpy0 (2 :- input2 :- input2 :- ())
@@ -712,7 +694,7 @@ tsx3  = printAnalysis saxpy3 (2 :- input2 :- input2 :- ())
 tsx4' = printAnalysis saxpy4 (2 :- input1 :- input1 :- ())
 tsx4  = printAnalysis saxpy4 (2 :- input2 :- input2 :- ())
 
-bitonicMerge1 :: (MemoryOps a, OrdE a) => Word32 -> Word32 -> Pull Word32 a -> BProgram (Push Block Word32 a)
+bitonicMerge1 :: (MemoryOps a, OrdE a) => Word32 -> Word32 -> Pull Word32 a -> Program (Push Word32 a)
 bitonicMerge1 s m a = do
   let s' = fromIntegral s
       m' = fromIntegral m
@@ -724,12 +706,12 @@ bitonicMerge1 s m a = do
     else do b' <- force b
             bitonicMerge1 (s`div`2) m b'
 
-bitonicSort1 :: (MemoryOps a, OrdE a) => Pull Word32 a -> BProgram (Pull Word32 a)
+bitonicSort1 :: (MemoryOps a, OrdE a) => Pull Word32 a -> Program (Pull Word32 a)
 bitonicSort1 a = f 2 a
   where f m a | m >= len a = return a
         f m a              = do b <- bitonicMerge1 m (2*m) a
                                 b' <- force b
                                 f (m*2) b'
 
-tb1 = printAnalysis ((pConcatMap $ liftM push . bitonicSort1) . splitUpS 256) (input2 :- ())
+tb1 = printAnalysis ((pConcatMapJoin $ liftM push . bitonicSort1) . splitUpS 256) (input2 :- ())
 

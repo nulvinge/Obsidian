@@ -5,7 +5,7 @@
              TupleSections,
              FlexibleInstances #-}
 
-module Obsidian.AddOn.Analysis.Hazards
+module Obsidian.Dependency.Hazards
   (insertEdges
   ,keepHazards
   ,makeFlowDepEdges
@@ -17,9 +17,9 @@ import qualified Obsidian.CodeGen.InOut as InOut
 import Obsidian.CodeGen.Program
 import Obsidian.Globs
 import Obsidian
-import Obsidian.AddOn.Analysis.ExpAnalysis
-import Obsidian.AddOn.Analysis.Helpers
-import Obsidian.AddOn.Analysis.Range
+import Obsidian.Dependency.ExpAnalysis
+import Obsidian.Dependency.Helpers
+import Obsidian.Dependency.Range
 
 import Data.Word
 import Data.Tuple

@@ -5,18 +5,18 @@
              TupleSections,
              FlexibleInstances #-}
 
-module Obsidian.AddOn.Analysis (insertAnalysis, printAnalysis) where
+module Obsidian.Dependency.Analysis (insertAnalysis, printAnalysis) where
 
 --import qualified Obsidian.CodeGen.Program as P
 import Obsidian.CodeGen.Program
 import Obsidian
 import Obsidian.Globs
-import Obsidian.AddOn.Analysis.ExpAnalysis
-import Obsidian.AddOn.Analysis.Helpers
-import Obsidian.AddOn.Analysis.Range
-import Obsidian.AddOn.Analysis.Coalesced
-import Obsidian.AddOn.Analysis.Cost
-import Obsidian.AddOn.Analysis.Hazards
+import Obsidian.Dependency.ExpAnalysis
+import Obsidian.Dependency.Helpers
+import Obsidian.Dependency.Range
+import Obsidian.Dependency.Coalesced
+import Obsidian.Dependency.Cost
+import Obsidian.Dependency.Hazards
 
 import Data.Word
 import Data.Tuple
@@ -109,7 +109,7 @@ traverseComment f = mapDataIM (const ()) . traverseIM makeComment
 input1 :: DPull  EInt 
 input1 = namedGlobal "apa" (variable "X")
 
-t0 = printAnalysis (pushGrid 32 . fmap (+1). ixMap (+5)) (input1 :- ())
+t0 = printAnalysis (pushN 32 . fmap (+1). ixMap (+5)) (input1 :- ())
 
 
 -- Hazards
@@ -121,8 +121,7 @@ t0 = printAnalysis (pushGrid 32 . fmap (+1). ixMap (+5)) (input1 :- ())
 data IMDataCollection = CRange (Exp Word32) (Exp Word32, Exp Word32)
                       | CCond  (Exp Bool)
                       | CThreadConstant (Exp Word32) --more advanced analysis needed here
-                      | CLoopSeq (Exp Word32)
-                      | CLoopPar (Exp Word32)
+                      | CLoop LoopType (Exp Word32)
 
 type Conds = [(Exp Bool)]
 
@@ -130,21 +129,14 @@ insertIMCollection :: Word32 -> [Name] -> IMList a -> IMList (a,[IMDataCollectio
 insertIMCollection bs inScalars = traverseIMaccDown (list `comp2` ins) start
   where
     ins :: [IMDataCollection] -> (Statement a,a) -> ((Statement a,(a,[IMDataCollection])),[IMDataCollection])
-    ins cs b@(SCond         e l,a) = (mapSnd (,cs) b, cs ++ [CCond e])
-    ins cs b@(SSeqFor n     e l,a) = (mapSnd (,cs) b
-                                     ,cs ++ collRange (variable n)  e
-                                         ++ [CThreadConstant (variable n)]
-                                         ++ [CLoopSeq (variable n)])
+    ins cs b@(SCond          e l,a) = (mapSnd (,cs) b, cs ++ [CCond e])
+    ins cs b@(SFor t nn pl   e l,a) = (mapSnd (,cs) b ,cs
+                                        ++ collRange (variable nn)  e
+                                        -- ++ [CThreadConstant (variable n)] -- not sure
+                                        ++ [CLoop t (variable nn)])
     --ins cs b@(SSeqWhile     e l,a) = (mapSnd (,cs) b
     --                                 ,cs ++ [CCond e]
     --                                     ++ [CLoopSeq 2])
-    ins cs b@(SForAll       e l,a) = (mapSnd (,cs) b
-                                     ,cs ++ collRange (ThreadIdx X) e
-                                         ++ [CLoopPar (ThreadIdx X)])
-    ins cs b@(SForAllBlocks e l,a) = (mapSnd (,cs) b
-                                     ,cs ++ collRange (BlockIdx X)  e
-                                         ++ [CThreadConstant (BlockIdx X)]
-                                         ++ [CLoopPar (BlockIdx X)])
     ins cs b =                       (mapSnd (,cs) b,cs)
 
     start = collRange (ThreadIdx X) (fromIntegral bs)
@@ -166,8 +158,8 @@ collectIMData dc = IMDataA []
     getBlockConsts _                   = Nothing
 
     loops = catMaybes $ map getLoopFactors dc
-    getLoopFactors (CLoopSeq e) = Just $ (e,False)
-    getLoopFactors (CLoopPar e) = Just $ (e,True)
+    getLoopFactors (CLoop Seq e) = Just $ (e,False)
+    getLoopFactors (CLoop Par e) = Just $ (e,True)
     getLoopFactors _                  = Nothing
 
     (lowers,uppers) = unzip

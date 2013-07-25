@@ -16,7 +16,8 @@
 -}
 
 --  write_ should be internal use only
-module Obsidian.Force (force,
+module Obsidian.Force (force
+                      ,unsafeForce
                       ) where
 
 import Obsidian.Program
@@ -31,10 +32,16 @@ import Data.Word
 -- Force local (requires static lengths!) 
 ---------------------------------------------------------------------------
 
-force :: MemoryOps a => Push Word32 a -> Program (Pull Word32 a)
-force arr@(Push m p) = do 
+force :: (Pushable t, MemoryOps a) => t Word32 a -> Program (Pull Word32 a)
+force arr = do 
+  let Push m p = push arr
   snames <- names (valType arr)
   allocateArray snames  m
   p (assignArray snames) 
   return $ pullFrom snames m
+
+--does not do anything different from force
+unsafeForce :: MemoryOps a => SPull a -> Program (SPull a) 
+unsafeForce arr | len arr <= 32 = force (push arr) 
+unsafeForce arr = force (push arr)
 

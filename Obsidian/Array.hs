@@ -97,16 +97,23 @@ instance Array arr => Functor (arr w) where
 -- Pushable
 ---------------------------------------------------------------------------
 
-push :: ASize s => Pull s e -> Push s e 
-push arr = Push (len arr) $ \wf ->
-            forAll (sizeConv (len arr)) $ \i ->
-              wf (arr ! i) i
+class Pushable t where
+  push :: ASize s => t s e -> Push s e 
 
+instance Pushable Push where
+  push = id
+
+instance Pushable Pull where
+  push arr = Push (len arr) $ \wf ->
+              forAll (sizeConv (len arr)) $ \i ->
+                wf (arr ! i) i
+
+pushN :: (ASize s) => Word32 -> Pull s e -> Push s e
 pushN n arr =
   Push (len arr) $ \ wf -> forAll (sizeConv ((len arr) `div` fromIntegral n)) $ \bix ->
     forAll (fromIntegral n) $ \tix -> wf (arr ! (bix * fromIntegral n + tix))
                                                 (bix * fromIntegral n + tix) 
- 
+
 namedArray name n = mkPullArray n (\ix -> index name ix)
 indexArray n      = mkPullArray n (\ix -> ix)
 

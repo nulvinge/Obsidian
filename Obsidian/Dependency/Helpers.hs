@@ -5,13 +5,13 @@
              NoMonomorphismRestriction,
              FlexibleInstances #-}
 
-module Obsidian.AddOn.Analysis.Helpers where
+module Obsidian.Dependency.Helpers where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut
 import Obsidian.CodeGen.Program
 import Obsidian.Globs
-import Obsidian.AddOn.Analysis.ExpAnalysis
+import Obsidian.Dependency.ExpAnalysis
 import Obsidian
 
 import Data.Word

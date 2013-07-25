@@ -9,31 +9,19 @@ import Obsidian.Exp
 import Obsidian.Memory
 import Obsidian.Library
 
+import Control.Monad
 import Data.Word
 
 ---------------------------------------------------------------------------
 -- Parallel mapping  
 ---------------------------------------------------------------------------
 
--- pConcatMap :: ASize l
---          => (SPull a -> Program t (SPush t b))
---          -> Pull l (SPull a)
---          -> Push (Step t) l b
--- pConcatMap f as = 
---   Push (n * fromIntegral rn) $
---     \wf ->
---     do
---       forAll (sizeConv n) $ \tix -> do
---         (Push _ p) <- f (as ! tix)
---         let wf' a ix = wf a (tix * sizeConv rn + ix)
---         p wf'      
---     where
---       n = len as
---       rn = len $ fst $ runPrg 0 (f (as ! 0))
---       m = len (as ! 0)
-
 pConcatMap f = pConcat . pMap f
 pUnCoalesceMap f = pUnCoalesce . pMap f
+pConcatMapJoin f = pConcat . pMap (pJoin.f)
+pUnCoalesceMapJoin f = pUnCoalesce . pMap (pJoin.f)
+pCoalesceMap n f = pUnCoalesce . pMap f . coalesce n
+pSplitMap n f = pConcat . pMap f . splitUp n
 
 ---------------------------------------------------------------------------
 --
@@ -70,6 +58,9 @@ pUnCoalesce arr =
     s  = sizeConv rn
     g wf a i = wf a (i `div` s + (i`mod`s)*(sizeConv n))
 
+pJoinPush :: ASize s => Program (Pull s a) -> Push s a
+pJoinPush = pJoin . liftM push
+
 pJoin :: ASize s => Program (Push s a) -> Push s a
 pJoin f = Push n $ \wf -> do
     Push _ p <- f
@@ -93,30 +84,6 @@ pZipWith f as bs =
       m = len (as ! 0)
       k = len (bs ! 0)
       instances = min (len as) (len bs) 
-
-
--- pZipWith :: ASize l => (SPull a -> SPull b -> Program t (SPush t c))
---            -> Pull l (SPull a)
---            -> Pull l (SPull b)
---            -> Push (Step t) l c
--- pZipWith f as bs =
---     Push (instances * fromIntegral rn) $
---     \wf ->
---     do
---       forAll (sizeConv instances) $ \tix -> do
---         (Push _ p) <- f (as ! tix) (bs ! tix) 
---         let wf' a ix = wf a (tix * sizeConv n + ix)
---         p wf'      
-
---     where
---       -- Is this ok?! (does it break?) 
---       rn = len $ fst $ runPrg 0 (f (as ! 0) (bs ! 0))
---       n = min m k 
-
---       m  = len (as ! 0)
---       k  = len (bs ! 0)
---       instances = min (len as) (len bs) 
-
 
 ---------------------------------------------------------------------------
 -- Parallel Generate 

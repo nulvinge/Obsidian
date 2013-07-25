@@ -20,7 +20,7 @@ import Data.Word
 --------------------------------------------------------------------------
 
 --data Inplace s a = Inplace s Names
-data Inplace s a = Inplace s (Exp Word32 -> a -> TProgram ()) (Exp Word32 -> a)
+data Inplace s a = Inplace s (Exp Word32 -> a -> Program ()) (Exp Word32 -> a)
 
 inplace s ns =
   let Pull s' r = (pullFrom ns s)
@@ -38,34 +38,30 @@ instance Indexible Inplace where
   access = access.pullInplace
 
 mkInplace :: forall a. (MemoryOps a)
-          => Word32 -> BProgram (Inplace Word32 a)
+          => Word32 -> Program (Inplace Word32 a)
 mkInplace s = do
   snames <- names (undefined :: a)
   allocateArray snames s
   return $ inplace s snames
 
-writeInplace :: (MemoryOps a)
-             => Push Block Word32 a -> BProgram (Inplace Word32 a)
-writeInplace a = do
+forceInplace :: (MemoryOps a)
+             => Push Word32 a -> Program (Inplace Word32 a)
+forceInplace a = do
   (p,ns) <- nameWrite a
   return $ inplace (len a) ns
-
-forceInplace a = writeInplace a >>= idSync
 
 pullInplace :: Inplace s a -> Pull s a
 pullInplace (Inplace s w r) = Pull s r
 
-inplaceWrite :: (ASize s, MemoryOps a)
-             => Inplace s a -> Push Block s a -> Program Block ()
-inplaceWrite (Inplace s w r) arr | s == len arr = do
+inplaceForce :: (ASize s, MemoryOps a)
+             => Inplace s a -> Push s a -> Program ()
+inplaceForce (Inplace s w r) arr | s == len arr = do
   let (Push m p) = arr
   p (\a i -> w i a >> return ())
   return ()
 
-inplaceForce i arr = inplaceWrite i arr >>= idSync
-
 nameWrite :: (MemoryOps a)
-          => Push Block Word32 a -> BProgram (Pull Word32 a, Names)
+          => Push Word32 a -> Program (Pull Word32 a, Names)
 nameWrite arr = do
   snames <- names (valType arr)
   let n = len arr
@@ -75,7 +71,7 @@ nameWrite arr = do
   return $ (pullFrom snames n, snames)
 
 nameInplaceWrite :: (MemoryOps a)
-          => Push Block Word32 a -> BProgram (Inplace Word32 a, Names)
+          => Push Word32 a -> Program (Inplace Word32 a, Names)
 nameInplaceWrite arr = do
   snames <- names (valType arr)
   let n = len arr
@@ -90,27 +86,25 @@ inplaceAtomic f s ns =
   let Pull s' r = (pullFrom ns s)
   in Inplace s (\i a -> (atomicArray ns i f) >> return ()) r
 
-writeInplaceAtomic :: (Scalar a)
-    => Atomic a -> Push Block Word32 (Exp a) -> BProgram (Inplace Word32 (Exp a))
-writeInplaceAtomic f a = do
+forceInplaceAtomic :: (Scalar a)
+    => Atomic a -> Push Word32 (Exp a) -> Program (Inplace Word32 (Exp a))
+forceInplaceAtomic f a = do
   (p,ns) <- nameWrite a
   return $ inplaceAtomic f (len a) ns
-
-forceInplaceAtomic f a = writeInplaceAtomic f a >>= idSync
 
 --------------------------------------------------------------------------
 -- APush
 --------------------------------------------------------------------------
 
 pusha :: (ASize l, ASize l2) => l -> l2
-      -> ((EWord32 -> a -> TProgram ()) -> EWord32 -> Program t ())
-      -> Push (Step t) l a
+      -> ((EWord32 -> a -> Program ()) -> EWord32 -> Program ())
+      -> Push l a
 pusha l n f =
   Push l $ \wf ->
     forAll (fromIntegral n) $ \i ->
       f (flip wf) i
 
-data APush s a = APush s ((Exp Word32 -> a -> TProgram ()) -> Exp Word32 -> TProgram ())
+data APush s a = APush s ((Exp Word32 -> a -> Program ()) -> Exp Word32 -> Program ())
 
 instance Array APush where
   resize m (APush _ p) = APush m p

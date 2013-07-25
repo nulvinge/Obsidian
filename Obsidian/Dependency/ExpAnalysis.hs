@@ -8,7 +8,7 @@
              TupleSections,
              FlexibleContexts #-}
 
-module Obsidian.AddOn.Analysis.ExpAnalysis where
+module Obsidian.Dependency.ExpAnalysis where
 
 import Obsidian.Globs
 import Obsidian
@@ -24,7 +24,7 @@ import Control.Monad.State
 import Prelude hiding (zipWith,sum,replicate)
 import qualified Prelude as P
 
-instance Choice (TProgram ()) where  
+instance Choice (Program ()) where  
   ifThenElse (Literal False) e1 e2 = e2
   ifThenElse (Literal True)  e1 e2 = e1
   ifThenElse b e1 e2 = do
@@ -189,37 +189,12 @@ instance (Scalar a) => TraverseExp (Exp a) where
   traverseExp f (Index (n,es)) = f $ Index (n,map (traverseExp f) es)
   traverseExp f a = f a
 
-collectProg :: (forall e. Exp e -> [b]) -> TProgram a -> (a,[b])
-collectProg f e@(Assign _ l a)= ((),  concatMap (collectExp f) l ++ collectExp f a)
-collectProg f e@(Cond a b)    = let (v',b') = collectProg f b
-                                in  (v', collectExp f a ++ b')
-collectProg f e@(SeqFor n l)  = let (v',b') = collectProg f (l 0)
-                                in  (v', collectExp f n ++ b')
-collectProg f e@(Bind a g)    = let (v1,b1) = collectProg f a
-                                    (v2,b2) = collectProg f (g v1)
-                                in  (v2,b1 ++ b2)
-collectProg f e@(Return a)    = (a,[])
-
-
-collectAssign :: Names -> TProgram a -> (a,[Exp Word32])
-collectAssign ns e@(Assign n [l] a) | n`inNames`ns = ((), [l])
-                                    | otherwise    = ((), [])
-collectAssign ns e@(Cond a b)  = collectAssign ns b
-collectAssign ns e@(SeqFor n l)= collectAssign ns (l 0)
-collectAssign ns e@(Bind a g)  = let (v1,b1) = collectAssign ns a
-                                     (v2,b2) = collectAssign ns (g v1)
-                                 in  (v2,b1 ++ b2)
-collectAssign ns e@(Return a)  = (a,[])
-
-
-
-
-instance TraverseExp (TProgram a) where
+instance TraverseExp (Program a) where
   collectExp = error "no collectExp for TProgram"
 
   traverseExp f (Assign n l a) = Assign n (map (traverseExp f) l) (traverseExp f a)
   traverseExp f (Cond a b) = Cond (traverseExp f a) (traverseExp f b)
-  traverseExp f (SeqFor n l) = SeqFor (traverseExp f n) (\i -> traverseExp f (l i))
+  traverseExp f (For t pl n l) = For t pl (traverseExp f n) (\i -> traverseExp f (l i))
   traverseExp f (Bind a g) = Bind (traverseExp f a) (\b -> traverseExp f (g b))
 
 --instance (TraverseExp a, TraverseExp b) => TraverseExp (a,b) where
@@ -231,11 +206,8 @@ collectIM :: ((P.Statement a,a) -> [b]) -> P.IMList a -> [b]
 collectIM f = concatMap (collectIM' f)
   where
     collectIM' f a@(P.SCond          _ l,_) = f a ++ collectIM f l
-    collectIM' f a@(P.SSeqFor _      _ l,_) = f a ++ collectIM f l
     collectIM' f a@(P.SSeqWhile      _ l,_) = f a ++ collectIM f l
-    collectIM' f a@(P.SForAll        _ l,_) = f a ++ collectIM f l
-    collectIM' f a@(P.SForAllBlocks  _ l,_) = f a ++ collectIM f l
-    collectIM' f a@(P.SForAllThreads _ l,_) = f a ++ collectIM f l
+    collectIM' f a@(P.SFor _ _ _     _ l,_) = f a ++ collectIM f l
     collectIM' f a                      = f a
 
 traverseIM :: ((P.Statement a,a) -> [(P.Statement a,c)]) -> P.IMList a -> P.IMList c
@@ -259,11 +231,8 @@ traverseIMaccDown f acc = map g . concat . map (f acc)
   where
     g ((b,c),acc') = case b of
       (P.SCond           e l) -> (P.SCond          e (traverseIMaccDown f acc' l),c)
-      (P.SSeqFor n       e l) -> (P.SSeqFor n      e (traverseIMaccDown f acc' l),c)
       (P.SSeqWhile       e l) -> (P.SSeqWhile      e (traverseIMaccDown f acc' l),c)
-      (P.SForAll         e l) -> (P.SForAll        e (traverseIMaccDown f acc' l),c)
-      (P.SForAllBlocks   e l) -> (P.SForAllBlocks  e (traverseIMaccDown f acc' l),c)
-      (P.SForAllThreads  e l) -> (P.SForAllThreads e (traverseIMaccDown f acc' l),c)
+      (P.SFor t nn pl    e l) -> (P.SFor t nn pl   e (traverseIMaccDown f acc' l),c)
       p                       -> (simpleIMmap p                                  ,c)
 
 traverseIMaccUp :: ([b] -> (P.Statement c, a) -> ((P.Statement c, c), b))
@@ -273,11 +242,8 @@ traverseIMaccUp f = unzip . map (g f)
     g :: ([b] -> (P.Statement c, a) -> ((P.Statement c, c), b))
       -> (P.Statement a,a) -> ((P.Statement c,c) , b)
     g f (P.SCond           e l,a) = h f l $ \lt -> (P.SCond          e lt,a)
-    g f (P.SSeqFor n       e l,a) = h f l $ \lt -> (P.SSeqFor n      e lt,a)
     g f (P.SSeqWhile       e l,a) = h f l $ \lt -> (P.SSeqWhile      e lt,a)
-    g f (P.SForAll         e l,a) = h f l $ \lt -> (P.SForAll        e lt,a)
-    g f (P.SForAllBlocks   e l,a) = h f l $ \lt -> (P.SForAllBlocks  e lt,a)
-    g f (P.SForAllThreads  e l,a) = h f l $ \lt -> (P.SForAllThreads e lt,a)
+    g f (P.SFor t nn pl    e l,a) = h f l $ \lt -> (P.SFor t nn pl   e lt,a)
     g f (p,a) = f [] (simpleIMmap p,a)
     --h :: [(P.Statement a, a)] -> ([(P.Statement c, c)], [b])
     h :: ([b] -> (P.Statement c, a) -> ((P.Statement c, c), b))
@@ -294,11 +260,8 @@ traverseIMaccPrePost pre post b = swap . mapAccumL (curry $ swap . post . g (tra
     g :: (b -> P.IMList a -> (P.IMList d,b))
       -> ((P.Statement a,c),b) -> ((P.Statement d,c),b)
     g f ((P.SCond           e l,a),b) = h f b l $ \lt -> (P.SCond          e lt,a)
-    g f ((P.SSeqFor n       e l,a),b) = h f b l $ \lt -> (P.SSeqFor n      e lt,a)
     g f ((P.SSeqWhile       e l,a),b) = h f b l $ \lt -> (P.SSeqWhile      e lt,a)
-    g f ((P.SForAll         e l,a),b) = h f b l $ \lt -> (P.SForAll        e lt,a)
-    g f ((P.SForAllBlocks   e l,a),b) = h f b l $ \lt -> (P.SForAllBlocks  e lt,a)
-    g f ((P.SForAllThreads  e l,a),b) = h f b l $ \lt -> (P.SForAllThreads e lt,a)
+    g f ((P.SFor t nn pl    e l,a),b) = h f b l $ \lt -> (P.SFor t nn pl   e lt,a)
     g f ((p,a),b) = ((simpleIMmap p,a),b)
     h :: (b -> P.IMList a -> (P.IMList d,b)) -> b -> P.IMList a
       -> (P.IMList d -> (P.Statement d,c)) -> ((P.Statement d,c),b)
@@ -335,21 +298,15 @@ instance TraverseExp (P.Statement t) where
   collectExp f (P.SAssign _       l e) = collectExp f l ++ collectExp f e
   collectExp f (P.SAtomicOp _ _   e _) = collectExp f e
   collectExp f (P.SCond           e l) = collectExp f e ++ collectExp f l
-  collectExp f (P.SSeqFor _       e l) = collectExp f e ++ collectExp f l
   collectExp f (P.SSeqWhile       e l) = collectExp f e ++ collectExp f l
-  collectExp f (P.SForAll         e l) = collectExp f e ++ collectExp f l
-  collectExp f (P.SForAllBlocks   e l) = collectExp f e ++ collectExp f l
-  collectExp f (P.SForAllThreads  e l) = collectExp f e ++ collectExp f l
+  collectExp f (P.SFor _ _ _      e l) = collectExp f e ++ collectExp f l
   collectExp f _ = []
 
   traverseExp f (P.SAssign n       l e) = P.SAssign n      (traverseExp f l) (traverseExp f e)
   traverseExp f (P.SAtomicOp n n2  e a) = P.SAtomicOp n n2 (traverseExp f e) a
   traverseExp f (P.SCond           e l) = P.SCond          (traverseExp f e) (traverseExp f l)
-  traverseExp f (P.SSeqFor n       e l) = P.SSeqFor n      (traverseExp f e) (traverseExp f l)
   traverseExp f (P.SSeqWhile       e l) = P.SSeqWhile      (traverseExp f e) (traverseExp f l)
-  traverseExp f (P.SForAll         e l) = P.SForAll        (traverseExp f e) (traverseExp f l)
-  traverseExp f (P.SForAllBlocks   e l) = P.SForAllBlocks  (traverseExp f e) (traverseExp f l)
-  traverseExp f (P.SForAllThreads  e l) = P.SForAllThreads (traverseExp f e) (traverseExp f l)
+  traverseExp f (P.SFor t nn pl    e l) = P.SFor t nn pl   (traverseExp f e) (traverseExp f l)
   traverseExp f a = a
 
 getIndice :: Names -> Exp a -> [Exp Word32]
@@ -367,11 +324,8 @@ getIndicesIM (a,cs) = map (\(n,e,rw) -> (n,e,rw,cs)) $ getIndicesIM' a
     getIndicesIM' (P.SAssign     n r e)   = concat (map ce r) ++ ce e
     getIndicesIM' (P.SAtomicOp _ n r   _) = [(n,r,False)] ++ ce r
     getIndicesIM' (P.SCond           e l) = ce e
-    getIndicesIM' (P.SSeqFor _       e l) = ce e
     getIndicesIM' (P.SSeqWhile       e l) = ce e
-    getIndicesIM' (P.SForAll         e l) = ce e
-    getIndicesIM' (P.SForAllBlocks   e l) = ce e
-    getIndicesIM' (P.SForAllThreads  e l) = ce e
+    getIndicesIM' (P.SFor _ _ _      e l) = ce e
     getIndicesIM' _ = []
     ce :: (Scalar a) => (Exp a) -> [(Name, Exp Word32, Bool)]
     ce = map (\(n,e) -> (n,e,True)) . collectExp getIndicesExp

@@ -147,3 +147,5 @@ seqPush arr = Push (len arr) $ \wf ->
                 seqFor (sizeConv (len arr)) $ \ix ->
                   wf (arr!ix) ix 
 
+seqMap f = seqPush . fmap f
+

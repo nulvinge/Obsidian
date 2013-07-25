@@ -4,14 +4,14 @@
              FlexibleContexts,
              FlexibleInstances #-}
 
-module Obsidian.AddOn.Analysis.Range (inRange, getRange, getRangeM) where
+module Obsidian.Dependency.Range (inRange, getRange, getRangeM) where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut
 import Obsidian.CodeGen.Program
 import Obsidian
-import Obsidian.AddOn.Analysis.ExpAnalysis
-import Obsidian.AddOn.Analysis.Helpers
+import Obsidian.Dependency.ExpAnalysis
+import Obsidian.Dependency.Helpers
 
 import Data.Word
 import Data.Tuple

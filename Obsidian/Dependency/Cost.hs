@@ -4,15 +4,15 @@
              FlexibleContexts,
              FlexibleInstances #-}
 
-module Obsidian.AddOn.Analysis.Cost (insertCost, diverges, sumCost, sumCostT, addIMCostT) where
+module Obsidian.Dependency.Cost (insertCost, diverges, sumCost, sumCostT, addIMCostT) where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut
 import Obsidian.CodeGen.Program
 import Obsidian
-import Obsidian.AddOn.Analysis.ExpAnalysis
-import Obsidian.AddOn.Analysis.Range
-import Obsidian.AddOn.Analysis.Helpers
+import Obsidian.Dependency.ExpAnalysis
+import Obsidian.Dependency.Range
+import Obsidian.Dependency.Helpers
 
 import Data.Word
 import Data.Tuple
@@ -30,11 +30,8 @@ insertCost (p,d) = addIMCostT d costt
   where
     costt = case p of
               SCond          e _ -> getECost e --better this
-              SSeqFor n      e _ -> getECost e
               SSeqWhile      e _ -> getECost e `mulCostT` 2 --guess
-              SForAll        e _ -> getECost e
-              SForAllBlocks  e _ -> getECost e
-              SForAllThreads e _ -> getECost e
+              SFor _ _ _     e _ -> getECost e
               SAssign _      l e -> (sumCostT $ (collectExp calcECost e)
                                              ++ (collectExp calcECost l))
               SAtomicOp _ _  e _ -> sumCostT (collectExp calcECost e)
