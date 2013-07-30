@@ -244,4 +244,3 @@ transformLoops _ = traverseIMaccDown trav architecture
     tryLess _ _ = True
 
 
-

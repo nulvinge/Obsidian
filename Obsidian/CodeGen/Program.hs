@@ -48,6 +48,20 @@ data Statement t
   | SComment String
   | SSynchronize
 
+instance Show (Statement t) where
+  show (SFor  _ _ _ _ _) = "SFor"
+  show (SCond       _ _) = "SCond"
+  show (SSeqWhile   _ _) = "SSeqWhile"
+  show (SPar          _) = "SPar"
+  show (SAssign _ _   _) = "SAssign"
+  show (SAtomicOp _ _ _ _) = "SAtomicOp"
+  show (SBreak)          = "SBreak"
+  show (SAllocate _ _ _) = "SAllocate"
+  show (SDeclare    _ _) = "SDeclare"
+  show (SOutput     _ _) = "SOutput"
+  show (SComment      _) = "SComment"
+  show (SSynchronize   ) = "SSynchronize"
+
 -- compileStep1 :: P.Program t a -> IM
 -- compileStep1 p = snd $ cs1 ns p
 --   where
@@ -74,8 +88,9 @@ compile :: VarSupply -> P.Program a -> (a,IM)
 compile s (P.For t pl n f) = (a,out (SFor t var pl n im))
     where
       p = f (variable var)
-      (a,im) = compile s p
-      var = "i" ++ show (supplyVar s)
+      (s1,s2) = supplySplit s
+      (a,im) = compile s1 p
+      var = "i" ++ show (supplyVar s2)
 compile s p = cs s p 
 
 ---------------------------------------------------------------------------
@@ -276,8 +291,10 @@ printStm (SSynchronize,m) =
 printStm (SFor t name pl n im,m) =
   "for" ++ (show t) ++ " " ++ show name  ++ " in [0.." ++ show n ++"] do" ++ meta m ++ 
   concatMap printStm im ++ "\ndone;\n"
+printStm (a,m) = show a ++ meta m
 
 -- printStm (a,m) = error $ show m 
 
 meta :: Show a => a -> String
 meta m = "\t//" ++ show m ++ "\n" 
+

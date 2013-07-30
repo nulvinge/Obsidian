@@ -170,50 +170,64 @@ mmCExpr mm a = a
 atomicOpToCAtomicOp AtomicInc = CAtomicInc
 
 imToSPMDC :: Word32 -> IMList a -> [SPMDC]
-imToSPMDC nt im = concatMap (process nt) im
+imToSPMDC nt im = concatMap processG im
   where
-    process nt (SAssign name [] e,_) =
+    -- This one is tricky (since no corresponding CUDA construct exists) 
+    processG (SFor P.Par name [(P.Block,_)] n im,_) =
+      -- TODO: there should be "number of blocks"-related conditionals here (possibly) 
+      (cAssign (cVar name (typeToCType Word32)) [] (cBlockIdx X))
+      : processB im
+    processG (SOutput name t,_) = []
+    processG (SComment s,_) = [cComment s]
+    processG (a,d) = error ("Cannot occur at grid level: " ++ show a)
+
+    processB ((SFor P.Par name [(P.Thread,_)] (Literal n) im,_) : rs) =
+      if (n < nt) 
+      then 
+        cIf (cBinOp CLt (cThreadIdx X)  (cLiteral (Word32Val n) CWord32) CInt) code []
+        : rest
+      else 
+        code ++ rest
+      where 
+        code = (cAssign (cVar name (typeToCType Word32)) [] (cThreadIdx X))
+             : concatMap processT im
+        rest = sync ++ processB rs
+        sync = case rs of
+                []                   -> []
+                [(SFor _ _ _ _ _,_)] -> [cSync]
+                [_]                  -> []
+                _                    -> [cSync]
+    processB ((SComment s,_):rs) = cComment s : processB rs
+    processB ((SAllocate name size t,_):rs) = [] ++ processB rs
+    processB ((a,d):_) = error ("Cannot occur at block level:" ++ show a)
+    processB []        = []
+
+    processT (SFor _ name pl e im,_) =
+      [cFor name (expToCExp e) (concatMap processT im)]
+
+    processT (SAssign name [] e,_) =
       [cAssign (cVar name (typeToCType (typeOf e))) [] (expToCExp e)]
 
-    process nt (SAssign name [ix] e,_) = 
+    processT (SAssign name [ix] e,_) = 
       [cAssign (cVar name (typeToCType (Pointer (typeOf e)))) [expToCExp ix] (expToCExp e)]
 
-    process nt (SAtomicOp res arr e op,_) = 
+    processT (SAtomicOp res arr e op,_) = 
       [cAtomic (atomicOpToCAtomicOp op)
                (cVar res (typeToCType (typeOf e)))
                (cVar arr (typeToCType (Pointer (typeOf e))))
                (expToCExp e)]
 
-    process nt (SCond bexp im,_) =
-      [cIf (expToCExp bexp) (imToSPMDC nt im) []]
+    processT (SCond bexp im,_) =
+      [cIf (expToCExp bexp) (concatMap processT im) []]
 
-    process nt (SSeqWhile b im,_) =
-      [cWhile (expToCExp b) (imToSPMDC nt im)]
-    process nt (SBreak,_) =
+    processT (SSeqWhile b im,_) =
+      [cWhile (expToCExp b) (concatMap processT im)]
+    processT (SBreak,_) =
       [cBreak]
-    process nt (SComment s,_) =
+    processT (SComment s,_) =
       [cComment s]
 
-    -- This one is tricky (since no corresponding CUDA construct exists) 
-    process nt (SFor P.Par name [(P.Block,_)] n im,_) =
-      -- TODO: there should be "number of blocks"-related conditionals here (possibly) 
-      (cAssign (cVar name (typeToCType Word32)) [] (cBlockIdx X))
-      : imToSPMDC nt im
-    process nt (SFor P.Par name [(P.Thread,_)] (Literal n) im,_) =
-      if (n < nt) 
-      then 
-        [cIf (cBinOp CLt (cThreadIdx X)  (cLiteral (Word32Val n) CWord32) CInt) code []]
-      else 
-        code
-      where 
-        code = (cAssign (cVar name (typeToCType Word32)) [] (cThreadIdx X))
-             : imToSPMDC nt im
-    process nt (SFor _ name pl e im,_) =
-      [cFor name (expToCExp e) (imToSPMDC nt im)]
-
-    process nt (SAllocate name size t,_) = []
-    process nt (SDeclare name t,_) =
+    processT (SAllocate name size t,_) = []
+    processT (SDeclare name t,_) =
       [cDecl (typeToCType t) name]
-    process nt (SOutput name t,_) = [] -- RIGHT!
-    process nt (SSynchronize,_)   = [CSync]
 
