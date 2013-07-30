@@ -16,32 +16,23 @@ import Data.Word
 -- Parallel mapping  
 ---------------------------------------------------------------------------
 
-pConcatMap f = pConcat . pMap f
-pUnCoalesceMap f = pUnCoalesce . pMap f
-pConcatMapJoin f = pConcat . pMap (pJoin.f)
-pUnCoalesceMapJoin f = pUnCoalesce . pMap (pJoin.f)
-pCoalesceMap n f = pUnCoalesce . pMap f . coalesce n
-pSplitMap n f = pConcat . pMap f . splitUp n
+pConcatMap f = pConcat . fmap f
+pUnCoalesceMap f = pUnCoalesce . fmap f
+pConcatMapJoin f = pConcat . fmap (pJoin.f)
+pUnCoalesceMapJoin f = pUnCoalesce . fmap (pJoin.f)
+pCoalesceMap n f = pUnCoalesce . fmap f . coalesce n
+pSplitMap n f = pConcat . fmap f . splitUp n
+pMapJoin f = fmap (pJoin.f)
 
 ---------------------------------------------------------------------------
 --
 --------------------------------------------------------------------------- 
-pMap :: ASize l
-         => (SPull a -> SPush b)
-         -> Pull l (SPull a)
-         -> Pull l (SPush b) 
-pMap f as =
-  mkPullArray (len as) $ \bix -> 
-    ixMap (+bix*sizeConv rn) $ f (as ! bix)
-  where
-    rn = len $ (f (as ! 0))
-
 pConcat :: ASize l => Pull l (SPush a) -> Push l a
 pConcat arr =
   Push (len arr * fromIntegral rn) $ \wf -> do
     forAll (sizeConv $ len arr) $ \bix ->
       let (Push _ p) = arr ! bix
-      in p wf
+      in p (\a i -> wf a (i+bix*sizeConv rn))
   where
     rn = len $ arr ! 0
 

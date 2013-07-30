@@ -517,13 +517,21 @@ reverseL' = liftM push . force . Obsidian.reverse
 reverses :: DPull a -> DPush a
 reverses = pConcatMapJoin reverseL . splitUp 1024
 
-largeReverse :: DPull a -> DPush a
-largeReverse = pConcatMapJoin reverseL . Obsidian.reverse . splitUp 1024
+largeReverse1 :: DPull a -> DPush a
+largeReverse1 = pConcat . Obsidian.reverse . pMapJoin reverseL . splitUp 1024
+
+largeReverse2 :: DPull a -> DPush a
+largeReverse2 = pConcatMapJoin reverseL . Obsidian.reverse . splitUp 1024
+
+largeReverse3 :: DPull a -> DPush a
+largeReverse3 = pConcat . Obsidian.reverse . fmap (pJoin.reverseL) . splitUp 1024
 
 trevl  = printAnalysis ((pConcatMapJoin $ reverseL)  . splitUpS 1024) (input2 :- ())
 trevl' = printAnalysis ((pConcatMapJoin $ reverseL') . splitUpS 1024) (input2 :- ())
 trevs  = printAnalysis reverses (input1 :- ())
-trevL  = printAnalysis largeReverse (input1 :- ())
+trevL1 = printAnalysis largeReverse1 (input1 :- ())
+trevL2 = printAnalysis largeReverse2 (input1 :- ())
+trevL3 = printAnalysis largeReverse3 (input1 :- ())
 
 mandel :: Push Word32 EWord8
 mandel = genRect 512 512 iters

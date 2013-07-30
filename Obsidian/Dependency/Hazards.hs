@@ -90,7 +90,7 @@ isIndependent aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
 
 sameWarp :: Access -> Access -> Bool
 sameWarp aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi)
-  | ad `sameWarpRange` bd && rangeSize (warprange ad) <= 32 = True
+  -- | ad `sameWarpRange` bd && rangeSize (warprange ad) <= 32 = trace (show (ai,bi,a,b,warprange ad,warprange bd,getRange ad (ThreadIdx X),getRange bd (ThreadIdx X))) True
   | otherwise = False --needs better analysis
   where
     sameWarpRange d1 d2 = mapPair2 (==) (warprange d1) (warprange d2) == (True,True)
