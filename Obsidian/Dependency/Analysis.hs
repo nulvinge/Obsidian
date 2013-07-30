@@ -236,7 +236,8 @@ transformLoops _ = traverseIMaccDown trav architecture
          -> (Statement IMData, IMData)
          -> [((Statement IMData, IMData), [(LoopLocationType, Integer)])]
     trav ((loc,size):as) (SFor Par name [] n l,d) | tryLess n size
-                                   = [((SFor Par name [(loc,0)] n l,d),as)]
+                                   = ((SFor Par name [(loc,0)] n l,d),as)
+                                     : if loc /= Thread then [] else [((SSynchronize,d),as)]
     trav as (SFor t name pl n l,d) = [((SFor Seq name [] n l,d),as)]
     trav as p                      = [(p,as)]
 

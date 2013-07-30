@@ -172,37 +172,32 @@ atomicOpToCAtomicOp AtomicInc = CAtomicInc
 imToSPMDC :: Word32 -> IMList a -> [SPMDC]
 imToSPMDC nt im = concatMap processG im
   where
+    --should be only one SFor Block
     -- This one is tricky (since no corresponding CUDA construct exists) 
     processG (SFor P.Par name [(P.Block,_)] n im,_) =
       -- TODO: there should be "number of blocks"-related conditionals here (possibly) 
       (cAssign (cVar name (typeToCType Word32)) [] (cBlockIdx X))
-      : processB im
+      : concatMap processB im
     processG (SOutput name t,_) = []
     processG (SComment s,_) = [cComment s]
     processG (a,d) = error ("Cannot occur at grid level: " ++ show a)
 
-    processB ((SFor P.Par name [(P.Thread,_)] (Literal n) im,_) : rs) =
+    processB (SFor P.Par name [(P.Thread,_)] (Literal n) im,_) =
       if (n < nt) 
       then 
-        cIf (cBinOp CLt (cThreadIdx X)  (cLiteral (Word32Val n) CWord32) CInt) code []
-        : rest
+        [cIf (cBinOp CLt (cThreadIdx X)  (cLiteral (Word32Val n) CWord32) CInt) code []]
       else 
-        code ++ rest
+        code
       where 
         code = (cAssign (cVar name (typeToCType Word32)) [] (cThreadIdx X))
              : concatMap processT im
-        rest = sync ++ processB rs
-        sync = case rs of
-                []                   -> []
-                [(SFor _ _ _ _ _,_)] -> [cSync]
-                [_]                  -> []
-                _                    -> [cSync]
-    processB ((SComment s,_):rs) = cComment s : processB rs
-    processB ((SAllocate name size t,_):rs) = [] ++ processB rs
-    processB ((a,d):_) = error ("Cannot occur at block level:" ++ show a)
-    processB []        = []
+    processB (SComment s,_) = [cComment s]
+    processB (SAllocate name size t,_) = []
+    processB (SSynchronize,_)   = [CSync]
+    processB (a,d) = error ("Cannot occur at block level:" ++ show a)
 
-    processT (SFor _ name pl e im,_) =
+
+    processT (SFor P.Seq name pl e im,_) =
       [cFor name (expToCExp e) (concatMap processT im)]
 
     processT (SAssign name [] e,_) =
