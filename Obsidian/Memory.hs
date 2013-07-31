@@ -144,3 +144,10 @@ outputArray' (Tuple ns) = do
   ns' <- mapM outputArray' ns
   return $ Tuple ns'
 
+forceScalar name a = do
+  let names = createNames a name
+  allocateScalar names
+  assignScalar names a
+  return $ readFrom names
+
+

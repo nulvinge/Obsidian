@@ -347,7 +347,15 @@ mapDataIM :: (a -> b) -> P.IMList a -> P.IMList b
 mapDataIM f = traverseIMaccDown g ()
   where g () (a,b) = [((a, f b), ())]
 
-mapIM :: ((P.Statement a,a) -> b) -> P.IMList a -> P.IMList b
-mapIM f = traverseIMaccDown g ()
+mapIMData :: ((P.Statement a,a) -> b) -> P.IMList a -> P.IMList b
+mapIMData f = traverseIMaccDown g ()
   where g () (a,b) = [((a, f (a,b)), ())]
+
+mapIM :: ((P.Statement a,a) -> (P.Statement a,b)) -> P.IMList a -> P.IMList b
+mapIM f = traverseIMaccDown g ()
+  where g () (a,b) = [(f (a,b), ())]
+
+mapIMs :: ((P.Statement a,a) -> [(P.Statement a,b)]) -> P.IMList a -> P.IMList b
+mapIMs f = traverseIMaccDown g ()
+  where g () (a,b) = map (\a -> (a,())) $ f (a,b)
 

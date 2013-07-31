@@ -174,26 +174,34 @@ imToSPMDC nt im = concatMap processG im
   where
     --should be only one SFor Block
     -- This one is tricky (since no corresponding CUDA construct exists) 
-    processG (SFor P.Par name [(P.Block,_)] n im,_) =
+    processG (SFor P.Par name [(P.Block,_,_)] n im,_) =
       -- TODO: there should be "number of blocks"-related conditionals here (possibly) 
-      (cAssign (cVar name (typeToCType Word32)) [] (cBlockIdx X))
+      (cDecl (typeToCType Word32) name)
+      : (cAssign (cVar name (typeToCType Word32)) [] (cBlockIdx X))
       : concatMap processB im
     processG (SOutput name t,_) = []
     processG (SComment s,_) = [cComment s]
     processG (a,d) = error ("Cannot occur at grid level: " ++ show a)
 
-    processB (SFor P.Par name [(P.Thread,_)] (Literal n) im,_) =
+    processB (SFor P.Par name [(P.Thread,_,_)] (Literal n) im,_) =
       if (n < nt) 
       then 
         [cIf (cBinOp CLt (cThreadIdx X)  (cLiteral (Word32Val n) CWord32) CInt) code []]
       else 
         code
       where 
-        code = (cAssign (cVar name (typeToCType Word32)) [] (cThreadIdx X))
+        code = (cDecl (typeToCType Word32) name)
+             : (cAssign (cVar name (typeToCType Word32)) [] (cThreadIdx X))
              : concatMap processT im
     processB (SComment s,_) = [cComment s]
     processB (SAllocate name size t,_) = []
     processB (SSynchronize,_)   = [CSync]
+    processB (SDeclare name t,_) =
+      [cDecl (typeToCType t) name]
+    processB (SAssign name [] e,_) =
+      [cAssign (cVar name (typeToCType (typeOf e))) [] (expToCExp e)]
+    processB (SAssign name [ix] e,_) = 
+      [cAssign (cVar name (typeToCType (Pointer (typeOf e)))) [expToCExp ix] (expToCExp e)]
     processB (a,d) = error ("Cannot occur at block level:" ++ show a)
 
 
@@ -225,4 +233,5 @@ imToSPMDC nt im = concatMap processG im
     processT (SAllocate name size t,_) = []
     processT (SDeclare name t,_) =
       [cDecl (typeToCType t) name]
+    processT (a,d) = error ("Cannot occur at thread level:" ++ show a)
 

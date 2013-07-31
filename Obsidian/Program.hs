@@ -43,7 +43,7 @@ architecture =
 
 data LoopLocationType = Kernel | Grid | Block | Thread | Vector
   deriving (Show,Eq,Enum,Bounded)
-type PreferredLoopLocation = [(LoopLocationType,Int)]
+type PreferredLoopLocation = [(LoopLocationType,LoopType,Word32)]
 data LoopType = Seq | Par
   deriving (Show,Eq)
 
@@ -177,9 +177,9 @@ printPrg' i (Cond p f) =
          `append` prg2
          `append` pack "\n}",
        i')
-printPrg' i (For t [] n f) =
+printPrg' i (For t pl n f) =
   let (a,prg2,i') = printPrg' i (f (variable "i"))
-  in ( a, pack (show t ++ "for (i in 0.." ++ show n ++ ")" ++ "{\n")
+  in ( a, pack (show t ++ "for (i in 0.." ++ show n ++ ") " ++ (show pl) ++ " {\n")
           `append` prg2
           `append` pack "\n}",
        i')

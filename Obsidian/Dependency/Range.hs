@@ -4,7 +4,7 @@
              FlexibleContexts,
              FlexibleInstances #-}
 
-module Obsidian.Dependency.Range (inRange, getRange, getRangeM) where
+module Obsidian.Dependency.Range (inRange, getRange, getRangeM, getConst) where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut

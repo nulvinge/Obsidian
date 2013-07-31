@@ -470,13 +470,27 @@ red7 f arr = do
                                (coalesce 32 arr)
     red3 f arr'
 
-tr1 = printAnalysis ((pConcatMapJoin $ red1 (+)) . splitUpS 1024) (input2 :- ())
-tr2 = printAnalysis ((pConcatMapJoin $ red2 (+)) . splitUpS 1024) (input2 :- ())
-tr3 = printAnalysis ((pConcatMapJoin $ red3 (+)) . splitUpS 1024) (input2 :- ())
-tr4 = printAnalysis ((pConcatMapJoin $ red4 (+)) . splitUpS 1024) (input2 :- ())
-tr5 = printAnalysis ((pConcatMapJoin $ red5 (+)) . splitUpS 1024) (input2 :- ())
-tr6 = printAnalysis ((pConcatMapJoin $ red6 (+)) . splitUpS 1024) (input2 :- ())
-tr7 = printAnalysis ((pConcatMapJoin $ red7 (+)) . splitUpS 1024) (input2 :- ())
+tr1 = printAnalysis (pSplitMapJoin 1024 $ red1 (+)) (input2 :- ())
+tr2 = printAnalysis (pSplitMapJoin 1024 $ red2 (+)) (input2 :- ())
+tr3 = printAnalysis (pSplitMapJoin 1024 $ red3 (+)) (input2 :- ())
+tr4 = printAnalysis (pSplitMapJoin 1024 $ red4 (+)) (input2 :- ())
+tr5 = printAnalysis (pSplitMapJoin 1024 $ red5 (+)) (input2 :- ())
+tr6 = printAnalysis (pSplitMapJoin 1024 $ red6 (+)) (input2 :- ())
+tr7 = printAnalysis (pSplitMapJoin 1024 $ red7 (+)) (input2 :- ())
+
+red8 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> Program (SPush a)
+red8 f arr
+    | len arr == 1 = return $ push arr
+    | otherwise    = do
+        let (a1,a2) = halve arr
+        arr' <- force $ pushA [(Thread,Par,128)] $ zipWith f a1 a2
+        red8 f arr'
+
+tr8 = printAnalysis (pSplitMapJoin 1024 $ red8 (+)) (input2 :- ())
+
 
 or4 = printPrg $ do
   let a@(Push n p) = (pConcatMapJoin $ red4 (+)) $ splitUpS 1024 input2

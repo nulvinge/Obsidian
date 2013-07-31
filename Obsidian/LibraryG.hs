@@ -22,6 +22,7 @@ pConcatMapJoin f = pConcat . fmap (pJoin.f)
 pUnCoalesceMapJoin f = pUnCoalesce . fmap (pJoin.f)
 pCoalesceMap n f = pUnCoalesce . fmap f . coalesce n
 pSplitMap n f = pConcat . fmap f . splitUp n
+pSplitMapJoin n f = pConcat . fmap (pJoin.f) . splitUp n
 pMapJoin f = fmap (pJoin.f)
 
 ---------------------------------------------------------------------------

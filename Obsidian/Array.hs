@@ -108,6 +108,11 @@ instance Pushable Pull where
               forAll (sizeConv (len arr)) $ \i ->
                 wf (arr ! i) i
 
+pushA :: ASize s => PreferredLoopLocation -> Pull s e -> Push s e
+pushA pl arr = Push (len arr) $ \wf ->
+                For Par pl (sizeConv (len arr)) $ \i ->
+                  wf (arr ! i) i
+
 pushN :: (ASize s) => Word32 -> Pull s e -> Push s e
 pushN n arr =
   Push (len arr) $ \ wf -> forAll (sizeConv ((len arr) `div` fromIntegral n)) $ \bix ->
