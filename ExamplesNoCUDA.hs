@@ -470,6 +470,40 @@ red7 f arr = do
                                (coalesce 32 arr)
     red3 f arr'
 
+
+red10 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> Program (SPush a)
+red10 f arr
+    | len arr == 1 = return $ push arr
+    | otherwise    = do
+        let (a1,a2) = halve arr
+        arr' <- force $ pushA [(Thread,Par,128)] $ zipWith f a1 a2
+        red11 f arr'
+
+red11 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> Program (SPush a)
+red11 f arr
+    | len arr == 1 = return $ push arr
+    | otherwise    = do
+        let (a1,a2) = halve arr
+        arr' <- force $ pushA [(Thread,Par,128),(Vector,Par,0)] $ zipWith f a1 a2
+        red11 f arr'
+
+red12 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> Program (SPush a)
+red12 f arr
+    | len arr == 1 = return $ push arr
+    | otherwise    = do
+        let (a1,a2) = halve arr
+        arr' <- force $ pushA [(Thread,Par,128),(Thread,Seq,0)] $ zipWith f a1 a2
+        red12 f arr'
+
 tr1 = printAnalysis (pSplitMapJoin 1024 $ red1 (+)) (input2 :- ())
 tr2 = printAnalysis (pSplitMapJoin 1024 $ red2 (+)) (input2 :- ())
 tr3 = printAnalysis (pSplitMapJoin 1024 $ red3 (+)) (input2 :- ())
@@ -477,19 +511,10 @@ tr4 = printAnalysis (pSplitMapJoin 1024 $ red4 (+)) (input2 :- ())
 tr5 = printAnalysis (pSplitMapJoin 1024 $ red5 (+)) (input2 :- ())
 tr6 = printAnalysis (pSplitMapJoin 1024 $ red6 (+)) (input2 :- ())
 tr7 = printAnalysis (pSplitMapJoin 1024 $ red7 (+)) (input2 :- ())
+tr10= printAnalysis (pSplitMapJoin 1024 $ red10(+)) (input2 :- ())
+tr11= printAnalysis (pSplitMapJoin 1024 $ red11(+)) (input2 :- ())
+tr12= printAnalysis (pSplitMapJoin 1024 $ red12(+)) (input2 :- ())
 
-red8 :: MemoryOps a
-     => (a -> a -> a)
-     -> SPull a
-     -> Program (SPush a)
-red8 f arr
-    | len arr == 1 = return $ push arr
-    | otherwise    = do
-        let (a1,a2) = halve arr
-        arr' <- force $ pushA [(Thread,Par,128)] $ zipWith f a1 a2
-        red8 f arr'
-
-tr8 = printAnalysis (pSplitMapJoin 1024 $ red8 (+)) (input2 :- ())
 
 
 or4 = printPrg $ do

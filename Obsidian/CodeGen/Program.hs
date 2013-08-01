@@ -10,11 +10,11 @@ import Obsidian.Types
 import Obsidian.Atomic
 
 import qualified Obsidian.Program as P
-import Obsidian.Program (LoopType)
 
 import Data.Word
 import Data.Supply
 import Data.List
+import Data.Maybe
 
 import System.IO.Unsafe
 
@@ -29,10 +29,9 @@ type IM = IMList ()
 -- out :: 
 out a = [(a,())]
 
-
 data Statement t
   --Combiners
-  = SFor LoopType Name P.PreferredLoopLocation EWord32 (IMList t) 
+  = SFor LoopType (Maybe LoopLocationType) Name EWord32 (IMList t) 
   | SCond (Exp Bool) (IMList t) 
   | SSeqWhile (EBool) (IMList t)
   | SPar [(IMList t)]
@@ -49,7 +48,7 @@ data Statement t
   | SSynchronize
 
 instance Show (Statement t) where
-  show (SFor  l n p _ _) = "SFor " ++ show l ++ " " ++ show p
+  show (SFor  l p n _ _) = "SFor " ++ show l ++ " " ++ show p
   show (SCond       _ _) = "SCond"
   show (SSeqWhile   _ _) = "SSeqWhile"
   show (SPar          _) = "SPar"
@@ -85,12 +84,44 @@ supplySplit (a,b) = ((a1,b1),(a2,b2))
         (b1,b2) = split2 b
 
 compile :: VarSupply -> P.Program a -> (a,IM)
-compile s (P.For t pl n f) = (a,out (SFor t var pl n im))
+--compile s (P.For t pl n f) = (a,out (SFor var t pl n im))
+compile s (P.For t pl (Literal n) ff) = (a,fors)
     where
-      p = f (variable var)
       (s1,s2) = supplySplit s
-      (a,im) = compile s1 p
       var = "i" ++ show (supplyVar s2)
+
+      forFs = zip (makeFor pl n) $ map (((var++"s")++).show) [0..]
+      fors :: IM
+      (fors,(a,im)) =
+        case forFs of
+          []  -> error "no fors"
+          [((t,l,s),_)] -> (out $ SFor t l var (fromIntegral s) im
+                           ,compile s1 $ ff (variable var))
+          ffs           -> (foldr (\((t,l,s),n) li -> out $ SFor t l n (fromIntegral s) li) im ffs
+                           ,compile s1 $ ff exp)
+          {-
+          ffs ->(foldr (\(f,n) li -> f n li) single
+                $zip ffs names
+                ,compile s1 $ ff (variable var))
+          -}
+      (texp,oexp) = partition (\((t,l,_),_) -> t == Par && l==Just Thread) $ forFs
+      exp :: EWord32
+      exp = foldl (\eb ((_,_,s),n) -> eb * fromIntegral s + variable n) 0 $ oexp ++ texp
+      single :: IM
+      single = (SDeclare var Word32,())
+              : (SAssign var [] exp,())
+              : im
+
+      makeFor a  0 = error "zero loop"
+      makeFor [] n = [(Par,Nothing,n)]
+      makeFor a  1 = [(Par,Nothing,1)]
+      makeFor ((l,t,s):r) n | s == 0 || n<=s = [(t,Just l,n)]
+      makeFor ((l,t,s):r) n | n`mod`s == 0
+        = (t,Just l,s)
+        : if n`div`s == 1
+            then []
+            else makeFor r (n`div`s)
+
 compile s p = cs s p 
 
 ---------------------------------------------------------------------------
@@ -238,10 +269,10 @@ numThreads :: IMList a -> Either Word32 (EWord32)
 numThreads im = foldl maxCheck (Left 0) $ map process im
   where
     process (SCond bexp im,_) = numThreads im
-    process (SFor P.Seq _ _ _ _,_) = Left 1
-    process (SFor P.Par _ [(P.Thread,_,_)] (Literal n) _,_) = Left n
-    process (SFor P.Par _ [(P.Thread,_,_)] n _,_) = Right n
-    process (SFor P.Par _ _              n im,_) = numThreads im
+    process (SFor Seq _ _ _ _,_) = Left 1
+    process (SFor Par (Just Thread) _ (Literal n) _,_) = Left n
+    process (SFor Par (Just Thread) _ n _,_) = Right n
+    process (SFor Par _ _              n im,_) = numThreads im
     process a = Left 0 -- ok ? 
 
     maxCheck (Left a) (Right b)  = Right $ maxE (fromIntegral a) b

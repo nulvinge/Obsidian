@@ -41,12 +41,6 @@ architecture =
   ,(Vector,4)
   ]
 
-data LoopLocationType = Kernel | Grid | Block | Thread | Vector
-  deriving (Show,Eq,Enum,Bounded)
-type PreferredLoopLocation = [(LoopLocationType,LoopType,Word32)]
-data LoopType = Seq | Par
-  deriving (Show,Eq)
-
 ---------------------------------------------------------------------------
 -- Program datatype
 --------------------------------------------------------------------------

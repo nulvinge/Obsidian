@@ -1,5 +1,6 @@
 module Obsidian (module Obsidian.Array,
                  module Obsidian.Program,
+                 module Obsidian.Globs,
                  module Obsidian.Exp, 
                  module Obsidian.Types, 
                  module Obsidian.Force, 
@@ -14,6 +15,7 @@ module Obsidian (module Obsidian.Array,
 
 
 import Obsidian.Program
+import Obsidian.Globs
 import Obsidian.Exp
 import Obsidian.Types
 import Obsidian.Array

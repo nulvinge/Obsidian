@@ -72,8 +72,11 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , mapIMData $ \(p,d) -> insertCost (p,d)
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
-          , splitLoops
-          , transformLoops depEdgesF
+          , transformLoops
+          -- dependence testing for moveLoops
+          -- , moveLoops
+          -- , mergeLoops
+          -- perform old analysis
           ]
 
         cost = sumCost $ collectIM (list.getCost.snd) imF
@@ -132,10 +135,10 @@ insertIMCollection bs inScalars = traverseIMaccDown (list `comp2` ins) start
   where
     ins :: [IMDataCollection] -> (Statement a,a) -> ((Statement a,(a,[IMDataCollection])),[IMDataCollection])
     ins cs b@(SCond          e l,a) = (mapSnd (,cs) b, cs ++ [CCond e])
-    ins cs b@(SFor t nn pl   e l,a) = (mapSnd (,cs) b ,cs
-                                        ++ collRange (variable nn)  e
-                                        -- ++ [CThreadConstant (variable n)] -- not sure
-                                        ++ [CLoop t (variable nn)])
+    ins cs b@(SFor t pl nn   e l,a) = (mapSnd (,cs) b ,cs
+                                   ++ collRange (variable nn)  e
+                                   -- ++ [CThreadConstant (variable n)] -- not sure
+                                   ++ [CLoop t (variable nn)])
     --ins cs b@(SSeqWhile     e l,a) = (mapSnd (,cs) b
     --                                 ,cs ++ [CCond e]
     --                                     ++ [CLoopSeq 2])
@@ -229,64 +232,44 @@ instructionNumbering ((p,d),il) =
             _             -> Nothing
 
 
-splitLoops :: IMList IMData -> IMList IMData
-splitLoops = mapIMs trav
-  where
-    trav (SFor Par name pl n l,d) | isJust (getConst d n) && not (simplePL pl)
-          = fors
-          -- ++ if texp /= [] then [(SSynchronize,d)] else []
-      where (exps,forFs)  = unzip $ makeFor pl (fromJust $ getConst d n)
-            names = map (((name++"s")++).show) [0..length forFs]
-            fors :: IMList IMData
-            fors = case forFs of
-                    []  -> error "no fors"
-                    [f] -> f name l
-                    ffs -> foldr (\(f,n) li -> f n li) single
-                         $ zip ffs names
-            (texp,oexp) = partition ((==Just Thread).fst.snd) $ zip names exps
-            exp :: EWord32
-            exp = foldr (\(n,(_,s)) eb -> eb * fromIntegral s + variable n) 0 $ oexp ++ texp
-            single :: IMList IMData
-            single = (SDeclare name Word32,d)
-                   : (SAssign name [] exp,d)
-                   : l
-
-            makeFor [] n = [((Nothing,n),\nn ll -> [(SFor Seq nn [] (fromIntegral n) ll,d)])]
-            makeFor a  1 = [((Nothing,1),\nn ll -> [(SFor Par nn [] (fromIntegral 1) ll,d)])]
-            makeFor ((l,t,s):r) n | n<=s
-              = [((Just l,n),\nn ll -> [(SFor Par nn [(l,t,s)] (fromIntegral n) ll,d)])]
-            makeFor ((l,t,s):r) n | n`mod`s == 0
-              =  ((Just l,s),\nn ll -> [(SFor Par nn [(l,t,s)] (fromIntegral s) ll,d)])
-              : if n`div`s == 1
-                 then []
-                 else makeFor r (n`div`s)
-
-            tryLess (Literal n) size = fromIntegral n <= size
-            tryLess _ _ = True
-            simplePL [] = True
-            simplePL [(l,t,s)] | tryLess n s = True
-            simplePL _ = False
-    trav p                      = [p]
-      
-
-transformLoops :: a -> IMList IMData -> IMList IMData
-transformLoops _ = traverseIMaccDown trav architecture
+transformLoops :: IMList IMData -> IMList IMData
+transformLoops = traverseIMaccDown trav architecture
   where
     trav :: [(LoopLocationType, Integer)]
          -> (Statement IMData, IMData)
          -> [((Statement IMData, IMData), [(LoopLocationType, Integer)])]
-    trav ((loc,size):as) (SFor Par name pl n l,d)
+    trav ((loc,size):as) (SFor Par pl name n l,d)
       | tryLess n size && simplePL pl
-      = ((SFor Par name [(loc,Par,0)] n l,d),as)
+      = ((SFor Par (Just loc) name n l,d),as)
       : if loc /= Thread then [] else [((SSynchronize,d),as)]
       where tryLess (Literal n) size = fromIntegral n <= size
             tryLess _ _ = True
-            simplePL [] = True
-            simplePL [(l,t,s)] | l == loc && tryLess n s = True
-            simplePL _ = False
-      
-    trav as (SFor t name pl n l,d) = [((SFor Seq name [] n l,d),as)]
+            simplePL Nothing = True
+            simplePL (Just l) = l == loc
+
+    trav as (SFor t pl name n l,d) = [((SFor Seq Nothing name n l,d),as)]
 
     trav as p                      = [(p,as)]
 
+type LoopInfo = (LoopType, Name, Maybe LoopLocationType, EWord32, IMData)
+
+moveLoops :: IMList IMData -> IMList IMData
+moveLoops = traverseIMaccDown trav []
+  where
+    trav :: [LoopInfo] -> (Statement IMData,IMData) -> [((Statement IMData,IMData),[LoopInfo])]
+    trav loops (SFor Par pl name n l,d) = map (,loopInsert (Par,name,pl,n,d) loops) l
+    trav loops (p,d) = [((p,d),loops)]
+
+    loopInsert :: LoopInfo -> [LoopInfo] -> [LoopInfo]
+    loopInsert = insertBy (\(_,_,l1,_,_) (_,_,l2,_,_) -> compare l1 l2)
+
+
+
+
+
+
+
+
+mergeLoops :: IMList IMData -> IMList IMData
+mergeLoops = id
 

@@ -174,7 +174,7 @@ imToSPMDC nt im = concatMap processG im
   where
     --should be only one SFor Block
     -- This one is tricky (since no corresponding CUDA construct exists) 
-    processG (SFor P.Par name [(P.Block,_,_)] n im,_) =
+    processG (SFor Par (Just Block) name n im,_) =
       -- TODO: there should be "number of blocks"-related conditionals here (possibly) 
       (cDecl (typeToCType Word32) name)
       : (cAssign (cVar name (typeToCType Word32)) [] (cBlockIdx X))
@@ -183,7 +183,7 @@ imToSPMDC nt im = concatMap processG im
     processG (SComment s,_) = [cComment s]
     processG (a,d) = error ("Cannot occur at grid level: " ++ show a)
 
-    processB (SFor P.Par name [(P.Thread,_,_)] (Literal n) im,_) =
+    processB (SFor Par (Just Thread) name (Literal n) im,_) =
       if (n < nt) 
       then 
         [cIf (cBinOp CLt (cThreadIdx X)  (cLiteral (Word32Val n) CWord32) CInt) code []]
@@ -196,16 +196,12 @@ imToSPMDC nt im = concatMap processG im
     processB (SComment s,_) = [cComment s]
     processB (SAllocate name size t,_) = []
     processB (SSynchronize,_)   = [CSync]
-    processB (SDeclare name t,_) =
-      [cDecl (typeToCType t) name]
-    processB (SAssign name [] e,_) =
-      [cAssign (cVar name (typeToCType (typeOf e))) [] (expToCExp e)]
-    processB (SAssign name [ix] e,_) = 
-      [cAssign (cVar name (typeToCType (Pointer (typeOf e)))) [expToCExp ix] (expToCExp e)]
     processB (a,d) = error ("Cannot occur at block level:" ++ show a)
 
+    processT (SFor Par (Just Vector) name e im,_) = --this should be more advanced
+      [cFor name (expToCExp e) (concatMap processT im)]
 
-    processT (SFor P.Seq name pl e im,_) =
+    processT (SFor Seq pl name e im,_) =
       [cFor name (expToCExp e) (concatMap processT im)]
 
     processT (SAssign name [] e,_) =
