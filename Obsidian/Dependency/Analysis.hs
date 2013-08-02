@@ -76,11 +76,12 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , transformLoops
           -- dependence testing for moveLoops
           , moveLoops
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , mergeLoops
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , cleanupAssignments
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          , removeUnusedAllocations
+          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           -- perform old analysis
           ]
 
@@ -330,9 +331,9 @@ cleanupAssignments = fst.traverseIMaccPrePost pre id []
                     Just Thread -> Just $ ThreadIdx X
                     Just Block  -> Just $ BlockIdx  X
                     -- Just Vector -> Just $ variable "Vec"
-                    _           -> traces name $ Nothing
+                    _           -> Nothing
     pre ((SAssign name [] e,d),a) | simpleE (replace a e) && isJust e'
-      = ((SComment (name ++ " = " ++ show e),d), (name,fromJust e') : a)
+      = ((SComment "",d), (name,fromJust e') : a)
       where e' = witnessConv Word32Witness e
     pre ((p,d),a) = ((traverseExp (replace a) p,d),a)
 
@@ -345,13 +346,14 @@ cleanupAssignments = fst.traverseIMaccPrePost pre id []
     replace a e = e
     look n a = liftM (replace a) $ lookup n a
 
-removeUnusedAllocations im = traverseExp trav im
+removeUnusedAllocations :: IMList IMData -> IMList IMData
+removeUnusedAllocations im = mapIMs trav im
   where
-    names = S.fromList $ collectExp uses im
-    uses :: Exp a -> Name
-    uses = undefined
-    trav = undefined
-    
+    names = S.fromList $ collectIM getNamesIM im
+    trav (SDeclare n _   ,_) | S.notMember n names = []
+    trav (SAllocate n _ _,_) | S.notMember n names = []
+    trav (SComment ""    ,_)                       = []
+    trav (p,d) = [(p,d)]
 
 
 

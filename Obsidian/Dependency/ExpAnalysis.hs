@@ -330,6 +330,21 @@ getIndicesIM (a,cs) = map (\(n,e,rw) -> (n,e,rw,cs)) $ getIndicesIM' a
     ce :: (Scalar a) => (Exp a) -> [(Name, Exp Word32, Bool)]
     ce = map (\(n,e) -> (n,e,True)) . collectExp getIndicesExp
 
+getNamesIM :: (P.Statement b, a) -> [Name]
+getNamesIM (a,cs) = getIndicesIM' a
+  where
+    getIndicesIM' :: (P.Statement b) -> [Name]
+    getIndicesIM' (P.SAssign     n r e)   = [n] ++ concat (map ce r) ++ ce e
+    getIndicesIM' (P.SAtomicOp _ n r   _) = [n] ++ ce r
+    getIndicesIM' (P.SCond           e l) = ce e
+    getIndicesIM' (P.SSeqWhile       e l) = ce e
+    getIndicesIM' (P.SFor _ _ _      e l) = ce e
+    getIndicesIM' _ = []
+    ce :: (Scalar a) => (Exp a) -> [Name]
+    ce = collectExp getNamesExp
+    getNamesExp (Index (n,r)) = [n]
+    getNamesExp _ = []
+
 getSizesIM ((P.SAllocate n s t),_) = [(n,s)]
 getSizesIM _ = []
 
