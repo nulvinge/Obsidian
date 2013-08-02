@@ -121,6 +121,7 @@ getMemoryLevel n d  --this is all guesswork
   | otherwise = error n
 
 strace a = trace (show a) a
+traces a = trace (show a)
 
 quickPrint :: ToProgram prg => prg -> InputList prg -> IO ()
 quickPrint prg input =

@@ -48,7 +48,7 @@ data Statement t
   | SSynchronize
 
 instance Show (Statement t) where
-  show (SFor  l p n _ _) = "SFor " ++ show l ++ " " ++ show p
+  show (SFor  l p n _ _) = "SFor " ++ show l ++ " " ++ show p ++ " " ++ show n
   show (SCond       _ _) = "SCond"
   show (SSeqWhile   _ _) = "SSeqWhile"
   show (SPar          _) = "SPar"
@@ -319,8 +319,8 @@ printStm (SCond bexp im,m) =
 printStm (SSynchronize,m) =
   "sync();" ++ meta m
   
-printStm (SFor t name pl n im,m) =
-  "for" ++ (show t) ++ " " ++ show name  ++ " in [0.." ++ show n ++"] do" ++ meta m ++ 
+printStm (SFor t pl name n im,m) =
+  "for" ++ (show t) ++ " " ++ (show pl) ++ " " ++ show name  ++ " in [0.." ++ show n ++"] do" ++ meta m ++ 
   concatMap printStm im ++ "\ndone;\n"
 printStm (a,m) = show a ++ meta m
 

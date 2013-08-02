@@ -25,6 +25,7 @@ import Data.List
 import Data.Maybe
 import Data.Either
 import Control.Monad
+import Debug.Trace
 import qualified Data.Map as M
 import qualified Data.Set as S
 
@@ -74,8 +75,12 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
           , transformLoops
           -- dependence testing for moveLoops
-          -- , moveLoops
-          -- , mergeLoops
+          , moveLoops
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          , mergeLoops
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          , cleanupAssignments
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           -- perform old analysis
           ]
 
@@ -251,25 +256,121 @@ transformLoops = traverseIMaccDown trav architecture
 
     trav as p                      = [(p,as)]
 
-type LoopInfo = (LoopType, Name, Maybe LoopLocationType, EWord32, IMData)
+type LoopInfo = (LoopType, Maybe LoopLocationType, Name, EWord32, IMData)
 
 moveLoops :: IMList IMData -> IMList IMData
 moveLoops = traverseIMaccDown trav []
   where
     trav :: [LoopInfo] -> (Statement IMData,IMData) -> [((Statement IMData,IMData),[LoopInfo])]
-    trav loops (SFor Par pl name n l,d) = map (,loopInsert (Par,name,pl,n,d) loops) l
-    trav loops (p,d) = [((p,d),loops)]
+    trav loops (SFor Par pl name n l,d) | simpleL l
+      = concat $ map (trav (loopInsert (Par,pl,name,n,d) loops)) $ l
+    trav loops (SFor Par pl name n l0,d)
+      = map (,[]) 
+      $ foldr (\(t,l,name,n,d) li -> [(SFor t l name n li,d)]) l0
+      $ loopInsert (Par,pl,name,n,d) loops
+    trav [] (p,d) = [((p,d),[])]
+
+    simpleL [(SFor Par _ _ _ _,_)] = True
+    simpleL _ = False
 
     loopInsert :: LoopInfo -> [LoopInfo] -> [LoopInfo]
-    loopInsert = insertBy (\(_,_,l1,_,_) (_,_,l2,_,_) -> compare l1 l2)
-
-
-
-
-
-
-
+    loopInsert = insertBy c
+      where c (_,_,_,_,_) (_,Nothing,_,_,_) = EQ
+            c (_,Nothing,_,_,_) (_,_,_,_,_) = EQ
+            c (_,Just l1,_,_,_) (_,Just l2,_,_,_) = compare l1 l2
 
 mergeLoops :: IMList IMData -> IMList IMData
-mergeLoops = id
+mergeLoops = traverseIMaccDown trav []
+  where
+    trav :: [LoopInfo] -> (Statement IMData,IMData) -> [((Statement IMData,IMData),[LoopInfo])]
+    trav loops (SFor Par pl name n l,d) | simpleL l
+      = concat $ map (trav (loopInsert (Par,pl,name,n,d) loops)) l
+    trav loops (SFor Par pl name n l0,d)
+      = map (,[]) 
+      $ foldr merge l0
+      $ groupBy interchangeble
+      $ Data.List.reverse
+      $ loopInsert (Par,pl,name,n,d) loops
+    trav [] (p,d) = [((p,d),[])]
+
+    interchangable (Par,_,_,_,_) (Par,Nothing,_,_,_) = True
+    interchangable (Par,Nothing,_,_,_) (Par,_,_,_,_) = True
+    interchangable (Par,l1,_,_,_) (Par,l2,_,_,_)     = l1 == l2
+    interchangeble _ _ = False
+
+    simpleL [(SFor Par _ _ _ _,_)] = True
+    simpleL _ = False
+
+    loopInsert = (:)
+
+    merge :: [LoopInfo] -> IMList IMData -> IMList IMData
+    merge loops@((t,Just l,name,n,d):_) ll
+      | l == Block  && length loops == 1 = [(SFor t (Just l) name n ll,d)]
+      | l == Vector && length loops == 1 = [(SFor t (Just l) name n ll,d)]
+      | otherwise                        = [(SFor t (Just l) var size im,d)]
+      where var = show l
+            exp = variable var
+            names :: [(Name,EWord32,EWord32,IMData)]
+            (names,size) = foldr (\(_,_,name,n,d) (names,ns) -> ((name,ns,n,d):names,ns*n)) ([],1) loops
+            im = concatMap makeAssign names ++ ll
+            makeAssign (name,o,n,d) = [(SDeclare name Word32,d)
+                                      ,(SAssign name [] e,d)]
+              where e = if o*n == size
+                          then exp`div`o
+                          else (exp`div`o)`mod`n
+    
+    --(\(t,l,name,n,d) li -> [(SFor t l name n li,d)]) 
+
+cleanupAssignments :: IMList IMData -> IMList IMData
+cleanupAssignments = fst.traverseIMaccPrePost pre id []
+  where
+    pre ((SFor Par l name n ll,d),a) | isJust exp
+      = ((SFor Par l [] n ll,d), (name,fromJust exp) : a)
+      where exp = case l of
+                    Just Thread -> Just $ ThreadIdx X
+                    Just Block  -> Just $ BlockIdx  X
+                    -- Just Vector -> Just $ variable "Vec"
+                    _           -> traces name $ Nothing
+    pre ((SAssign name [] e,d),a) | simpleE (replace a e) && isJust e'
+      = ((SComment (name ++ " = " ++ show e),d), (name,fromJust e') : a)
+      where e' = witnessConv Word32Witness e
+    pre ((p,d),a) = ((traverseExp (replace a) p,d),a)
+
+    simpleE (Index (n,[])) = True
+    simpleE (ThreadIdx X) = True
+    simpleE (BlockIdx X)  = True
+    simpleE _             = False
+    replace :: forall a. [(Name,Exp Word32)] -> Exp a -> Exp a
+    replace a e@(Index (n,[])) = fromMaybe e $ witnessConv (witness e) =<< look n a
+    replace a e = e
+    look n a = liftM (replace a) $ lookup n a
+
+removeUnusedAllocations im = traverseExp trav im
+  where
+    names = S.fromList $ collectExp uses im
+    uses :: Exp a -> Name
+    uses = undefined
+    trav = undefined
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

@@ -67,6 +67,13 @@ data Witness a where
   BoolWitness :: Witness Bool
   NothingWitness :: Witness a
 
+witnessConv :: Scalar b => Witness a -> Exp b -> Maybe (Exp a)
+witnessConv w b = f w (witness b) b
+  where f :: Witness a -> Witness b -> Exp b -> Maybe (Exp a)
+        f Word32Witness Word32Witness b = Just b
+        f BoolWitness BoolWitness b = Just b
+        f _ _ _ = Nothing
+
 instance Scalar Bool where  
   sizeOf _ = Storable.sizeOf (undefined :: Int)
   typeOf _ = Bool 
