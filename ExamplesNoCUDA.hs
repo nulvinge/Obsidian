@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 module ExamplesNoCuda where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
@@ -14,9 +15,23 @@ import Control.Monad.State
 import Debug.Trace
 import Obsidian.Dependency.Analysis
 import Obsidian.Inplace
+import Obsidian.Log
 
 import Prelude hiding (zipWith,sum,replicate,take,drop)
 import qualified Prelude as P 
+
+
+inputF :: SPull EFloat
+inputF = namedGlobal "apa" (1024*16)
+
+inputD :: SPull EDouble
+inputD = namedGlobal "apa" (1024*16)
+
+input1 :: Pull (Exp Word32) EInt 
+input1 = namedGlobal "apa" (variable "X")
+
+input2 :: Pull (Word32) EInt
+input2 = namedGlobal "apa" (1024*16)
 
 ---------------------------------------------------------------------------
 -- Util 
@@ -46,9 +61,6 @@ splitUpS n (Pull m ixf) = Pull (m `div` n) $
 
 --test1 :: Pull (Exp Word32) EInt -> Program (Push (Exp Word32) EInt)
 --test1 input = liftG  $ fmap mapFusion (splitUp 256 input) 
-
-input1 :: Pull (Exp Word32) EInt 
-input1 = namedGlobal "apa" (variable "X")
 
 test :: Pull EWord32 EInt -> Program ()
 test a = do
@@ -201,9 +213,6 @@ flatten pp =
 inputFold :: Pull Word32 EWord32 
 inputFold = namedPull "apa" 256 
 
-inputF :: Pull EWord32 EWord32 
-inputF = namedPull "apa" (variable "X") 
-
 
 -- reverseglobal 
 revG :: Pull EWord32 a -> Pull EWord32 a
@@ -262,9 +271,6 @@ joinPushNG a = pushNG l $ joinM a
     where pushNG :: ASize s => Word32 -> Pull s e -> Push s e
           pushNG = pushN
           l = len (a!0)
-
-input2 :: Pull (Word32) EInt
-input2 = namedGlobal "apa" (1024*16)
 
 tt0 = quickPrint (joinPushNG . transpose . splitUpS 16) (input2 :- ())
 
@@ -480,7 +486,7 @@ red10 f arr
     | otherwise    = do
         let (a1,a2) = halve arr
         arr' <- force $ pushA [(Thread,Par,128)] $ zipWith f a1 a2
-        red11 f arr'
+        red10 f arr'
 
 red11 :: MemoryOps a
      => (a -> a -> a)
@@ -504,6 +510,14 @@ red12 f arr
         arr' <- force $ pushA [(Thread,Par,128),(Thread,Seq,0)] $ zipWith f a1 a2
         red12 f arr'
 
+redl0 :: (MemoryOps a, Precise a)
+     => (Log a -> Log a -> Log a)
+     -> SPull a
+     -> Program (SPush a)
+redl0 f a = do
+  a' <- red10 f $ fmap toLog a
+  return $ fmap fromLog a'
+
 tr1 = printAnalysis (pSplitMapJoin 1024 $ red1 (+)) (input2 :- ())
 tr2 = printAnalysis (pSplitMapJoin 1024 $ red2 (+)) (input2 :- ())
 tr3 = printAnalysis (pSplitMapJoin 1024 $ red3 (+)) (input2 :- ())
@@ -514,7 +528,7 @@ tr7 = printAnalysis (pSplitMapJoin 1024 $ red7 (+)) (input2 :- ())
 tr10= printAnalysis (pSplitMapJoin 1024 $ red10(+)) (input2 :- ())
 tr11= printAnalysis (pSplitMapJoin 1024 $ red11(+)) (input2 :- ())
 tr12= printAnalysis (pSplitMapJoin 1024 $ red12(+)) (input2 :- ())
-
+trl0= printAnalysis (pSplitMapJoin 1024 $ redl0(*)) (inputF :- ())
 
 
 or4 = printPrg $ do
@@ -730,6 +744,11 @@ saxpy4 :: (Num a, ASize l, MemoryOps a)
 saxpy4 a x y = pSplitMap (8*256) (pCoalesceMap 8 (seqMap (\(x,y) -> y+a*x)))
              $ zipp (x,y)
 
+saxpy5 :: (Num a, ASize l)
+       => a -> Pull l a -> Pull l a -> Push l a
+saxpy5 a x y = pushA [(Thread,Par,256),(Thread,Seq,8),(Block,Par,0)]
+             $ fmap (\(x,y) -> y+a*x) $ zipp (x,y)
+
 tsx0' = printAnalysis saxpy0 (2 :- input1 :- input1 :- ())
 tsx0  = printAnalysis saxpy0 (2 :- input2 :- input2 :- ())
 tsx1' = printAnalysis saxpy1 (2 :- input1 :- input1 :- ())
@@ -740,6 +759,7 @@ tsx3' = printAnalysis saxpy3 (2 :- input1 :- input1 :- ())
 tsx3  = printAnalysis saxpy3 (2 :- input2 :- input2 :- ())
 tsx4' = printAnalysis saxpy4 (2 :- input1 :- input1 :- ())
 tsx4  = printAnalysis saxpy4 (2 :- input2 :- input2 :- ())
+tsx5  = printAnalysis saxpy5 (2 :- input2 :- input2 :- ())
 
 bitonicMerge1 :: (MemoryOps a, OrdE a) => Word32 -> Word32 -> Pull Word32 a -> Program (Push Word32 a)
 bitonicMerge1 s m a = do

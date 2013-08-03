@@ -230,6 +230,8 @@ data Op a where
   Log :: Floating a => Op (a -> a) -- "logf"
   Log2 :: Floating a => Op (a -> a) -- "log2f"
   Log10 :: Floating a => Op (a -> a) -- "log10f"
+  Log1p :: Floating a => Op (a -> a) -- "log1pf"
+  Expm1 :: Floating a => Op (a -> a) -- "expm1f"
   Pow :: Floating a => Op ((a, a) -> a) -- "powf"
   -- Floating Trig
   Tan :: Floating a => Op (a -> a) -- "tanf"
@@ -243,7 +245,7 @@ data Op a where
   ATanH :: Floating a => Op (a -> a) -- "atanhf"
   ACosH :: Floating a => Op (a -> a) -- "acoshf"
   -- There is no "div" in "Num" but it's already defined above. 
-  FDiv :: Floating a => Op ((a, a) -> a) 
+  FDiv :: Fractional a => Op ((a, a) -> a) 
 
   Int32ToWord32 :: Op (Int32 -> Word32)
   Word32ToInt32 :: Op (Word32 -> Int32)
@@ -348,27 +350,6 @@ instance (Scalar a, Bits a) => Bits (Exp a) where
   popCount = error "popCoint: is undefined for Exp Int"
 
 
--- TODO: change undefined to some specific error.
-instance Real (Exp Int) where
-  toRational = error "toRational: not implemented for Exp Int)"  
-
-instance Enum (Exp Int) where
-  toEnum = error "toEnum: not implemented for Exp Int" 
-  fromEnum = error "fromEnum: not implemented for Exp Int"
-         
-
----------------------------------------------------------------------------
--- Int32
----------------------------------------------------------------------------
--- TODO: change undefined to some specific error.
-instance Real (Exp Int32) where
-  toRational = error "toRational: not implemented for Exp Int32"
-
-instance Enum (Exp Int32) where
-  toEnum = error "toEnum: not implemented for Exp Int32" 
-  fromEnum = error "fromEnum: not implemented for Exp Int32" 
-         
-
 ---------------------------------------------------------------------------
 -- Word32 Instances
 ---------------------------------------------------------------------------
@@ -381,22 +362,13 @@ instance Enum (Exp Int32) where
 (>>*) :: (Scalar a, Bits a) => Exp a -> Exp Int -> Exp a 
 (>>*) a b = BinOp ShiftR a b 
 
-instance Real (Exp Word32) where 
-  toRational = error "toRational: not implemented for Exp Word32" 
-  
-
-instance Enum (Exp Word32) where
-  toEnum = error "toEnum: not implemented for Exp Word32" 
-  fromEnum = error "fromEnum: not implemented for Exp Word32" 
-
-  
-instance Fractional (Exp Float) where
+instance (Scalar a,Fractional a) => Fractional (Exp a) where
   (/) (Literal a) (Literal b) = Literal (a/b)
   (/) a b = BinOp FDiv a b
   recip a = (Literal 1) / a
   fromRational a = Literal (fromRational a)
 
-instance Floating (Exp Float) where
+instance (Scalar a,Floating a) => Floating (Exp a) where
   pi = Literal pi
   exp a = UnOp Exp a
   sqrt a = UnOp Sqrt a
@@ -437,7 +409,6 @@ instance Floating (Exp Float) where
   -- Don't second guess the CUDA compiler (or, more accurately, assume that
   -- other compilers have this).
   --(/) (Literal 1) (UnOp Sqrt b) = UnOp RSqrt b -- Optimisation.
-
   
 ---------------------------------------------------------------------------
 -- Word8 Instances
@@ -620,6 +591,11 @@ printOp Max = " Max "
 printOp Sin = " Sin " 
 printOp Cos = " Cos "
 
+printOp Log = " Log "
+printOp Exp = " Exp "
+printOp Log1p = " Log1p "
+printOp Expm1 = " Expm1 "
+
 printOp BitwiseAnd = " & "
 printOp BitwiseOr  = " | " 
 printOp BitwiseXor = " ^ " 
@@ -632,7 +608,7 @@ class ExpToCExp a where
   expToCExp :: Exp a -> CExpr 
 
 
-instance  ExpToCExp Bool where 
+instance ExpToCExp Bool where 
   expToCExp (Literal True) = cLiteral (IntVal 1) CInt 
   expToCExp (Literal False) = cLiteral (IntVal 0) CInt
   expToCExp a = expToCExpGeneral a 
@@ -710,7 +686,9 @@ expToCExpGeneral (UnOp Sqrt e)       = cFuncExpr "sqrt" [expToCExp e] (typeToCTy
 expToCExpGeneral (UnOp Log e)        = cFuncExpr "log" [expToCExp e] (typeToCType (typeOf e))
 expToCExpGeneral (UnOp Log2 e)       = cFuncExpr "log2" [expToCExp e] (typeToCType (typeOf e))
 expToCExpGeneral (UnOp Log10 e)      = cFuncExpr "log10" [expToCExp e] (typeToCType (typeOf e))
-  
+expToCExpGeneral (UnOp Log1p e)      = cFuncExpr "log1p" [expToCExp e] (typeToCType (typeOf e))
+expToCExpGeneral (UnOp Expm1 e)      = cFuncExpr "expm1" [expToCExp e] (typeToCType (typeOf e))
+
 -- Floating trig
 expToCExpGeneral (UnOp Sin e)        = cFuncExpr "sin" [expToCExp e] (typeToCType (typeOf e))
 expToCExpGeneral (UnOp Cos e)        = cFuncExpr "cos" [expToCExp e] (typeToCType (typeOf e))
