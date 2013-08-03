@@ -90,7 +90,7 @@ compile s (P.For t pl (Literal n) ff) = (a,fors)
       (s1,s2) = supplySplit s
       var = "i" ++ show (supplyVar s2)
 
-      forFs = zip (makeFor pl n) $ map (((var++"s")++).show) [0..]
+      forFs = zip (sortBy snd3comp $ makeFor pl n) $ map (((var++"s")++).show) [0..]
       fors :: IM
       (fors,(a,im)) =
         case forFs of
@@ -112,6 +112,14 @@ compile s (P.For t pl (Literal n) ff) = (a,fors)
               : (SAssign var [] exp,())
               : im
 
+      snd3comp (t1,l1,_) (t2,l2,_) | l1 == l2 =
+        case (t1,t2) of
+          (Par,Par) -> EQ
+          (Par,Seq) -> LT
+          (Seq,Par) -> GT
+          (Seq,Seq) -> EQ
+      snd3comp (_,l1,_) (_,l2,_) = compare l1 l2
+
       makeFor a  0 = error "zero loop"
       makeFor [] n = [(Par,Nothing,n)]
       makeFor a  1 = [(Par,Nothing,1)]
@@ -121,6 +129,7 @@ compile s (P.For t pl (Literal n) ff) = (a,fors)
         : if n`div`s == 1
             then []
             else makeFor r (n`div`s)
+
 
 compile s p = cs s p 
 

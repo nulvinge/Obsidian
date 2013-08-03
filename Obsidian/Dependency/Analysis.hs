@@ -73,15 +73,17 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , mapIMData $ \(p,d) -> insertCost (p,d)
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , transformLoops
           -- dependence testing for moveLoops
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , moveLoops
-          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , mergeLoops
-          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , cleanupAssignments
           , removeUnusedAllocations
-          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           -- perform old analysis
           ]
 
@@ -263,20 +265,23 @@ moveLoops :: IMList IMData -> IMList IMData
 moveLoops = traverseIMaccDown trav []
   where
     trav :: [LoopInfo] -> (Statement IMData,IMData) -> [((Statement IMData,IMData),[LoopInfo])]
-    trav loops (SFor Par pl name n l,d) | simpleL l
-      = concat $ map (trav (loopInsert (Par,pl,name,n,d) loops)) $ l
-    trav loops (SFor Par pl name n l0,d)
+    trav loops (SFor t pl name n l,d) | simpleL l
+      = concat $ map (trav (loopInsert (t,pl,name,n,d) loops)) $ l
+    trav loops (SFor t pl name n l0,d)
       = map (,[]) 
       $ foldr (\(t,l,name,n,d) li -> [(SFor t l name n li,d)]) l0
-      $ loopInsert (Par,pl,name,n,d) loops
+      $ loopInsert (t,pl,name,n,d) loops
     trav [] (p,d) = [((p,d),[])]
 
-    simpleL [(SFor Par _ _ _ _,_)] = True
+    simpleL [(SFor _ _ _ _ _,_)] = True
     simpleL _ = False
 
     loopInsert :: LoopInfo -> [LoopInfo] -> [LoopInfo]
     loopInsert = insertBy c
-      where c (_,_,_,_,_) (_,Nothing,_,_,_) = EQ
+      where c (Seq,_,_,_,_) (Seq,_,_,_,_) = EQ
+            c (Par,_,_,_,_) (Seq,_,_,_,_) = LT
+            c (Seq,_,_,_,_) (Par,_,_,_,_)   = GT
+            c (_,_,_,_,_) (_,Nothing,_,_,_) = EQ
             c (_,Nothing,_,_,_) (_,_,_,_,_) = EQ
             c (_,Just l1,_,_,_) (_,Just l2,_,_,_) = compare l1 l2
 
