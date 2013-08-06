@@ -139,6 +139,7 @@ runPrg i (Declare _ _) = ((),i)
 runPrg i (Allocate _ _ _ ) = ((),i)
 runPrg i (Assign _ _ a) = ((),i) -- Probaby wrong.. 
 runPrg i (AtomicOp _ _ _) = (variable ("new"++show i),i+1)
+runPrg i (WithStrategy _ a) = runPrg i a
 
 {- What do I want from runPrg ?
 
@@ -172,13 +173,19 @@ printPrg' i (Cond p f) =
   let (a,prg2,i') = printPrg' i f
   in ( a,pack ("if (" ++ show p ++  ")" ++ "{\n")
          `append` prg2
-         `append` pack "\n}",
+         `append` pack "\n}\n",
+       i')
+printPrg' i (WithStrategy s f) =
+  let (a,prg2,i') = printPrg' i f
+  in ( a,pack ("WithStrategy " ++ show s ++ " {\n")
+         `append` prg2
+         `append` pack "\n}\n",
        i')
 printPrg' i (For t pl n f) =
   let (a,prg2,i') = printPrg' i (f (variable "i"))
   in ( a, pack (show t ++ "for (i in 0.." ++ show n ++ ") " ++ (show pl) ++ " {\n")
           `append` prg2
-          `append` pack "\n}",
+          `append` pack "\n}\n",
        i')
 printPrg' i (Return a) = (a,pack "MonadReturn;\n",i)
 printPrg' i (Bind m f) =
@@ -191,10 +198,13 @@ printPrg' i (Bind m f) =
 -- (a -> ([lix] -> Program) -> ([lix] -> Program))
 
 preferredFor :: PreferredLoopLocation -> EWord32 -> (EWord32 -> Program ()) -> Program ()
-preferredFor [] (Literal n) ll = For Par Unknown (Literal n) ll
+preferredFor [] (Literal n) ll = For Par Unknown (fromIntegral n) ll
 preferredFor pl (Literal n) ll = fors []
     where
-      forFs = sortBy snd3comp $ makeFor pl n
+      forFs = map (\a@((t,l,_):_) -> (t,l, product $ map (\(_,_,s) -> s) a))
+            $ groupBy (\(t,l,_) (t',l',_) -> t==t && l==l')
+            $ sortBy snd3comp
+            $ makeFor pl n
       fors = foldr (\(t,l,s) li lix -> For t l (fromIntegral s) (\ix -> li ((t,l,s,ix):lix)))
                    (\lix -> ll (makeExp lix))
                    forFs
@@ -210,10 +220,10 @@ preferredFor pl (Literal n) ll = fors []
       snd3comp (_,l1,_) (_,l2,_) = compare l1 l2
 
       makeFor a  0 = error "zero loop"
-      makeFor [] n = [(Par,Unknown,n)]
-      makeFor a  1 = [(Par,Unknown,1)]
-      makeFor ((l,t,s):r) n | s == 0 || n<=s = [(t,l,n)]
-      makeFor ((l,t,s):r) n | n`mod`s == 0
+      makeFor [] n = [(Seq,Unknown,n)]
+      -- makeFor a  1 = [(Par,Unknown,1)]
+      makeFor ((t,l,s):r) n | s == 0 || n<=s = [(t,l,n)]
+      makeFor ((t,l,s):r) n | n`mod`s == 0
         = (t,l,s)
         : if n`div`s == 1
             then []

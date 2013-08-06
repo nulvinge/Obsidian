@@ -485,7 +485,7 @@ red10 f arr
     | len arr == 1 = return $ push arr
     | otherwise    = do
         let (a1,a2) = halve arr
-        arr' <- force $ pushA [(Thread,Par,128)] $ zipWith f a1 a2
+        arr' <- force $ pushA [(Par,Thread,128)] $ zipWith f a1 a2
         red10 f arr'
 
 red11 :: MemoryOps a
@@ -496,7 +496,7 @@ red11 f arr
     | len arr == 1 = return $ push arr
     | otherwise    = do
         let (a1,a2) = halve arr
-        arr' <- force $ pushA [(Thread,Par,128),(Vector,Par,0)] $ zipWith f a1 a2
+        arr' <- force $ pushA [(Par,Thread,128),(Par,Vector,0)] $ zipWith f a1 a2
         red11 f arr'
 
 red12 :: MemoryOps a
@@ -507,8 +507,19 @@ red12 f arr
     | len arr == 1 = return $ push arr
     | otherwise    = do
         let (a1,a2) = halve arr
-        arr' <- force $ pushA [(Thread,Par,128),(Thread,Seq,0)] $ zipWith f a1 a2
+        arr' <- force $ pushA [(Par,Thread,128),(Seq,Thread,0)] $ zipWith f a1 a2
         red12 f arr'
+
+red13 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> Program (SPush a)
+red13 f arr
+    | len arr == 1 = return $ push arr
+    | otherwise    = WithStrategy [(Par,Thread,128),(Seq,Thread,0)] $ do
+        let (a1,a2) = halve arr
+        arr' <- force $ zipWith f a1 a2
+        red13 f arr'
 
 redl0 :: (MemoryOps a, Precise a)
      => (Log a -> Log a -> Log a)
@@ -528,6 +539,7 @@ tr7 = printAnalysis (pSplitMapJoin 1024 $ red7 (+)) (input2 :- ())
 tr10= printAnalysis (pSplitMapJoin 1024 $ red10(+)) (input2 :- ())
 tr11= printAnalysis (pSplitMapJoin 1024 $ red11(+)) (input2 :- ())
 tr12= printAnalysis (pSplitMapJoin 1024 $ red12(+)) (input2 :- ())
+tr13= printAnalysis (pSplitMapJoin 1024 $ red13(+)) (input2 :- ())
 trl0= printAnalysis (pSplitMapJoin 1024 $ redl0(*)) (inputF :- ())
 
 
@@ -746,7 +758,7 @@ saxpy4 a x y = pSplitMap (8*256) (pCoalesceMap 8 (seqMap (\(x,y) -> y+a*x)))
 
 saxpy5 :: (Num a, ASize l)
        => a -> Pull l a -> Pull l a -> Push l a
-saxpy5 a x y = pushA [(Thread,Par,256),(Thread,Seq,8),(Block,Par,0)]
+saxpy5 a x y = pushA [(Par,Thread,256),(Seq,Thread,8),(Par,Block,0)]
              $ fmap (\(x,y) -> y+a*x) $ zipp (x,y)
 
 tsx0' = printAnalysis saxpy0 (2 :- input1 :- input1 :- ())

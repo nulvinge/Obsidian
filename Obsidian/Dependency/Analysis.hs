@@ -73,14 +73,14 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , mapIMData $ \(p,d) -> insertCost (p,d)
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
-          , transformLoops
+          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          -- , transformLoops
           -- dependence testing for moveLoops
+          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , moveLoops
           , mergeLoops
           , cleanupAssignments
           , removeUnusedAllocations
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           -- perform old analysis
           ]
 
@@ -294,8 +294,8 @@ mergeLoops = traverseIMaccDown trav []
       $ loopInsert (Par,pl,name,n,d) loops
     trav [] (p,d) = [((p,d),[])]
 
-    interchangable (Par,_,_,_,_) (Par,Nothing,_,_,_) = True
-    interchangable (Par,Nothing,_,_,_) (Par,_,_,_,_) = True
+    interchangable (Par,_,_,_,_) (Par,Unknown,_,_,_) = True
+    interchangable (Par,Unknown,_,_,_) (Par,_,_,_,_) = True
     interchangable (Par,l1,_,_,_) (Par,l2,_,_,_)     = l1 == l2
     interchangeble _ _ = False
 
@@ -306,9 +306,8 @@ mergeLoops = traverseIMaccDown trav []
 
     merge :: [LoopInfo] -> IMList IMData -> IMList IMData
     merge loops@((t,l,name,n,d):_) ll
-      | l == Block  && length loops == 1 = [(SFor t l name n ll,d)]
-      | l == Vector && length loops == 1 = [(SFor t l name n ll,d)]
-      | otherwise                        = [(SFor t l var size im,d)]
+      | length loops == 1 = [(SFor t l name n ll,d)]
+      | otherwise         = [(SFor t l var size im,d)]
       where var = show l
             exp = variable var
             names :: [(Name,EWord32,EWord32,IMData)]

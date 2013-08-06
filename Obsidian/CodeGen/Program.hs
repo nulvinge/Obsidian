@@ -15,6 +15,7 @@ import Data.Word
 import Data.Supply
 import Data.List
 import Data.Maybe
+import Data.Text (unpack)
 
 import System.IO.Unsafe
 
@@ -66,93 +67,111 @@ instance Show (Statement t) where
 --   where
 --     ns = unsafePerformIO$ newEnumSupply
 
+defaultStrategy' =
+  [(Par,Block,1)
+  ,(Par,Thread,32)
+  ,(Par,Block,32)
+  ,(Par,Thread,32)
+  ,(Par,Block,32)
+  ,(Par,Vector,4)
+  ,(Par,Block,32)
+  ,(Seq,Thread,0)
+  ]
+defaultStrategy =
+  [(Par,Block,16)
+  ,(Par,Thread,1024)
+  ,(Par,Vector,4)
+  ,(Par,Block,0)
+  ]
 
 compileStep1 :: P.Program a -> IM
 compileStep1 p = snd $ compile ns p
   where
-    ns = unsafePerformIO$ do
+    ns = (nsa,nsb,defaultStrategy)
+    (nsa,nsb) = unsafePerformIO$ do
       a <- newEnumSupply
       b <- newEnumSupply
       return (a,b)
 
-type VarSupply = (Supply Int, Supply Int)
+type CompileState = (Supply Int, Supply Int,PreferredLoopLocation)
 
-supplyVar    (a,b) = supplyValue a
-supplyOutput (a,b) = supplyValue b
-supplySplit (a,b) = ((a1,b1),(a2,b2))
+supplyVar    (a,b,pl) = supplyValue a
+supplyOutput (a,b,pl) = supplyValue b
+supplySplit  (a,b,pl) = ((a1,b1,pl),(a2,b2,pl))
   where (a1,a2) = split2 a
         (b1,b2) = split2 b
+addStrategy (a,b,pl) pl' = (a,b,pl++pl')
+getStrategy (a,b,pl) = pl
+removeStrategy (a,b,pl) pl' = (a,b,removeStrategy' pl pl')
+removeStrategy' [] _ = []
+removeStrategy' ((t,l,s):pl) (t',l',s')
+  | t == t' && l == l' && s == s' = pl
+  | t == t' && l == l' && s <  s' = removeStrategy' pl (t',l',s'`div`s)
+  | t == t' && l == l' && s >  s' = pl -- ((t,l,s`div`s'):pl)
+  | otherwise = (t,l,s) : removeStrategy' pl (t',l',s')
 
-compile :: VarSupply -> P.Program a -> (a,IM)
---compile s (P.For t pl n f) = (a,out (SFor var t pl n im))
-compile s (P.For t l n ff) = (a, out $ SFor t l var n im)
+compileFor :: CompileState -> P.Program a -> (a,IM)
+compileFor i (P.For t l (Literal n) ff) = (a, out $ SFor t l var (fromIntegral n) im)
     where
-      (s1,s2) = supplySplit s
+      (s1,s2) = supplySplit i
       var = "i" ++ show (supplyVar s2)
-      (a,im) = compile s1 $ ff (variable var)
+      (a,im) = compileFor (removeStrategy s1 (t,l,n)) $ ff (variable var)
+compileFor i p = compile i p
 
-compile s p = cs s p 
+compile :: CompileState -> P.Program a -> (a,IM)
+--compile s (P.For t pl n f) = (a,out (SFor var t pl n im))
+compile i (P.For Par Unknown n ff) = compileFor i $ P.preferredFor (getStrategy i) n ff
+compile i p@(P.For _ _ _ _) = compileFor i p
+
+
 
 ---------------------------------------------------------------------------
 -- General compilation
 ---------------------------------------------------------------------------
-cs :: VarSupply -> P.Program a -> (a,IM) 
-cs i P.Identifier = (supplyVar i, [])
+compile i P.Identifier = (supplyVar i, [])
 
-cs i (P.Assign name ix e) =
+compile i (P.Assign name ix e) =
   ((),out (SAssign name ix e))
  
-cs i (P.AtomicOp name ix at) = (v,out im)
+compile i (P.AtomicOp name ix at) = (v,out im)
   where 
     nom = "a" ++ show (supplyVar i)
     v = variable nom
     im = SAtomicOp nom name ix at
       
-cs i (P.Cond bexp p) = ((),out (SCond bexp im)) 
+compile i (P.Cond bexp p) = ((),out (SCond bexp im)) 
   where ((),im) = compile i p
 
-cs i (P.SeqWhile b p) = (a, out (SSeqWhile b im))
+compile i (P.SeqWhile b p) = (a, out (SSeqWhile b im))
   where
     (a,im) = compile i p
 
-cs i (P.Break) = ((), out SBreak)
+compile i (P.Break) = ((), out SBreak)
 
--- This should not happen, right ?                  
---cs i (P.ForAll n f) = (a,out (SForAll n im))
---  where
---    p = f (ThreadIdx X)  
---    (a,im) = compile i p 
-
--- This is trashed! 
---cs i (P.ForAllThreads n f) = (a,out (SForAllThreads n im)) 
---  where
---    p = f (BlockIdx X * BlockDim X + ThreadIdx X)
---    (a,im) = cs i p
-
-
-cs i (P.Allocate id n t) = ((),out (SAllocate id n t))
-cs i (P.Declare  id t)   = ((),out (SDeclare id t))
+compile i (P.Allocate id n t) = ((),out (SAllocate id n t))
+compile i (P.Declare  id t)   = ((),out (SDeclare id t))
 -- Output works in a different way! (FIX THIS!)
 --  Uniformity! (Allocate Declare Output) 
-cs i (P.Output   t)      = (nom,out (SOutput nom t))
+compile i (P.Output   t)      = (nom,out (SOutput nom t))
   where nom = "output" ++ show (supplyOutput i) 
-cs i (P.Comment c)       = ((),out (SComment c))
+compile i (P.Comment c)       = ((),out (SComment c))
 
-cs i (P.ParBind a b) = ((a',b'),out $ SPar [ima, imb])
+compile i (P.ParBind a b) = ((a',b'),out $ SPar [ima, imb])
   where (s1,s2) = supplySplit i
         (a',ima) = compile s1 a
         (b',imb) = compile s2 b
 
-cs i (P.Bind p f) = (b,im1 ++ im2) 
+compile i (P.WithStrategy s a) = compile (addStrategy i s) a
+
+compile i (P.Bind p f) = (b,im1 ++ im2) 
   where
     (s1,s2) = supplySplit i
     (a,im1) = compile s1 p
     (b,im2) = compile s2 (f a)
 
-cs i (P.Return a) = (a,[])
+compile i (P.Return a) = (a,[])
 
--- The nested ForAll case. 
-cs i p = error $ show $ P.printPrg p -- compile i p 
+--compile i p = error $ "cannot compile: " ++ unpack (P.printPrg p) -- compile i p 
 
 ---------------------------------------------------------------------------
 -- Old cs1
