@@ -76,11 +76,8 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , transformLoops
           -- dependence testing for moveLoops
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , moveLoops
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , mergeLoops
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , cleanupAssignments
           , removeUnusedAllocations
           , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
@@ -243,23 +240,23 @@ instructionNumbering ((p,d),il) =
 transformLoops :: IMList IMData -> IMList IMData
 transformLoops = traverseIMaccDown trav architecture
   where
-    trav :: [(LoopLocationType, Integer)]
+    trav :: [(LoopLocation, Integer)]
          -> (Statement IMData, IMData)
-         -> [((Statement IMData, IMData), [(LoopLocationType, Integer)])]
+         -> [((Statement IMData, IMData), [(LoopLocation, Integer)])]
     trav ((loc,size):as) (SFor Par pl name n l,d)
       | tryLess n size && simplePL pl
-      = ((SFor Par (Just loc) name n l,d),as)
+      = ((SFor Par loc name n l,d),as)
       : if loc /= Thread then [] else [((SSynchronize,d),as)]
       where tryLess (Literal n) size = fromIntegral n <= size
             tryLess _ _ = True
-            simplePL Nothing = True
-            simplePL (Just l) = l == loc
+            simplePL Unknown = True
+            simplePL l = l == loc
 
-    trav as (SFor t pl name n l,d) = [((SFor Seq Nothing name n l,d),as)]
+    trav as (SFor t pl name n l,d) = [((SFor Seq Unknown name n l,d),as)]
 
     trav as p                      = [(p,as)]
 
-type LoopInfo = (LoopType, Maybe LoopLocationType, Name, EWord32, IMData)
+type LoopInfo = (LoopType, LoopLocation, Name, EWord32, IMData)
 
 moveLoops :: IMList IMData -> IMList IMData
 moveLoops = traverseIMaccDown trav []
@@ -280,10 +277,8 @@ moveLoops = traverseIMaccDown trav []
     loopInsert = insertBy c
       where c (Seq,_,_,_,_) (Seq,_,_,_,_) = EQ
             c (Par,_,_,_,_) (Seq,_,_,_,_) = LT
-            c (Seq,_,_,_,_) (Par,_,_,_,_)   = GT
-            c (_,_,_,_,_) (_,Nothing,_,_,_) = EQ
-            c (_,Nothing,_,_,_) (_,_,_,_,_) = EQ
-            c (_,Just l1,_,_,_) (_,Just l2,_,_,_) = compare l1 l2
+            c (Seq,_,_,_,_) (Par,_,_,_,_) = GT
+            c (_,l1,_,_,_)  (_,l2,_,_,_)  = compare l1 l2
 
 mergeLoops :: IMList IMData -> IMList IMData
 mergeLoops = traverseIMaccDown trav []
@@ -310,10 +305,10 @@ mergeLoops = traverseIMaccDown trav []
     loopInsert = (:)
 
     merge :: [LoopInfo] -> IMList IMData -> IMList IMData
-    merge loops@((t,Just l,name,n,d):_) ll
-      | l == Block  && length loops == 1 = [(SFor t (Just l) name n ll,d)]
-      | l == Vector && length loops == 1 = [(SFor t (Just l) name n ll,d)]
-      | otherwise                        = [(SFor t (Just l) var size im,d)]
+    merge loops@((t,l,name,n,d):_) ll
+      | l == Block  && length loops == 1 = [(SFor t l name n ll,d)]
+      | l == Vector && length loops == 1 = [(SFor t l name n ll,d)]
+      | otherwise                        = [(SFor t l var size im,d)]
       where var = show l
             exp = variable var
             names :: [(Name,EWord32,EWord32,IMData)]
@@ -333,10 +328,10 @@ cleanupAssignments = fst.traverseIMaccPrePost pre id []
     pre ((SFor Par l name n ll,d),a) | isJust exp
       = ((SFor Par l [] n ll,d), (name,fromJust exp) : a)
       where exp = case l of
-                    Just Thread -> Just $ ThreadIdx X
-                    Just Block  -> Just $ BlockIdx  X
+                    Thread -> Just $ ThreadIdx X
+                    Block  -> Just $ BlockIdx  X
                     -- Just Vector -> Just $ variable "Vec"
-                    _           -> Nothing
+                    _      -> Nothing
     pre ((SAssign name [] e,d),a) | simpleE (replace a e) && isJust e'
       = ((SComment "",d), (name,fromJust e') : a)
       where e' = witnessConv Word32Witness e

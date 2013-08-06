@@ -15,17 +15,18 @@ module Obsidian.Program  where
  
 import Data.Word
 import Data.Monoid
+import Data.List
+import Data.Text (pack,unpack,Text,append)
+
+-- Package value-supply
+import Data.Supply
+import System.IO.Unsafe
 
 import Obsidian.Exp
 import Obsidian.Types
 import Obsidian.Globs
 import Obsidian.Atomic
 
--- Package value-supply
-import Data.Supply
-import System.IO.Unsafe
-
-import Data.Text
 
 ---------------------------------------------------------------------------
 -- Thread/Block/Grid 
@@ -47,10 +48,12 @@ architecture =
 data Program a where
   --Combiners
   For :: LoopType
-      -> PreferredLoopLocation
+      -> LoopLocation
       -> EWord32
       -> (EWord32 -> Program ())
       -> Program ()
+
+  WithStrategy :: PreferredLoopLocation -> Program a -> Program a
 
   Cond     :: Exp Bool -> Program () -> Program ()
   SeqWhile :: Exp Bool -> Program () -> Program () 
@@ -95,14 +98,14 @@ uniqueNamed pre = do
 -- forAll 
 ---------------------------------------------------------------------------
 forAll :: EWord32 -> (EWord32 -> Program ()) -> Program ()
-forAll n f = For Par [] n f
+forAll n f = For Par Unknown n f
 
 ---------------------------------------------------------------------------
 -- SeqFor
 ---------------------------------------------------------------------------
 seqFor :: EWord32 -> (EWord32 -> Program ()) -> Program ()
 seqFor (Literal 1) f = f 0
-seqFor n f = For Seq [] n f
+seqFor n f = For Seq Unknown n f
 
 forAllBlocks = forAll
 
@@ -126,7 +129,7 @@ runPrg i (Bind m f) =
   let (a,i') = runPrg i m
   in runPrg i' (f a)
      
-runPrg i (For t [] n ixf) =
+runPrg i (For _ _ n ixf) =
   let (p,i') = runPrg i (ixf (variable "tid")) 
   in  (p,i')
 -- What can this boolean depend upon ? its quite general!
@@ -182,4 +185,39 @@ printPrg' i (Bind m f) =
   let (a1, str1,i1) = printPrg' i m
       (a2,str2,i2) = printPrg' i1 (f a1)
   in (a2,str1 `append` str2, i2)
+
+-- b = [lix] -> Program ()
+-- a = [lts]
+-- (a -> ([lix] -> Program) -> ([lix] -> Program))
+
+preferredFor :: PreferredLoopLocation -> EWord32 -> (EWord32 -> Program ()) -> Program ()
+preferredFor [] (Literal n) ll = For Par Unknown (Literal n) ll
+preferredFor pl (Literal n) ll = fors []
+    where
+      forFs = sortBy snd3comp $ makeFor pl n
+      fors = foldr (\(t,l,s) li lix -> For t l (fromIntegral s) (\ix -> li ((t,l,s,ix):lix)))
+                   (\lix -> ll (makeExp lix))
+                   forFs
+      makeExp lix = foldl (\eb (_,_,s,ix) -> eb * fromIntegral s + ix) 0 $ oexp ++ texp
+        where (texp,oexp) = partition (\(t,l,_,_) -> t == Par && l==Thread) lix
+
+      snd3comp (t1,l1,_) (t2,l2,_) | l1 == l2 =
+        case (t1,t2) of
+          (Par,Par) -> EQ
+          (Par,Seq) -> LT
+          (Seq,Par) -> GT
+          (Seq,Seq) -> EQ
+      snd3comp (_,l1,_) (_,l2,_) = compare l1 l2
+
+      makeFor a  0 = error "zero loop"
+      makeFor [] n = [(Par,Unknown,n)]
+      makeFor a  1 = [(Par,Unknown,1)]
+      makeFor ((l,t,s):r) n | s == 0 || n<=s = [(t,l,n)]
+      makeFor ((l,t,s):r) n | n`mod`s == 0
+        = (t,l,s)
+        : if n`div`s == 1
+            then []
+            else makeFor r (n`div`s)
+
+
 

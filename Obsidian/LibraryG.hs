@@ -30,7 +30,7 @@ pMapJoin f = fmap (pJoin.f)
 --------------------------------------------------------------------------- 
 pConcat :: ASize l => Pull l (SPush a) -> Push l a
 pConcat arr =
-  Push (len arr * fromIntegral rn) $ \wf -> do
+  Push (len arr * fromIntegral rn) $ \wf ->
     forAll (sizeConv $ len arr) $ \bix ->
       let (Push _ p) = arr ! bix
       in p (\a i -> wf a (i+bix*sizeConv rn))
@@ -40,7 +40,6 @@ pConcat arr =
 pUnCoalesce :: ASize l => Pull l (SPush a) -> Push l a
 pUnCoalesce arr =
   Push (n * fromIntegral rn) $ \wf ->
-  do
     forAll (sizeConv n) $ \bix ->
       let (Push _ p) = arr ! bix
       in p (g wf)
@@ -59,23 +58,6 @@ pJoin f = Push n $ \wf -> do
     p wf
   where n = len $ fst $ runPrg 0 f
 
-
----------------------------------------------------------------------------
--- Parallel ZipWith 
----------------------------------------------------------------------------
-
-pZipWith :: ASize l => (SPull a -> SPull b -> SPush c)
-           -> Pull l (SPull a)
-           -> Pull l (SPull b)
-           -> Pull l (SPush c)
-pZipWith f as bs =
-  Pull instances $ \ bix -> 
-    ixMap (+bix*sizeConv n) $ f (as!bix) (bs!bix)
-    where
-      n = min m k 
-      m = len (as ! 0)
-      k = len (bs ! 0)
-      instances = min (len as) (len bs) 
 
 ---------------------------------------------------------------------------
 -- Parallel Generate 

@@ -31,7 +31,7 @@ out a = [(a,())]
 
 data Statement t
   --Combiners
-  = SFor LoopType (Maybe LoopLocationType) Name EWord32 (IMList t) 
+  = SFor LoopType LoopLocation Name EWord32 (IMList t) 
   | SCond (Exp Bool) (IMList t) 
   | SSeqWhile (EBool) (IMList t)
   | SPar [(IMList t)]
@@ -85,51 +85,11 @@ supplySplit (a,b) = ((a1,b1),(a2,b2))
 
 compile :: VarSupply -> P.Program a -> (a,IM)
 --compile s (P.For t pl n f) = (a,out (SFor var t pl n im))
-compile s (P.For t pl (Literal n) ff) = (a,fors)
+compile s (P.For t l n ff) = (a, out $ SFor t l var n im)
     where
       (s1,s2) = supplySplit s
       var = "i" ++ show (supplyVar s2)
-
-      forFs = zip (sortBy snd3comp $ makeFor pl n) $ map (((var++"s")++).show) [0..]
-      fors :: IM
-      (fors,(a,im)) =
-        case forFs of
-          []  -> error "no fors"
-          [((t,l,s),_)] -> (out $ SFor t l var (fromIntegral s) im
-                           ,compile s1 $ ff (variable var))
-          ffs           -> (foldr (\((t,l,s),n) li -> out $ SFor t l n (fromIntegral s) li) im ffs
-                           ,compile s1 $ ff exp)
-          {-
-          ffs ->(foldr (\(f,n) li -> f n li) single
-                $zip ffs names
-                ,compile s1 $ ff (variable var))
-          -}
-      (texp,oexp) = partition (\((t,l,_),_) -> t == Par && l==Just Thread) $ forFs
-      exp :: EWord32
-      exp = foldl (\eb ((_,_,s),n) -> eb * fromIntegral s + variable n) 0 $ oexp ++ texp
-      single :: IM
-      single = (SDeclare var Word32,())
-              : (SAssign var [] exp,())
-              : im
-
-      snd3comp (t1,l1,_) (t2,l2,_) | l1 == l2 =
-        case (t1,t2) of
-          (Par,Par) -> EQ
-          (Par,Seq) -> LT
-          (Seq,Par) -> GT
-          (Seq,Seq) -> EQ
-      snd3comp (_,l1,_) (_,l2,_) = compare l1 l2
-
-      makeFor a  0 = error "zero loop"
-      makeFor [] n = [(Par,Nothing,n)]
-      makeFor a  1 = [(Par,Nothing,1)]
-      makeFor ((l,t,s):r) n | s == 0 || n<=s = [(t,Just l,n)]
-      makeFor ((l,t,s):r) n | n`mod`s == 0
-        = (t,Just l,s)
-        : if n`div`s == 1
-            then []
-            else makeFor r (n`div`s)
-
+      (a,im) = compile s1 $ ff (variable var)
 
 compile s p = cs s p 
 
@@ -279,8 +239,8 @@ numThreads im = foldl maxCheck (Left 0) $ map process im
   where
     process (SCond bexp im,_) = numThreads im
     process (SFor Seq _ _ _ _,_) = Left 1
-    process (SFor Par (Just Thread) _ (Literal n) _,_) = Left n
-    process (SFor Par (Just Thread) _ n _,_) = Right n
+    process (SFor Par Thread _ (Literal n) _,_) = Left n
+    process (SFor Par Thread _ n _,_) = Right n
     process (SFor Par _ _              n im,_) = numThreads im
     process a = Left 0 -- ok ? 
 

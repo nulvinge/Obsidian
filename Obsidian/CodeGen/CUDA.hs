@@ -174,14 +174,14 @@ imToSPMDC nt im = concatMap processG im
   where
     --should be only one SFor Block
     -- This one is tricky (since no corresponding CUDA construct exists) 
-    processG (SFor Par (Just Block) [] n im,_) =
+    processG (SFor Par Block [] n im,_) =
       -- TODO: there should be "number of blocks"-related conditionals here (possibly) 
       concatMap processB im
     processG (SOutput name t,_) = []
     processG (SComment s,_) = [cComment s]
     processG (a,d) = error ("Cannot occur at grid level: " ++ show a)
 
-    processB (SFor Par (Just Thread) [] (Literal n) im,_) =
+    processB (SFor Par Thread [] (Literal n) im,_) =
       if (n < nt) 
       then 
         [cIf (cBinOp CLt (cThreadIdx X)  (cLiteral (Word32Val n) CWord32) CInt) code []]
@@ -194,7 +194,7 @@ imToSPMDC nt im = concatMap processG im
     processB (SSynchronize,_)   = [CSync]
     processB (a,d) = error ("Cannot occur at block level:" ++ show a)
 
-    processT (SFor Par (Just Vector) name e im,_) = --this should be more advanced
+    processT (SFor Par Vector name e im,_) = --this should be more advanced
       [cFor name (expToCExp e) (concatMap processT im)]
 
     processT (SFor Seq pl name e im,_) =
