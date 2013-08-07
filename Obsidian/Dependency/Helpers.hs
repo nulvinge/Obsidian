@@ -26,7 +26,6 @@ import Control.Monad
 import qualified Data.VMultiSet as MS
 import qualified Data.Map as M
 import qualified Data.Set as S
-import Debug.Trace
 
 type Cost = (CostT,CostT)
 
@@ -119,9 +118,6 @@ getMemoryLevel n d  --this is all guesswork
   | "input"  `isPrefixOf` n = BlockIdx X
   | "output" `isPrefixOf` n = BlockIdx X
   | otherwise = error n
-
-strace a = trace (show a) a
-traces a = trace (show a)
 
 quickPrint :: ToProgram prg => prg -> InputList prg -> IO ()
 quickPrint prg input =

@@ -5,6 +5,7 @@ module Obsidian.Globs where
 
 
 import Data.Word
+import Debug.Trace
 
 ---------------------------------------------------------------------------
 -- Aliases
@@ -24,5 +25,8 @@ instance Ord LoopLocation where
 type PreferredLoopLocation = [(LoopType,LoopLocation,Word32)]
 data LoopType = Seq | Par
   deriving (Show,Eq)
+
+strace a = trace (show a) a
+traces a = trace (show a)
 
 

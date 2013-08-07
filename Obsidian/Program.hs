@@ -198,7 +198,7 @@ printPrg' i (Bind m f) =
 -- (a -> ([lix] -> Program) -> ([lix] -> Program))
 
 preferredFor :: PreferredLoopLocation -> EWord32 -> (EWord32 -> Program ()) -> Program ()
-preferredFor [] (Literal n) ll = For Par Unknown (fromIntegral n) ll
+preferredFor [] (Literal n) ll = undefined -- For Par Unknown (fromIntegral n) ll
 preferredFor pl (Literal n) ll = fors []
     where
       forFs = map (\a@((t,l,_):_) -> (t,l, product $ map (\(_,_,s) -> s) a))

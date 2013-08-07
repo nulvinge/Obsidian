@@ -81,6 +81,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , mergeLoops
           , cleanupAssignments
           , removeUnusedAllocations
+          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           -- perform old analysis
           ]
 

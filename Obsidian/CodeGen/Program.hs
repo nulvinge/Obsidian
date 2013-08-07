@@ -78,7 +78,7 @@ defaultStrategy' =
   ,(Seq,Thread,0)
   ]
 defaultStrategy =
-  [(Par,Block,16)
+  [(Par,Block,65536)
   ,(Par,Thread,1024)
   ,(Par,Vector,4)
   ,(Par,Block,0)
@@ -111,7 +111,8 @@ removeStrategy' ((t,l,s):pl) (t',l',s')
   | otherwise = (t,l,s) : removeStrategy' pl (t',l',s')
 
 compileFor :: CompileState -> P.Program a -> (a,IM)
-compileFor i (P.For t l (Literal n) ff) = (a, out $ SFor t l var (fromIntegral n) im)
+compileFor i (P.For t l (Literal n) ff) | not (t == Par && l == Unknown)
+  = (a, out $ SFor t l var (fromIntegral n) im)
     where
       (s1,s2) = supplySplit i
       var = "i" ++ show (supplyVar s2)
