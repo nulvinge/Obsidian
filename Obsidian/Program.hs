@@ -204,9 +204,10 @@ preferredFor pl n ll = fors []
     where
 
       forFs = map (\a@((t,l,_):_) -> (t,l, product $ map (\(_,_,s) -> s) a))
-            $ groupBy (\(t,l,_) (t',l',_) -> t==t && l==l')
+            $ groupBy (\(t,l,_) (t',l',_) -> t==t' && l==l')
             $ sortBy snd3comp
-            $ makeFor (strace pl) (strace n)
+            $ strace
+            $ makeFor pl n
       fors = foldr (\(t,l,s) li lix -> For t l s (\ix -> li ((t,l,s,ix):lix)))
                    (\lix -> ll $ makeExp lix)
                    forFs
@@ -233,8 +234,6 @@ preferredFor pl n ll = fors []
             []      -> []
             [(1,1)] -> []
             _       -> makeFor r (n`div`fromIntegral m)
-        where m = s `gcd` maxDivable n
-      makeFor ((t,l,s):r) n = [(t,l,n)]
-
-      maxDivable = fromInteger . foldr1 gcd . map snd . linerizel
+        where m = traces (s,maxDivable n,n) $ strace $ s `gcd` (fromInteger $ maxDivable n)
+      makeFor ((t,l,0):r) n = [(t,l,n)]
 

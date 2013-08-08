@@ -34,6 +34,7 @@ import Obsidian.Globs
 import Obsidian.Program
 import Obsidian.Force
 import Obsidian.Memory
+import Obsidian.Helpers
 
 import qualified Obsidian.CodeGen.Program as CG 
 
@@ -77,7 +78,7 @@ instance (MemoryOps a) => GetTypes (Pull (Exp Word32) a) where
                     ,(namen,Left 0) : map (\n -> (n,sizeEither $ nvar)) (getNames names)
                     ,pullFrom names nvar)
       where namen = name ++ "n"
-            nvar = variable namen
+            nvar = variable namen * (fromIntegral $ maxDivable $ len a)
             names = createNames (valType a) name
 
 instance (Scalar a) => GetTypes (Exp a) where

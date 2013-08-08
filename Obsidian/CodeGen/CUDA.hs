@@ -69,10 +69,7 @@ genKernel name kernel a = proto ++ ts ++ cuda
     -- Creates (name -> memory address) map      
     (m,mm) = mmIM lc sharedMem Map.empty
              
-    -- What if its Right ??? (I DONT KNOW!) 
-    threadBudget = case numThreads im of
-      Left tb -> tb
-      Right tb -> error ("nonconstant threadbudget: " ++ show tb)
+    threadBudget = numThreads im
     ts = "/* number of threads needed " ++ show threadBudget ++ "*/\n"
 
     spmd = imToSPMDC threadBudget im
@@ -169,7 +166,7 @@ mmCExpr mm a = a
 ---------------------------------------------------------------------------
 atomicOpToCAtomicOp AtomicInc = CAtomicInc
 
-imToSPMDC :: Word32 -> IMList a -> [SPMDC]
+imToSPMDC :: (Either Word32 EWord32) -> IMList a -> [SPMDC]
 imToSPMDC nt im = concatMap processG im
   where
     --should be only one SFor Block
@@ -181,10 +178,10 @@ imToSPMDC nt im = concatMap processG im
     processG (SComment s,_) = [cComment s]
     processG (a,d) = error ("Cannot occur at grid level: " ++ show a)
 
-    processB (SFor Par Thread [] (Literal n) im,_) =
-      if (n < nt) 
+    processB (SFor Par Thread [] n im,_) =
+      if needsCondition n
       then 
-        [cIf (cBinOp CLt (cThreadIdx X)  (cLiteral (Word32Val n) CWord32) CInt) code []]
+        [cIf (cBinOp CLt (cThreadIdx X)  (expToCExp n) CInt) code []]
       else 
         code
       where 
@@ -227,3 +224,8 @@ imToSPMDC nt im = concatMap processG im
       [cDecl (typeToCType t) name]
     processT (a,d) = error ("Cannot occur at thread level:" ++ show a)
 
+    needsCondition n = case nt of
+      Left nt -> case n of
+        Literal n -> n < nt
+        _ -> True
+      Right nt -> n /= nt   

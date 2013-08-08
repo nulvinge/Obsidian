@@ -113,7 +113,7 @@ removeStrategy' ((t,l,s):pl) (t',l',s'')
   | t == t' && l == l' && s <  s' = removeStrategy' pl (t',l',s''`div`fromIntegral s)
   | t == t' && l == l' && s >  s' = pl -- ((t,l,s`div`s'):pl)
   | otherwise = (t,l,s) : removeStrategy' pl (t',l',s'')
-  where s' = fromInteger $ foldr1 gcd $ map snd $ linerizel s''
+  where s' = fromInteger $ maxDivable s''
 
 compileFor :: CompileState -> P.Program a -> (a,IM)
 compileFor i (P.For t l n ff) | not (t == Par && l == Unknown)
