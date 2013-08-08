@@ -21,17 +21,20 @@ import Prelude hiding (zipWith,sum,replicate,take,drop)
 import qualified Prelude as P 
 
 
-inputF :: SPull EFloat
-inputF = namedGlobal "apa" (1024*16)
+inputSF :: SPull EFloat
+inputSF = namedGlobal "apa" (1024*16)
 
-inputD :: SPull EDouble
-inputD = namedGlobal "apa" (1024*16)
+inputSD :: SPull EDouble
+inputSD = namedGlobal "apa" (1024*16)
 
-input1 :: Pull (Exp Word32) EInt 
-input1 = namedGlobal "apa" (variable "X")
+inputSI :: Pull (Word32) EInt
+inputSI = namedGlobal "apa" (1024*16)
 
-input2 :: Pull (Word32) EInt
-input2 = namedGlobal "apa" (1024*16)
+inputDI :: Pull (Exp Word32) EInt 
+inputDI = namedGlobal "apa" (variable "X")
+
+inputMI :: Pull (Exp Word32) EInt 
+inputMI = namedGlobal "apa" (1024*variable "X")
 
 ---------------------------------------------------------------------------
 -- Util 
@@ -210,8 +213,8 @@ flatten pp =
     n = len pp
     m = sizeConv (len (pp ! 0))
   
-inputFold :: Pull Word32 EWord32 
-inputFold = namedPull "apa" 256 
+inputSFold :: Pull Word32 EWord32 
+inputSFold = namedPull "apa" 256 
 
 
 -- reverseglobal 
@@ -272,7 +275,7 @@ joinPushNG a = pushNG l $ joinM a
           pushNG = pushN
           l = len (a!0)
 
-tt0 = quickPrint (joinPushNG . transpose . splitUpS 16) (input2 :- ())
+tt0 = quickPrint (joinPushNG . transpose . splitUpS 16) (inputSI :- ())
 
 
 transpose :: SMatrix a -> SMatrix a
@@ -529,22 +532,22 @@ redl0 f a = do
   a' <- red10 f $ fmap toLog a
   return $ fmap fromLog a'
 
-tr1 = printAnalysis (pSplitMapJoin 1024 $ red1 (+)) (input2 :- ())
-tr2 = printAnalysis (pSplitMapJoin 1024 $ red2 (+)) (input2 :- ())
-tr3 = printAnalysis (pSplitMapJoin 1024 $ red3 (+)) (input2 :- ())
-tr4 = printAnalysis (pSplitMapJoin 1024 $ red4 (+)) (input2 :- ())
-tr5 = printAnalysis (pSplitMapJoin 1024 $ red5 (+)) (input2 :- ())
-tr6 = printAnalysis (pSplitMapJoin 1024 $ red6 (+)) (input2 :- ())
-tr7 = printAnalysis (pSplitMapJoin 1024 $ red7 (+)) (input2 :- ())
-tr10= printAnalysis (pSplitMapJoin 1024 $ red10(+)) (input2 :- ())
-tr11= printAnalysis (pSplitMapJoin 1024 $ red11(+)) (input2 :- ())
-tr12= printAnalysis (pSplitMapJoin 1024 $ red12(+)) (input2 :- ())
-tr13= printAnalysis (pSplitMapJoin 1024 $ red13(+)) (input2 :- ())
-trl0= printAnalysis (pSplitMapJoin 1024 $ redl0(*)) (inputF :- ())
+tr1 = printAnalysis (pSplitMapJoin 1024 $ red1 (+)) (inputSI :- ())
+tr2 = printAnalysis (pSplitMapJoin 1024 $ red2 (+)) (inputSI :- ())
+tr3 = printAnalysis (pSplitMapJoin 1024 $ red3 (+)) (inputSI :- ())
+tr4 = printAnalysis (pSplitMapJoin 1024 $ red4 (+)) (inputSI :- ())
+tr5 = printAnalysis (pSplitMapJoin 1024 $ red5 (+)) (inputSI :- ())
+tr6 = printAnalysis (pSplitMapJoin 1024 $ red6 (+)) (inputSI :- ())
+tr7 = printAnalysis (pSplitMapJoin 1024 $ red7 (+)) (inputSI :- ())
+tr10= printAnalysis (pSplitMapJoin 1024 $ red10(+)) (inputSI :- ())
+tr11= printAnalysis (pSplitMapJoin 1024 $ red11(+)) (inputSI :- ())
+tr12= printAnalysis (pSplitMapJoin 1024 $ red12(+)) (inputSI :- ())
+tr13= printAnalysis (pSplitMapJoin 1024 $ red13(+)) (inputSI :- ())
+trl0= printAnalysis (pSplitMapJoin 1024 $ redl0(*)) (inputSF :- ())
 
 
 or4 = printPrg $ do
-  let a@(Push n p) = (pConcatMapJoin $ red4 (+)) $ splitUpS 1024 input2
+  let a@(Push n p) = (pConcatMapJoin $ red4 (+)) $ splitUpS 1024 inputSI
   output <- outputArray a
   p (\a ix -> assignArray output a ix)
 
@@ -570,7 +573,7 @@ err3 arr
         arr' <- unsafeForce $ zipWith (+) a1 a2
         err3 arr'
 
-te5 = printAnalysis ((pConcatMapJoin $ err5) . splitUpS 1024) (input2 :- ())
+te5 = printAnalysis ((pConcatMapJoin $ err5) . splitUpS 1024) (inputSI :- ())
 
 reverseL :: SPull a -> Program (SPush a)
 reverseL = liftM push . return . Obsidian.reverse
@@ -591,12 +594,12 @@ largeReverse2 = pConcatMapJoin reverseL . Obsidian.reverse . splitUp 1024
 largeReverse3 :: DPull a -> DPush a
 largeReverse3 = pConcat . Obsidian.reverse . fmap (pJoin.reverseL) . splitUp 1024
 
-trevl  = printAnalysis ((pConcatMapJoin $ reverseL)  . splitUpS 1024) (input2 :- ())
-trevl' = printAnalysis ((pConcatMapJoin $ reverseL') . splitUpS 1024) (input2 :- ())
-trevs  = printAnalysis reverses (input1 :- ())
-trevL1 = printAnalysis largeReverse1 (input1 :- ())
-trevL2 = printAnalysis largeReverse2 (input1 :- ())
-trevL3 = printAnalysis largeReverse3 (input1 :- ())
+trevl  = printAnalysis ((pConcatMapJoin $ reverseL)  . splitUpS 1024) (inputSI :- ())
+trevl' = printAnalysis ((pConcatMapJoin $ reverseL') . splitUpS 1024) (inputSI :- ())
+trevs  = printAnalysis reverses (inputDI :- ())
+trevL1 = printAnalysis largeReverse1 (inputDI :- ())
+trevL2 = printAnalysis largeReverse2 (inputDI :- ())
+trevL3 = printAnalysis largeReverse3 (inputDI :- ())
 
 mandel :: Push Word32 EWord8
 mandel = genRect 512 512 iters
@@ -639,7 +642,7 @@ sklansky n op arr = do
       where (a1,a2) = halve arr
             c = a1 ! fromIntegral (len a1-1)
 
-ts1 = printAnalysis ((pConcatMapJoin $ sklansky 10 (+)) . splitUpS 1024) (input2 :- ())
+ts1 = printAnalysis ((pConcatMapJoin $ sklansky 10 (+)) . splitUpS 1024) (inputSI :- ())
 
 phase :: Choice a
       => Int -> (a -> a -> a) -> SPull a -> SPush a
@@ -678,7 +681,7 @@ sklansky2 :: (Choice a, MemoryOps a)
           => Int -> (a -> a -> a) -> SPull a -> Program (SPush a)
 sklansky2 n op = compose [phase i op | i <- [0..(n-1)]]
 
-ts2 = printAnalysis ((pConcatMapJoin $ sklansky2 10 (+)) . splitUpS 1024) (input2 :- ())
+ts2 = printAnalysis ((pConcatMapJoin $ sklansky2 10 (+)) . splitUpS 1024) (inputSI :- ())
 
 sklansky3 :: (Choice a, MemoryOps a)
           => Int -> (a -> a -> a) -> SPull a -> Program (SPush a)
@@ -696,7 +699,7 @@ load n arr =
     m = len arr
     n' = sizeConv m `div` fromIntegral n
 
-ts3 = printAnalysis ((pConcatMapJoin $ sklansky3 10 (+)) . splitUpS 1024) (input2 :- ())
+ts3 = printAnalysis ((pConcatMapJoin $ sklansky3 10 (+)) . splitUpS 1024) (inputSI :- ())
 
 scan1 :: (MemoryOps a) => (a -> a -> a) -> Pull Word32 a -> Program (Pull Word32 a)
 scan1 f a = do a' <- forceInplace (push a)
@@ -718,7 +721,7 @@ scan1' f s' a = do
       let j = 2*s*i+2*s-1
       wf j $ (a!(j+s)) `f` (a!j)
 
-ts4 = printAnalysis ((pConcatMap $ pJoinPush . scan1 (+)) . splitUpS 1024) (input2 :- ())
+ts4 = printAnalysis ((pConcatMap $ pJoinPush . scan1 (+)) . splitUpS 1024) (inputSI :- ())
 
 matMul a b = pConcatMapJoin (matMulRow (transpose b)) a
   where matMulRow mat row = return $ pConcatMapJoin (dotP row) mat
@@ -761,17 +764,19 @@ saxpy5 :: (Num a, ASize l)
 saxpy5 a x y = pushA [(Par,Thread,256),(Seq,Thread,8),(Par,Block,0)]
              $ fmap (\(x,y) -> y+a*x) $ zipp (x,y)
 
-tsx0' = printAnalysis saxpy0 (2 :- input1 :- input1 :- ())
-tsx0  = printAnalysis saxpy0 (2 :- input2 :- input2 :- ())
-tsx1' = printAnalysis saxpy1 (2 :- input1 :- input1 :- ())
-tsx1  = printAnalysis saxpy1 (2 :- input2 :- input2 :- ())
-tsx2' = printAnalysis saxpy2 (2 :- input1 :- input1 :- ())
-tsx2  = printAnalysis saxpy2 (2 :- input2 :- input2 :- ())
-tsx3' = printAnalysis saxpy3 (2 :- input1 :- input1 :- ())
-tsx3  = printAnalysis saxpy3 (2 :- input2 :- input2 :- ())
-tsx4' = printAnalysis saxpy4 (2 :- input1 :- input1 :- ())
-tsx4  = printAnalysis saxpy4 (2 :- input2 :- input2 :- ())
-tsx5  = printAnalysis saxpy5 (2 :- input2 :- input2 :- ())
+tsx0D = printAnalysis saxpy0 (2 :- inputDI :- inputDI :- ())
+tsx0  = printAnalysis saxpy0 (2 :- inputSI :- inputSI :- ())
+tsx1D = printAnalysis saxpy1 (2 :- inputDI :- inputDI :- ())
+tsx1  = printAnalysis saxpy1 (2 :- inputSI :- inputSI :- ())
+tsx2D = printAnalysis saxpy2 (2 :- inputDI :- inputDI :- ())
+tsx2  = printAnalysis saxpy2 (2 :- inputSI :- inputSI :- ())
+tsx3D = printAnalysis saxpy3 (2 :- inputDI :- inputDI :- ())
+tsx3  = printAnalysis saxpy3 (2 :- inputSI :- inputSI :- ())
+tsx4D = printAnalysis saxpy4 (2 :- inputDI :- inputDI :- ())
+tsx4  = printAnalysis saxpy4 (2 :- inputSI :- inputSI :- ())
+tsx5  = printAnalysis saxpy5 (2 :- inputSI :- inputSI :- ())
+tsx5D = printAnalysis saxpy5 (2 :- inputSI :- inputSI :- ())
+tsx5M = printAnalysis saxpy5 (2 :- inputMI :- inputMI :- ())
 
 bitonicMerge1 :: (MemoryOps a, OrdE a) => Word32 -> Word32 -> Pull Word32 a -> Program (Push Word32 a)
 bitonicMerge1 s m a = do
@@ -792,5 +797,5 @@ bitonicSort1 a = f 2 a
                                 b' <- force b
                                 f (m*2) b'
 
-tb1 = printAnalysis ((pConcatMapJoin $ liftM push . bitonicSort1) . splitUpS 256) (input2 :- ())
+tb1 = printAnalysis ((pConcatMapJoin $ liftM push . bitonicSort1) . splitUpS 256) (inputSI :- ())
 
