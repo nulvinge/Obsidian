@@ -6,21 +6,7 @@
 
 module Obsidian.Dependency.Range (inRange, getRange, getRangeM, getConst) where
 
-import qualified Obsidian.CodeGen.CUDA as CUDA
-import qualified Obsidian.CodeGen.InOut as InOut
-import Obsidian.CodeGen.Program
-import Obsidian
-import Obsidian.Dependency.ExpAnalysis
 import Obsidian.Dependency.Helpers
-
-import Data.Word
-import Data.Tuple
-import Data.Int
-import Data.Maybe
-import Data.Either
-import Data.List
-import Data.Bits
-import Control.Monad
 import qualified Data.Map as M
 
 inRange :: (Num a, Ord a, Scalar a, Integral a)

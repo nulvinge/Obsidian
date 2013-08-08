@@ -7,23 +7,9 @@
 
 module Obsidian.Dependency.Coalesced (isCoalesced) where
 
-import qualified Obsidian.CodeGen.CUDA as CUDA
-import qualified Obsidian.CodeGen.InOut as InOut
-import Obsidian.CodeGen.Program
-import Obsidian
-import Obsidian.Dependency.ExpAnalysis
 import Obsidian.Dependency.Helpers
 import Obsidian.Dependency.Range
-
-import Data.Word
-import Data.Tuple
-import Data.Int
-import Data.List
-import Data.Maybe
-import Data.Either
-import Control.Monad
 import qualified Data.Map as M
-
 
 isCoalesced :: (Num Word32, Ord Word32, Scalar Word32, Integral Word32)
             => (String, Exp Word32, Bool, IMData)

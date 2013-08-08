@@ -6,24 +6,10 @@
 
 module Obsidian.Dependency.Cost (insertCost, diverges, sumCost, sumCostT, addIMCostT) where
 
-import qualified Obsidian.CodeGen.CUDA as CUDA
-import qualified Obsidian.CodeGen.InOut as InOut
-import Obsidian.CodeGen.Program
-import Obsidian
-import Obsidian.Dependency.ExpAnalysis
-import Obsidian.Dependency.Range
 import Obsidian.Dependency.Helpers
-
-import Data.Word
-import Data.Tuple
-import Data.Int
-import Data.Maybe
-import Data.Either
-import Data.List
-import Control.Monad
+import Obsidian.Dependency.Range
 import qualified Data.Map as M
 import qualified Data.VMultiSet as MS
-import Debug.Trace
 
 insertCost :: (Statement a, IMData) -> IMData
 insertCost (p,d) = addIMCostT d costt

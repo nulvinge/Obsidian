@@ -26,6 +26,7 @@ import Obsidian.Exp
 import Obsidian.Types
 import Obsidian.Globs
 import Obsidian.Atomic
+import Obsidian.Helpers
 
 
 ---------------------------------------------------------------------------
@@ -198,17 +199,18 @@ printPrg' i (Bind m f) =
 -- (a -> ([lix] -> Program) -> ([lix] -> Program))
 
 preferredFor :: PreferredLoopLocation -> EWord32 -> (EWord32 -> Program ()) -> Program ()
-preferredFor [] (Literal n) ll = undefined -- For Par Unknown (fromIntegral n) ll
-preferredFor pl (Literal n) ll = fors []
+preferredFor [] n ll = For Par Unknown n ll
+preferredFor pl n ll = fors []
     where
+
       forFs = map (\a@((t,l,_):_) -> (t,l, product $ map (\(_,_,s) -> s) a))
             $ groupBy (\(t,l,_) (t',l',_) -> t==t && l==l')
             $ sortBy snd3comp
-            $ makeFor pl n
-      fors = foldr (\(t,l,s) li lix -> For t l (fromIntegral s) (\ix -> li ((t,l,s,ix):lix)))
-                   (\lix -> ll (makeExp lix))
+            $ makeFor (strace pl) (strace n)
+      fors = foldr (\(t,l,s) li lix -> For t l s (\ix -> li ((t,l,s,ix):lix)))
+                   (\lix -> ll $ makeExp lix)
                    forFs
-      makeExp lix = foldl (\eb (_,_,s,ix) -> eb * fromIntegral s + ix) 0 $ oexp ++ texp
+      makeExp lix = foldl (\eb (_,_,s,ix) -> eb * s + ix) 0 $ oexp ++ texp
         where (texp,oexp) = partition (\(t,l,_,_) -> t == Par && l==Thread) lix
 
       snd3comp (t1,l1,_) (t2,l2,_) | l1 == l2 =
@@ -219,15 +221,20 @@ preferredFor pl (Literal n) ll = fors []
           (Seq,Seq) -> EQ
       snd3comp (_,l1,_) (_,l2,_) = compare l1 l2
 
-      makeFor a  0 = error "zero loop"
-      makeFor [] n = [(Seq,Unknown,n)]
+      makeFor :: PreferredLoopLocation -> Exp Word32 -> [(LoopType,LoopLocation,EWord32)]
+      makeFor a           (Literal 0) = error "zero loop"
+      makeFor []          n = [(Seq,Unknown,n)]
       -- makeFor a  1 = [(Par,Unknown,1)]
-      makeFor ((t,l,s):r) n | s == 0 || n<=s = [(t,l,n)]
-      makeFor ((t,l,s):r) n | n`mod`s == 0
-        = (t,l,s)
-        : if n`div`s == 1
-            then []
-            else makeFor r (n`div`s)
+      makeFor ((t,l,s):r) (Literal n) | n <= s = [(t,l,fromIntegral n)]
+      makeFor ((t,l,s):r) n | s == 0 = [(t,l,n)]
+      makeFor ((t,l,s):r) n | m > 1
+        = (t,l,fromIntegral m)
+        : case linerizel $ n`div`Literal m of
+            []      -> []
+            [(1,1)] -> []
+            _       -> makeFor r (n`div`fromIntegral m)
+        where m = s `gcd` maxDivable n
+      makeFor ((t,l,s):r) n = [(t,l,n)]
 
-
+      maxDivable = fromInteger . foldr1 gcd . map snd . linerizel
 

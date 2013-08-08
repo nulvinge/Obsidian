@@ -464,7 +464,7 @@ instance (Scalar a, Integral a) => Integral (Exp a) where
   div a b@(Literal 1) = a
   div a b = BinOp Div a b
   quotRem = error "quotRem: not implemented for Exp a" 
-  toInteger = error "toInteger: not implemented for Exp a"
+  toInteger a = error $ "toInteger: not implemented for Exp a " ++ show a
   
 ---------------------------------------------------------------------------
   

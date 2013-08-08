@@ -8,6 +8,7 @@ import Obsidian.Exp
 import Obsidian.Globs
 import Obsidian.Types
 import Obsidian.Atomic
+import Obsidian.Helpers
 
 import qualified Obsidian.Program as P
 
@@ -102,17 +103,21 @@ supplySplit  (a,b,pl) = ((a1,b1,pl),(a2,b2,pl))
         (b1,b2) = split2 b
 addStrategy (a,b,pl) pl' = (a,b,pl++pl')
 getStrategy (a,b,pl) = pl
+removeStrategy :: CompileState -> (LoopType,LoopLocation,EWord32) -> CompileState
 removeStrategy (a,b,pl) pl' = (a,b,removeStrategy' pl pl')
+removeStrategy' :: PreferredLoopLocation -> (LoopType,LoopLocation,EWord32) -> PreferredLoopLocation
 removeStrategy' [] _ = []
-removeStrategy' ((t,l,s):pl) (t',l',s')
+removeStrategy' ((t,l,s):pl) (t',l',s'')
+  | t == t' && l == l' && 1 == s' = pl
   | t == t' && l == l' && s == s' = pl
-  | t == t' && l == l' && s <  s' = removeStrategy' pl (t',l',s'`div`s)
+  | t == t' && l == l' && s <  s' = removeStrategy' pl (t',l',s''`div`fromIntegral s)
   | t == t' && l == l' && s >  s' = pl -- ((t,l,s`div`s'):pl)
-  | otherwise = (t,l,s) : removeStrategy' pl (t',l',s')
+  | otherwise = (t,l,s) : removeStrategy' pl (t',l',s'')
+  where s' = fromInteger $ foldr1 gcd $ map snd $ linerizel s''
 
 compileFor :: CompileState -> P.Program a -> (a,IM)
-compileFor i (P.For t l (Literal n) ff) | not (t == Par && l == Unknown)
-  = (a, out $ SFor t l var (fromIntegral n) im)
+compileFor i (P.For t l n ff) | not (t == Par && l == Unknown)
+  = (a, out $ SFor t l var n im)
     where
       (s1,s2) = supplySplit i
       var = "i" ++ show (supplyVar s2)

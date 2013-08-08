@@ -775,7 +775,7 @@ tsx3  = printAnalysis saxpy3 (2 :- inputSI :- inputSI :- ())
 tsx4D = printAnalysis saxpy4 (2 :- inputDI :- inputDI :- ())
 tsx4  = printAnalysis saxpy4 (2 :- inputSI :- inputSI :- ())
 tsx5  = printAnalysis saxpy5 (2 :- inputSI :- inputSI :- ())
-tsx5D = printAnalysis saxpy5 (2 :- inputSI :- inputSI :- ())
+tsx5D = printAnalysis saxpy5 (2 :- inputDI :- inputDI :- ())
 tsx5M = printAnalysis saxpy5 (2 :- inputMI :- inputMI :- ())
 
 bitonicMerge1 :: (MemoryOps a, OrdE a) => Word32 -> Word32 -> Pull Word32 a -> Program (Push Word32 a)

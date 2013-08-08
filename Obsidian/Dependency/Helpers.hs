@@ -5,27 +5,53 @@
              NoMonomorphismRestriction,
              FlexibleInstances #-}
 
-module Obsidian.Dependency.Helpers where
+module Obsidian.Dependency.Helpers
+  ( module Obsidian.Dependency.Helpers
+  , module Data.Word
+  , module Data.Tuple
+  , module Data.Int
+  , module Data.List
+  , module Data.Maybe
+  , module Data.Either
+  , module Data.Bits
+  , module Control.Monad
+  , module Obsidian
+  , module Obsidian.Globs
+  , module Obsidian.Exp
+  , module Obsidian.Helpers
+  , module Obsidian.CodeGen.Program
+  , module Obsidian.Dependency.ExpAnalysis
+  , module Debug.Trace
+  ) where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut
 import Obsidian.CodeGen.Program
 import Obsidian.Globs
 import Obsidian.Dependency.ExpAnalysis
+import Obsidian.Helpers
+import Obsidian.Exp
 import Obsidian
 
 import Data.Word
 import Data.Tuple
 import Data.Tuple.Enum
 import Data.Int
-import Data.List
+import Data.List hiding (drop,last,replicate,reverse,splitAt,take,zipWith)
 import Data.Maybe
 import Data.Either
 import Data.Bits
 import Control.Monad
+import Debug.Trace
+
+import qualified Data.List as L
 import qualified Data.VMultiSet as MS
 import qualified Data.Map as M
 import qualified Data.Set as S
+
+quickPrint :: ToProgram prg => prg -> InputList prg -> IO ()
+quickPrint prg input =
+  putStrLn $ CUDA.genKernel "kernel" prg input 
 
 type Cost = (CostT,CostT)
 
@@ -119,37 +145,6 @@ getMemoryLevel n d  --this is all guesswork
   | "output" `isPrefixOf` n = BlockIdx X
   | otherwise = error n
 
-quickPrint :: ToProgram prg => prg -> InputList prg -> IO ()
-quickPrint prg input =
-  putStrLn $ CUDA.genKernel "kernel" prg input 
-
-linerizel :: (Num a, Ord (Exp a), Eq a, Integral a) => Exp a -> [(Exp a,Integer)]
-linerizel = M.toList . linerize
-
-linerize :: (Num a, Ord (Exp a), Eq a, Integral a) => Exp a -> M.Map (Exp a) Integer
-linerize = M.filter (/=0) . M.fromListWith (+) . linerize'
-
-linerize' :: (Num a, Integral a) => Exp a -> [(Exp a,Integer)]
-linerize' (BinOp Add a b) = linerize' a ++ linerize' b
-linerize' (BinOp Sub a b) = linerize' a ++ (map (\(v,n) -> (v,-n)) $ linerize' b)
-linerize' (BinOp Mul (Literal a) b) = map (\(v,n) -> (v,n*fromIntegral a)) $ linerize' b
-linerize' (BinOp Mul a (Literal b)) = map (\(v,n) -> (v,n*fromIntegral b)) $ linerize' a
-linerize' (BinOp Div a (Literal b)) = ((unLinerizel ins)`div`fromIntegral b,1)
-                                    : map (mapSnd (`div`fromIntegral b)) outs
-  where (outs,ins) = partition ((==0).(`mod`fromIntegral b).snd) $ linerizel a
-linerize' (BinOp Mod a (Literal b)) = [((unLinerizel ins)`mod`fromIntegral b,1)]
-  where ins = filter ((/=0).(`mod`fromIntegral b).snd) $ linerizel a
-linerize' (Literal a)     = [(Literal 1, fromIntegral a)]
-linerize' a@(ThreadIdx X) = [(ThreadIdx X,1)]
-linerize' a@(BlockIdx X)  = [(BlockIdx X, 1)]
-linerize' a               = [(a,          1)]
-
-unLinerizel :: (Scalar a, Integral a, Num a, Ord (Exp a)) => [(Exp a,Integer)] -> Exp a
-unLinerizel x = sum [val * fromIntegral p | (val,p) <- x, p /= 0]
-
-unLinerize :: (Scalar a, Integral a, Num a, Ord (Exp a)) => M.Map (Exp a) Integer -> Exp a
-unLinerize = unLinerizel . M.assocs
-
 collectIndices a = map (\(_,[r]) -> r) $ collectIndex a
   where collectIndex (Index r) = [r]
         collectIndex _ = []
@@ -157,7 +152,7 @@ collectIndices a = map (\(_,[r]) -> r) $ collectIndex a
 type Access = (Name, Exp Word32, Bool, IMData, (Int,Int))
 getAccessesIM :: (Statement IMData, IMData) -> [Access]
 getAccessesIM (p,d) = map g
-                    $ Data.List.reverse --makes reads come before writes
+                    $ L.reverse --makes reads come before writes
                     $ zip [0..]
                     $ getIndicesIM (p,d)
   where g (i,(n,e,l,d)) = (n,e,l,d,(getInstruction d,i))
@@ -168,42 +163,8 @@ rangeIn (ls,hs) (lb,hb) = ls >= fromIntegral lb && hs <= fromIntegral hb
 rangeIntersect (ls,hs) (lb,hb) = not $ hs < lb || hb < ls
 rangeInSize r s = r `rangeIn` (0,s-1)
 
-
 isLocal n | "arr"    `isPrefixOf` n = True
           | "input"  `isPrefixOf` n = False
           | "output" `isPrefixOf` n = False
           | otherwise = error n
-
-mapPair f (a,b) = (f a, f b)
-mapPair2 f (a1,b1) (a2,b2) = (a1 `f` a2, b1 `f` b2)
-
-mapFst f (a,b) = (f a, b)
-mapSnd f (a,b) = (a, f b)
-
-maybePair (Just a, Just b) = Just (a,b)
-maybePair _                = Nothing
-
-maybe2 f (Just a) (Just b) = Just $ f a b
-maybe2 f _        _        = Nothing
-
-boolToMaybe p a = if p then Just a else Nothing
-
-a `cdiv` b = (a+b-1)`div`b
-
-warpsize :: (Num a) => a
-warpsize = 32
-
-list a = [a]
-
-comp2 a b c d = a (b c d)
-
-partitionMaybes :: (a -> Maybe b) -> [a] -> ([b],[a])
-partitionMaybes p = partitionEithers . map g
-  where g a = case p a of
-                Nothing -> Right a
-                Just b  -> Left  b
-
-isLeft (Left _)  = True
-isLeft (Right _) = False
-isRight = not . isLeft
 

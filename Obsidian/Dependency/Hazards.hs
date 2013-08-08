@@ -12,26 +12,11 @@ module Obsidian.Dependency.Hazards
   ,eliminateIndependent
   ,unneccessarySyncs)  where
 
-import qualified Obsidian.CodeGen.CUDA as CUDA
-import qualified Obsidian.CodeGen.InOut as InOut
-import Obsidian.CodeGen.Program
-import Obsidian.Globs
-import Obsidian
-import Obsidian.Dependency.ExpAnalysis
 import Obsidian.Dependency.Helpers
 import Obsidian.Dependency.Range
-
-import Data.Word
-import Data.Tuple
-import Data.Int
-import Data.List as L
-import Data.Maybe
-import Data.Either
-import Data.Bits
-import Control.Monad
 import Control.DeepSeq
+import Data.List as L
 import qualified Data.Map as M
-import Debug.Trace
 
 listProduct :: [a] -> [b] -> [(a,b)]
 listProduct la lb = [(a,b) | a <- la, b <- lb]

@@ -8,9 +8,6 @@
 module Obsidian.Dependency.Analysis (insertAnalysis, printAnalysis) where
 
 --import qualified Obsidian.CodeGen.Program as P
-import Obsidian.CodeGen.Program
-import Obsidian
-import Obsidian.Globs
 import Obsidian.Dependency.ExpAnalysis
 import Obsidian.Dependency.Helpers
 import Obsidian.Dependency.Range
@@ -18,16 +15,9 @@ import Obsidian.Dependency.Coalesced
 import Obsidian.Dependency.Cost
 import Obsidian.Dependency.Hazards
 
-import Data.Word
-import Data.Tuple
-import Data.Int
-import Data.List
-import Data.Maybe
-import Data.Either
-import Control.Monad
-import Debug.Trace
 import qualified Data.Map as M
 import qualified Data.Set as S
+import qualified Data.List as L
 
 instance ToProgram (Inputs,ArraySizes,IM) where
   toProgram i a () = a
@@ -52,8 +42,8 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
                                    [(n,l) | (n,Left l) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
         threadBudget = case numThreads im of
-          Left tb -> tb
-          Right tb -> error ("nonconstant threadbudget: " ++ show tb)
+          Left tb -> fromIntegral tb
+          Right tb -> tb
 
         outs = error $ show $ getOutputs im
 
@@ -81,7 +71,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , mergeLoops
           , cleanupAssignments
           , removeUnusedAllocations
-          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           -- perform old analysis
           ]
 
@@ -136,7 +126,7 @@ data IMDataCollection = CRange (Exp Word32) (Exp Word32, Exp Word32)
 
 type Conds = [(Exp Bool)]
 
-insertIMCollection :: Word32 -> [Name] -> IMList a -> IMList (a,[IMDataCollection])
+insertIMCollection :: EWord32 -> [Name] -> IMList a -> IMList (a,[IMDataCollection])
 insertIMCollection bs inScalars = traverseIMaccDown (list `comp2` ins) start
   where
     ins :: [IMDataCollection] -> (Statement a,a) -> ((Statement a,(a,[IMDataCollection])),[IMDataCollection])
@@ -150,7 +140,7 @@ insertIMCollection bs inScalars = traverseIMaccDown (list `comp2` ins) start
     --                                     ++ [CLoopSeq 2])
     ins cs b =                       (mapSnd (,cs) b,cs)
 
-    start = collRange (ThreadIdx X) (fromIntegral bs)
+    start = collRange (ThreadIdx X) bs
          -- ++ [CLoopPar (ThreadIdx X)]
          ++ map (CThreadConstant . variable) inScalars
     collRange v e = [CRange v (0,e-1)]
@@ -214,6 +204,7 @@ collectIMData dc = IMDataA []
               if left
                 then (var,mapPair expToMaybe $        f val)
                 else (var,mapPair expToMaybe $ swap $ f val)
+    expToMaybe :: (Integral a) => Maybe (Exp a) -> Maybe Integer
     expToMaybe (Just (Literal a)) = Just $ fromIntegral a
     expToMaybe _                  = Nothing
 
@@ -291,7 +282,7 @@ mergeLoops = traverseIMaccDown trav []
       = map (,[]) 
       $ foldr merge l0
       $ groupBy interchangeble
-      $ Data.List.reverse
+      $ L.reverse
       $ loopInsert (Par,pl,name,n,d) loops
     trav [] (p,d) = [((p,d),[])]
 
