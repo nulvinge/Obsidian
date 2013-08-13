@@ -15,7 +15,7 @@ import Control.Monad.State
 import Debug.Trace
 import Obsidian.Dependency.Analysis
 import Obsidian.Inplace
-import Obsidian.Log
+import Obsidian.Num
 
 import Prelude hiding (zipWith,sum,replicate,take,drop)
 import qualified Prelude as P 
@@ -532,6 +532,14 @@ redl0 f a = do
   a' <- red10 f $ fmap toLog a
   return $ fmap fromLog a'
 
+redc0 :: (MemoryOps a, Compensable a)
+     => (Compensated a -> Compensated a -> Compensated a)
+     -> SPull a
+     -> Program (SPush a)
+redc0 f a = do
+  a' <- red10 f $ fmap toCompensated a
+  return $ fmap fromCompensated a'
+
 tr1 = printAnalysis (pSplitMapJoin 1024 $ red1 (+)) (inputSI :- ())
 tr2 = printAnalysis (pSplitMapJoin 1024 $ red2 (+)) (inputSI :- ())
 tr3 = printAnalysis (pSplitMapJoin 1024 $ red3 (+)) (inputSI :- ())
@@ -544,6 +552,8 @@ tr11= printAnalysis (pSplitMapJoin 1024 $ red11(+)) (inputSI :- ())
 tr12= printAnalysis (pSplitMapJoin 1024 $ red12(+)) (inputSI :- ())
 tr13= printAnalysis (pSplitMapJoin 1024 $ red13(+)) (inputSI :- ())
 trl0= printAnalysis (pSplitMapJoin 1024 $ redl0(*)) (inputSF :- ())
+trc0= printAnalysis (pSplitMapJoin 1024 $ redc0(+)) (inputSF :- ())
+trc1= printAnalysis (pSplitMapJoin 1024 $ redc0(*)) (inputSF :- ())
 
 
 or4 = printPrg $ do
