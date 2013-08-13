@@ -45,7 +45,7 @@ module Numeric.Compensated
   , uncompensated
   , fadd
   -- * lifting scalars
-  , add, times, squared, divide, split
+  , add, divide, split
   , kahan, (+^), (*^)
   -- * compensated operators
   , square
@@ -109,23 +109,6 @@ fadd a b k = k x (b - (x - a)) where
   x = a + b
 {-# INLINE fadd #-}
 
--- | @'times' a b k@ computes @k x y@ such that
---
--- > x + y = a * b
--- > x = fl(a * b)
---
--- Which is to say that @x@ is the floating point image of @(a * b)@ and
--- @y@ stores the residual error term.
---
--- This could be nicer if we had access to a hardware fused multiply-add.
-times :: Compensable a => a -> a -> (a -> a -> r) -> r
-times a b k =
-  split a $ \a1 a2 ->
-  split b $ \b1 b2 ->
-  let x = a * b in k x (a2*b2 - (((x - a1*b1) - a2*b1) - a1*b2))
-  -- let x = a * b in k x (((a1*b1-x)+a1*b2+b2*b1)+a2*b2)
-{-# INLINEABLE times #-}
-
 -- this is a variant on a division algorithm by Liddicoat and Flynn
 divide :: Compensable a => a -> a -> (a -> a -> r) -> r
 divide a b = with (aX * ms) where
@@ -146,18 +129,16 @@ renorm a b c =
   fadd x2 (y1 + y2) compensated
 {-# INLINE renorm #-}
 
--- | @'squared' a k@ computes @k x y@ such that
+
+-- | error-free split of a floating point number into two parts.
 --
--- > x + y = a * a
--- > x = fl(a * a)
---
--- Which is to say that @x@ is the floating point image of @(a * a)@ and
--- @y@ stores the residual error term.
-squared :: Compensable a => a -> (a -> a -> r) -> r
-squared a k =
-  split a $ \a1 a2 ->
-  let x = a * a in k x (a2*a2 - ((x - a1*a1) - 2*(a2*a1)))
-{-# INLINE squared #-}
+-- Note: these parts do not satisfy the `compensated` contract
+split :: Compensable a => a -> a -> (a -> a -> r) -> r
+split magic a k = k x y where
+  c = magic*a
+  x = c - (c - a)
+  y = a - x
+{-# INLINEABLE split #-}
 
 -- | Calculate a fast square of a compensated number.
 square :: Compensable a => Compensated a -> Compensated a
@@ -168,16 +149,6 @@ square m =
   add y1 (x2*2) $ \x3 y3 ->
   renorm x1 x3 (b*b + 2*y2 + y3)
 {-# INLINE square #-}
-
--- | error-free split of a floating point number into two parts.
---
--- Note: these parts do not satisfy the `compensated` contract
-split :: Compensable a => a -> (a -> a -> r) -> r
-split a k = k x y where
-  c = magic*a
-  x = c - (c - a)
-  y = a - x
-{-# INLINEABLE split #-}
 
 -- | Calculate a scalar + compensated sum with Kahan summation.
 (+^) :: Compensable a => a -> Compensated a -> Compensated a
@@ -218,9 +189,38 @@ class (RealFrac a, Precise a, Floating a) => Compensable a where
   -- When in doubt, use @'add' a b 'compensated'@ instead of @'compensated' a b@
   compensated :: Compensable a => a -> a -> Compensated a
 
-  -- | This 'magic' number is used to 'split' the significand in half, so we can multiply
-  -- them separately without losing precision in 'times'.
+  -- | @'times' a b k@ computes @k x y@ such that
+  --
+  -- > x + y = a * b
+  -- > x = fl(a * b)
+  --
+  -- Which is to say that @x@ is the floating point image of @(a * b)@ and
+  -- @y@ stores the residual error term.
+  --
+  -- This could be nicer if we had access to a hardware fused multiply-add.
+  times :: Compensable a => a -> a -> (a -> a -> r) -> r
+  times a b k =
+    split magic a $ \a1 a2 ->
+    split magic b $ \b1 b2 ->
+    let x = a * b in k x (a2*b2 - (((x - a1*b1) - a2*b1) - a1*b2))
+    -- let x = a * b in k x (((a1*b1-x)+a1*b2+b2*b1)+a2*b2)
+  {-# INLINEABLE times #-}
+
+  -- | @'squared' a k@ computes @k x y@ such that
+  --
+  -- > x + y = a * a
+  -- > x = fl(a * a)
+  --
+  -- Which is to say that @x@ is the floating point image of @(a * a)@ and
+  -- @y@ stores the residual error term.
+  squared :: Compensable a => a -> (a -> a -> r) -> r
+  squared a k =
+    split magic a $ \a1 a2 ->
+    let x = a * a in k x (a2*a2 - ((x - a1*a1) - 2*(a2*a1)))
+  {-# INLINE squared #-}
+
   magic :: a
+
 
 instance Compensable Double where
   data Compensated Double = CD {-# UNPACK #-} !Double {-# UNPACK #-} !Double
@@ -231,6 +231,16 @@ instance Compensable Double where
   magic = 134217729
   {-# INLINE magic #-}
 
+  times a b k = k p e
+    where p = a * b
+          e = fma_d a b (-p)
+  squared a k = k p e
+    where p = a * a
+          e = fma_d a a (-p)
+
+foreign import ccall unsafe "math.h fma"
+    fma_d :: Double -> Double -> Double -> Double
+
 instance Compensable Float where
   data Compensated Float = CF {-# UNPACK #-} !Float {-# UNPACK #-} !Float
   with (CF a b) k = k a b
@@ -239,6 +249,16 @@ instance Compensable Float where
   {-# INLINE compensated #-}
   magic = 4097
   {-# INLINE magic #-}
+
+  times a b k = k p e
+    where p = a * b
+          e = fma_f a b (-p)
+  squared a k = k p e
+    where p = a * a
+          e = fma_f a a (-p)
+
+foreign import ccall unsafe "math.h fmaf"
+    fma_f :: Float -> Float -> Float -> Float
 
 instance Compensable a => Compensable (Compensated a) where
   data Compensated (Compensated a) = CC !(Compensated a) !(Compensated a)
