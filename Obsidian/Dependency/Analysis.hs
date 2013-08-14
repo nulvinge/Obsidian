@@ -34,6 +34,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
                         ++ [(SComment "Depth:\t  Work:\tType:\tTotal cost:",())]
                         ++ map (\s -> (SComment s,())) (showCost cost)
                         ++ map (\s -> (SComment ("Hazard: " ++ show s),())) hazardEdges
+                        ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdges1
                         -- ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdgesF
                         -- ++ map (\s -> (SComment ("Accesses: " ++ show s),())) (M.elems accesses)
                         -- ++ [(SComment $ show $ getOutputs im,())]
@@ -47,22 +48,14 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
 
         outs = error $ show $ getOutputs im
 
-        im1, im2, imF :: IMList IMData
-        im1 = mapDataIM (collectIMData.snd) $ insertIMCollection threadBudget inScalars im
-        (im2,instructions) = traverseIMaccDataPre instructionNumbering [] im1
-        imF = foldr (.) id (Prelude.reverse imActions) im2
+        im1, imF :: IMList IMData
+        im0 = im --transformLoops im
+        (im1,depEdges1,_,_)            = runAnalysis threadBudget inScalars imActions1 im0
+        (imF,depEdgesF,accesses,syncs) = runAnalysis threadBudget inScalars imActions2 $ emptyIM im1
 
-        imActions :: [IMList IMData -> IMList IMData]
-        imActions = [id
-          , insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
-          -- , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
-          , insertStringsIM "Diverging"     $ diverges
-          , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>=0) . Just . getInstruction . snd
-          -- , insertStringsIM "Hazards"       $ insertEdges accesses hazardEdges
-          , insertStringsIM "Unnessary sync"$ unneccessarySyncs instructions accesses depEdgesF
-          -- , mapIMData insertCost
-          -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
-          -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getSeqLoopFactor d, getParLoopFactor d)]
+
+        imActions1 :: [IMList IMData -> IMList IMData]
+        imActions1 = [id
           -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           -- , transformLoops
           -- dependence testing for moveLoops
@@ -71,18 +64,46 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , mergeLoops
           , cleanupAssignments
           , removeUnusedAllocations
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          , insertSyncs
+          , (\im -> trace (printIM (emptyIM im)) im)
           -- perform old analysis
           ]
 
+        imActions2 :: [IMList IMData -> IMList IMData]
+        imActions2 = [id
+          , insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
+          -- , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
+          , insertStringsIM "Diverging"     $ diverges
+          , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>=0) . Just . getInstruction . snd
+          -- , insertStringsIM "Hazards"       $ insertEdges accesses hazardEdges
+          , insertStringsIM "Unnessary sync"$ unneccessarySyncs syncs accesses depEdgesF
+          -- , mapIMData insertCost
+          -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
+          -- , insertStringsIM "Uppers" $ \(p,d) -> [Just $ show (M.toList $ getUpperMap d)]
+          -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getLoops d)]
+          ]
+
         cost = sumCost $ collectIM (list.getCost.snd) imF
-        accesses = M.fromList
-                 $ map (\a@(_,_,_,_,i) -> (i,a))
-                 $ concat
-                 $ map getAccessesIM instructions
-        depEdges1 = makeFlowDepEdges im2
-        depEdgesF = eliminateIndependent accesses depEdges1
         hazardEdges = keepHazards accesses depEdgesF
+
+runAnalysis threadBudget inScalars actions im = (imF,depEdges,accesses,syncs)
+  where
+    im1, im2, imF :: IMList IMData
+    im1 = mapDataIM (collectIMData.snd) $ insertIMCollection threadBudget inScalars im
+    (im2,instructions) = traverseIMaccDataPre instructionNumbering [] im1
+    imF = foldr (.) id (Prelude.reverse actions) im2
+    accesses = M.fromList
+            $ map (\a@(_,_,_,_,i) -> (i,a))
+            $ concat
+            $ map getAccessesIM instructions
+    depEdges = eliminateIndependent accesses $ makeFlowDepEdges im2
+    syncs = mapMaybe isSync instructions
+    isSync (SSynchronize,d) = Just $ getInstruction d
+    isSync _                = Nothing
+
+emptyIM :: IMList a -> IMList ()
+emptyIM = mapDataIM (const ())
+
 
 insertStringsIM :: String -> ((Statement IMData, IMData) -> [Maybe String])
                 -> IMList IMData -> IMList IMData
@@ -132,9 +153,14 @@ insertIMCollection bs inScalars = traverseIMaccDown (list `comp2` ins) start
     ins :: [IMDataCollection] -> (Statement a,a) -> ((Statement a,(a,[IMDataCollection])),[IMDataCollection])
     ins cs b@(SCond          e l,a) = (mapSnd (,cs) b, cs ++ [CCond e])
     ins cs b@(SFor t pl nn   e l,a) = (mapSnd (,cs) b ,cs
-                                   ++ collRange (variable nn)  e
+                                   ++ collRange var e
                                    -- ++ [CThreadConstant (variable n)] -- not sure
-                                   ++ [CLoop t (variable nn)])
+                                   ++ [CLoop t var])
+      where var = case (t,pl,nn) of
+                    (Par,Thread,[])     -> ThreadIdx X
+                    (Par,Block, [])     -> BlockIdx X
+                    (_,_,nn) | nn /= [] -> variable nn
+                    _                   -> error $ "Weird variable" ++ show (t,pl,nn)
     --ins cs b@(SSeqWhile     e l,a) = (mapSnd (,cs) b
     --                                 ,cs ++ [CCond e]
     --                                     ++ [CLoopSeq 2])
@@ -229,8 +255,8 @@ instructionNumbering ((p,d),il) =
             _             -> Nothing
 
 
-transformLoops :: IMList IMData -> IMList IMData
-transformLoops = traverseIMaccDown trav architecture
+insertSyncs :: IMList IMData -> IMList IMData
+insertSyncs = traverseIMaccDown trav architecture
   where
     trav :: [(LoopLocation, Integer)]
          -> (Statement IMData, IMData)
@@ -243,9 +269,6 @@ transformLoops = traverseIMaccDown trav architecture
             tryLess _ _ = True
             simplePL Unknown = True
             simplePL l = l == loc
-
-    trav as (SFor t pl name n l,d) = [((SFor Seq Unknown name n l,d),as)]
-
     trav as p                      = [(p,as)]
 
 type LoopInfo = (LoopType, LoopLocation, Name, EWord32, IMData)

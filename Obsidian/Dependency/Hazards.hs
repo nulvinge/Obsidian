@@ -449,8 +449,8 @@ insertEdges accesses edges (p,d) = map showEdge
             loc _            = ""
 
 
-unneccessarySyncs :: IMList IMData -> M.Map (Int,Int) Access -> [DepEdge] -> (Statement IMData,IMData) -> [Maybe String]
-unneccessarySyncs instructions accesses edges (SSynchronize,d) =
+unneccessarySyncs :: [Int] -> M.Map (Int,Int) Access -> [DepEdge] -> (Statement IMData,IMData) -> [Maybe String]
+unneccessarySyncs syncs accesses edges (SSynchronize,d) =
   if not $ any isNothing nessesaries
     then [Just $ (++"...")
                $ L.take (80-4-3-3)
@@ -460,9 +460,6 @@ unneccessarySyncs instructions accesses edges (SSynchronize,d) =
   where
     nessesaries = map makesNeccessary edges
     i = getInstruction d
-    syncs = mapMaybe isSync instructions
-      where isSync (SSynchronize,d) = Just $ getInstruction d
-            isSync _               = Nothing
     makesNeccessary (a'@(ai',_),b'@(bi',_),t,c)
       | not $ ai' > i && bi' < i = Just $ "" -- show (ai,bi)
       | (not same && sameThread) =
