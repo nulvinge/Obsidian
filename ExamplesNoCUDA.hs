@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
-module ExamplesNoCuda where
+module ExamplesNoCUDA where
 
 import qualified Obsidian.CodeGen.CUDA as CUDA
 
@@ -771,19 +771,19 @@ saxpy4 a x y = pSplitMap (8*256) (pCoalesceMap 8 (seqMap (\(x,y) -> y+a*x)))
 
 saxpy5 :: (Num a, ASize l)
        => a -> Pull l a -> Pull l a -> Push l a
-saxpy5 a x y = pushA [(Par,Thread,256),(Seq,Thread,8),(Par,Block,0)]
+saxpy5 a x y = pushA [(Par,Thread,256),(Seq,Thread,2),(Par,Block,0)]
              $ fmap (\(x,y) -> y+a*x) $ zipp (x,y)
 
-tsx0D = printAnalysis saxpy0 (2 :- inputDI :- inputDI :- ())
 tsx0  = printAnalysis saxpy0 (2 :- inputSI :- inputSI :- ())
-tsx1D = printAnalysis saxpy1 (2 :- inputDI :- inputDI :- ())
+tsx0D = printAnalysis saxpy0 (2 :- inputDI :- inputDI :- ())
 tsx1  = printAnalysis saxpy1 (2 :- inputSI :- inputSI :- ())
-tsx2D = printAnalysis saxpy2 (2 :- inputDI :- inputDI :- ())
+tsx1D = printAnalysis saxpy1 (2 :- inputDI :- inputDI :- ())
 tsx2  = printAnalysis saxpy2 (2 :- inputSI :- inputSI :- ())
-tsx3D = printAnalysis saxpy3 (2 :- inputDI :- inputDI :- ())
+tsx2D = printAnalysis saxpy2 (2 :- inputDI :- inputDI :- ())
 tsx3  = printAnalysis saxpy3 (2 :- inputSI :- inputSI :- ())
-tsx4D = printAnalysis saxpy4 (2 :- inputDI :- inputDI :- ())
+tsx3D = printAnalysis saxpy3 (2 :- inputDI :- inputDI :- ())
 tsx4  = printAnalysis saxpy4 (2 :- inputSI :- inputSI :- ())
+tsx4D = printAnalysis saxpy4 (2 :- inputDI :- inputDI :- ())
 tsx5  = printAnalysis saxpy5 (2 :- inputSI :- inputSI :- ())
 tsx5D = printAnalysis saxpy5 (2 :- inputDI :- inputDI :- ())
 tsx5M = printAnalysis saxpy5 (2 :- inputMI :- inputMI :- ())

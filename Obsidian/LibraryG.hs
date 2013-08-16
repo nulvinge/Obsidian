@@ -42,12 +42,11 @@ pUnCoalesce arr =
   Push (n * fromIntegral rn) $ \wf ->
     forAll (sizeConv n) $ \bix ->
       let (Push _ p) = arr ! bix
-      in p (g wf)
+      in p (\a i -> wf a (i `div` s + (i`mod`s)*(sizeConv n) + bix))
   where
     n  = len arr
     rn = len $ arr ! 0
     s  = sizeConv rn
-    g wf a i = wf a (i `div` s + (i`mod`s)*(sizeConv n))
 
 pJoinPush :: ASize s => Program (Pull s a) -> Push s a
 pJoinPush = pJoin . liftM push

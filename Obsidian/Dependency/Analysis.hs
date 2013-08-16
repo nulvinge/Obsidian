@@ -65,19 +65,19 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , cleanupAssignments
           , removeUnusedAllocations
           , insertSyncs
-          , (\im -> trace (printIM (emptyIM im)) im)
+          -- , (\im -> trace (printIM (emptyIM im)) im)
           -- perform old analysis
           ]
 
         imActions2 :: [IMList IMData -> IMList IMData]
         imActions2 = [id
           , insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
-          -- , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
+          , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
           , insertStringsIM "Diverging"     $ diverges
           , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>=0) . Just . getInstruction . snd
           -- , insertStringsIM "Hazards"       $ insertEdges accesses hazardEdges
           , insertStringsIM "Unnessary sync"$ unneccessarySyncs syncs accesses depEdgesF
-          -- , mapIMData insertCost
+          , mapIMData insertCost
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Uppers" $ \(p,d) -> [Just $ show (M.toList $ getUpperMap d)]
           -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getLoops d)]

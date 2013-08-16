@@ -236,4 +236,5 @@ preferredFor pl n ll = fors []
             _       -> makeFor r (n`div`fromIntegral m)
         where m = traces (s,maxDivable n,n) $ strace $ s `gcd` (fromInteger $ maxDivable n)
       makeFor ((t,l,0):r) n = [(t,l,n)]
+      makeFor (_:r) n = makeFor r n
 

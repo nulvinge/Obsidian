@@ -229,3 +229,4 @@ imToSPMDC nt im = concatMap processG im
         Literal n -> n < nt
         _ -> True
       Right nt -> n /= nt   
+
