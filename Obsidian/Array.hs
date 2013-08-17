@@ -20,6 +20,7 @@ import Obsidian.Program
 
 import Data.List
 import Data.Word
+import Control.Comonad
 
 ---------------------------------------------------------------------------
 -- Aliases
@@ -63,7 +64,7 @@ mkPushArray n p = Push n p
 mkPullArray n p = Pull n p  
 
 class Array a where
-  resize :: r -> a s e -> a r e
+  resize :: (ASize r,ASize s) => r -> a s e -> a r e
   len    :: ASize s => a s e -> s
   aMap   :: (e -> e') -> a s e -> a s e'
   ixMap  :: (Exp Word32 -> Exp Word32) -> a s e -> a s e
@@ -126,4 +127,17 @@ indexArray n      = mkPullArray n (\ix -> ix)
 infixl 9 ! 
 (!) :: Indexible a => a s e -> Exp Word32 -> e 
 (!) = access
+
+data CoPull s a = CoPull s (Pull s a)
+
+instance Array CoPull where
+  resize r (CoPull i a) = CoPull (fromIntegral i) (resize r a)
+  len (CoPull i a) = len a
+  aMap f (CoPull i a) = CoPull i (aMap f a)
+  ixMap f (CoPull i a) = CoPull i (ixMap f a)
+
+
+instance ASize s => Comonad (CoPull s) where
+  extract (CoPull i a) = a ! fromIntegral i
+  duplicate (CoPull i a) = CoPull i (Pull (len a) (\j -> CoPull (fromIntegral j) a))
 
