@@ -34,8 +34,8 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
                         ++ [(SComment "Depth:\t  Work:\tType:\tTotal cost:",())]
                         ++ map (\s -> (SComment s,())) (showCost cost)
                         ++ map (\s -> (SComment ("Hazard: " ++ show s),())) hazardEdges
-                        ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdges1
-                        -- ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdgesF
+                        -- ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdges1
+                        ++ map (\s -> (SComment ("DepEdges: " ++ show s),())) depEdgesF
                         -- ++ map (\s -> (SComment ("Accesses: " ++ show s),())) (M.elems accesses)
                         -- ++ [(SComment $ show $ getOutputs im,())]
   where (inScalars,inConstSizes) = mapFst (map fst)
@@ -78,6 +78,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           -- , insertStringsIM "Hazards"       $ insertEdges accesses hazardEdges
           , insertStringsIM "Unnessary sync"$ unneccessarySyncs syncs accesses depEdgesF
           , mapIMData insertCost
+          , scalarLifting depEdgesF
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Uppers" $ \(p,d) -> [Just $ show (M.toList $ getUpperMap d)]
           -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getLoops d)]
@@ -383,11 +384,45 @@ removeUnusedAllocations im = mapIMs trav im
     trav (SComment ""    ,_)                       = []
     trav (p,d) = [(p,d)]
 
+scalarLifting :: [DepEdge] -> IMList IMData -> IMList IMData
+scalarLifting depEdges = mapIMs liftAssigns
+                       . mapIM liftReads
+  where
+    liftAssigns (SAssign n i e,d) | isJust liftable
+        = (SAssign (fromJust liftable) [] e,d)
+        : if hasOtherDependences d
+            then [(SAssign n i $ getVar liftable $ e,d)]
+            else []
+      where liftable = getLiftable d
+            getVar :: (Scalar a) => Maybe Name -> Exp a -> Exp a
+            getVar (Just n) e = variable n
+    liftAssigns (p,d) = [(p,d)]
 
+    hasOtherDependences d = not $ all (\(_,(bi,br),t,_) -> (getInstruction d == bi) `implies` isThreadDep t) depEdges
+    implies True False = False
+    implies _    _     = True
+    getLiftable d = do
+      _ <- find (\(_,(bi,br),t,_) -> getInstruction d == bi && isThreadDep t) depEdges
+      return $ makeName $ getInstruction d
+    isThreadDep t = and $ map isThreadDep' t
+    isThreadDep' DataAnyDep = False
+    isThreadDep' SyncDepEdge = True
+    isThreadDep' (DataDep ts) = all (\(d,(e,_)) -> if e == ThreadIdx X || e == BlockIdx X then d == DEqual else False) ts
 
+    makeName i = "ts" ++ show i
 
-
-
+    liftReads (p,d) = traverseExp (replaceExp replaceMap) (p,d)
+      where replaceMap :: [(Exp Word32, Name, Name)]
+            replaceMap = mapMaybe getLiftables $ getAccessesIM (p,d)
+    getLiftables (n,e,r,d,i) = do
+      guard r
+      (_,(bi,br),_,_) <- find (\(a,_,t,_) -> i == a && isThreadDep t) depEdges
+      return (e,n,makeName bi)
+    replaceExp m (Index (n,[i])) =
+      case find (\(e,n',_) -> n==n' && e==i) m of
+        Just (_,_,liftName) -> variable liftName
+        Nothing             -> Index (n,[i])
+    replaceExp _ e = e
 
 
 

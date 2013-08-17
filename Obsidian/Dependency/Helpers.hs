@@ -143,10 +143,10 @@ collectIndices a = map (\(_,[r]) -> r) $ collectIndex a
 
 type Access = (Name, Exp Word32, Bool, IMData, (Int,Int))
 getAccessesIM :: (Statement IMData, IMData) -> [Access]
-getAccessesIM (p,d) = map g
-                    $ L.reverse --makes reads come before writes
-                    $ zip [0..]
-                    $ getIndicesIM (p,d)
+getAccessesIM = map g
+              . L.reverse --makes reads come before writes
+              . zip [0..]
+              . getIndicesIM
   where g (i,(n,e,l,d)) = (n,e,l,d,(getInstruction d,i))
 
 

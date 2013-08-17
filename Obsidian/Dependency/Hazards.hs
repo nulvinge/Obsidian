@@ -12,6 +12,8 @@ module Obsidian.Dependency.Hazards
   ,eliminateIndependent
   ,unneccessarySyncs
   ,Direction (..)
+  ,DepEdgeType (..)
+  ,DepEdge
   )  where
 
 import Obsidian.Dependency.Helpers
@@ -49,7 +51,7 @@ updateDependence aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) t
             , \(d,l) -> guard (sameGroup $ fst l)     >> return DEqual
             , \_     -> guard same                    >> return DNEqual
             , \_     -> guard diffBits                >> return DNone
-            , \(d,l) -> (lookup l sameBits) >>= guard >> return DEqual
+            -- , \(d,l) -> (lookup l sameBits) >>= guard >> return DEqual
             ]
 
           mds = aa `diffs` ba
@@ -377,7 +379,7 @@ makeFlowDepEdges im
     pre ((SSynchronize, d),(loc,prevloc,glob,edges)) = (d,([],prevloc++loc,glob,edges))
     pre ((p,d),            (loc,prevloc,glob,edges)) = (d,
         (loc++local,prevloc,glob++global,edges++newedges))
-      where (local,global) = partition (isLocal. \(n,_,_,_,_)->n) $ getAccessesIM (p,d)
+      where (local,global) = partition (isLocal . \(n,_,_,_,_)->n) $ getAccessesIM (p,d)
             newedges = concat $ [makeEdges [] True True  (a,b) | a <- local, b <- prevloc]
                              ++ [makeEdges [] True False (a,b) | a <- local, b <- loc]
                              ++ [makeEdges [] True False (a,a) | a <- local]
