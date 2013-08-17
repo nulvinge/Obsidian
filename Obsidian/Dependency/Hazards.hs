@@ -51,7 +51,7 @@ updateDependence aa@(an,a,arw,ad,ai) ba@(bn,b,brw,bd,bi) t
             , \(d,l) -> guard (sameGroup $ fst l)     >> return DEqual
             , \_     -> guard same                    >> return DNEqual
             , \_     -> guard diffBits                >> return DNone
-            -- , \(d,l) -> (lookup l sameBits) >>= guard >> return DEqual
+            , \(d,l) -> (lookup l sameBits) >>= guard >> return DEqual
             ]
 
           mds = aa `diffs` ba
@@ -181,12 +181,13 @@ bitTests' a b grad grbd loops = -- strace $ trace (show (same,local,varIdBits (T
     (or knownBits
     ,map (\(e,ps) -> ((e,ps),sameCheck e)) loops)
   where
-    sameCheck i = case (grad i) of
-      Just (_,ir) -> possibleBits ir == (varIdBits i)
-      Nothing     -> let (t,i') = Prelude.last varBits --not wholy safe
-        in if i /= i'
-          then False
-          else 2^(t+1)-1 == (varIdBits i)
+    sameCheck i = (grad i) == (grbd i)
+      && case (grad i) of
+          Just (_,ir) -> possibleBits ir == (varIdBits i)
+          Nothing     -> let (t,i') = Prelude.last varBits --not completely safe
+            in if i /= i'
+              then False
+              else 2^(t+1)-1 == (varIdBits i)
     varIdBits i = foldr (.|.) 0
                 $ map (bit.fst)
                 $ filter ((==i).snd) varBits
