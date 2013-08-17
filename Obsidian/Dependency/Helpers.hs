@@ -137,14 +137,6 @@ getSeqLoops, getParLoops :: IMData -> [Exp Word32]
 getSeqLoops = map fst . filter ((==False).snd) . getLoops
 getParLoops = map fst . filter ((==True ).snd) . getLoops
 
-getLoopsBelow n d = dropWhile ((/= getMemoryLevel n d) . fst) $ getLoops d
-
-getMemoryLevel n d  --this is all guesswork
-  | "arr"    `isPrefixOf` n = ThreadIdx X
-  | "input"  `isPrefixOf` n = BlockIdx X
-  | "output" `isPrefixOf` n = BlockIdx X
-  | otherwise = error n
-
 collectIndices a = map (\(_,[r]) -> r) $ collectIndex a
   where collectIndex (Index r) = [r]
         collectIndex _ = []

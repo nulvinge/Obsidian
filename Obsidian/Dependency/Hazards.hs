@@ -10,7 +10,9 @@ module Obsidian.Dependency.Hazards
   ,keepHazards
   ,makeFlowDepEdges
   ,eliminateIndependent
-  ,unneccessarySyncs)  where
+  ,unneccessarySyncs
+  ,Direction (..)
+  )  where
 
 import Obsidian.Dependency.Helpers
 import Obsidian.Dependency.Range
@@ -360,13 +362,15 @@ intersectD' _ _ = Nothing
 
 --thid does not handle synchronization within loops yet
 makeFlowDepEdges :: IMList IMData -> [DepEdge]
-makeFlowDepEdges = map (\((a,b,c),t) -> (a,b,t,c))
-                 . M.toList 
-                 . M.fromListWith (++)
-                 . map (\(a,b,t,c)->((a,b,c),t))
-                 . nub
-                 . (\(_,(_,_,globs,a)) -> processGlobals globs ++ a)
-                 . traverseIMaccDataPrePost pre post ([],[],[],[])
+makeFlowDepEdges im
+    = map (\((a,b,c),t) -> (a,b,t,c))
+    $ M.toList 
+    $ M.fromListWith (++)
+    $ map (\(a,b,t,c)->((a,b,c),t))
+    $ nub
+    $ (\(_,(_,_,globs,a)) -> processGlobals globs ++ a)
+    $ traverseIMaccDataPrePost pre post ([],[],[],[])
+    $ im
   where
     pre :: ((Statement IMData, IMData), ([Access], [Access], [Access], [DepEdge]))
         -> (IMData, ([Access], [Access], [Access], [DepEdge]))
@@ -381,26 +385,38 @@ makeFlowDepEdges = map (\((a,b,c),t) -> (a,b,t,c))
     post ((p, d),(loc,prevloc,glob,edges)) = (d,(loc,prevloc,glob,edges))
     processGlobals gs = concat $ [makeEdges [] False False (a,b) | (a,b) <- combinations gs]
                               ++ [makeEdges [] True False (a,a) | a <- gs]
+    memories = M.fromList $ collectIM c im
+      where c (SAllocate n s t,d) = [(n,(s,t,d))]
+            c _ = []
+    getLoopsBelow n d
+      -- | "arr"    `isPrefixOf` n = ThreadIdx X
+      | "input"  `isPrefixOf` n = getLoops d
+      | "output" `isPrefixOf` n = getLoops d
+      | otherwise = getBelow (getLoops d) (getLoops md)
+          where (_,_,md) = fromJust $ M.lookup n memories
+                getBelow (a:as) (b:bs) | a == b = getBelow as bs
+                getBelow as [] = as
 
-makeEdges :: [Exp Bool] -> Bool -> Bool -> (Access,Access) -> [DepEdge]
-makeEdges conds local nosync (aa@(an,a,arw,ad,ai),ba@(bn,b,brw,bd,bi))
-  | an /= bn   = [] --different arrays
-  | arw && brw = [] --read read
-  | otherwise  = [(ai, bi, loops, conds)]
-       ++(if not (local && nosync) then []
-            else [(ai, bi, [SyncDepEdge], conds)]
-      {- )++(if not (sameThread && sameTBGroup) then []
-            else [(ai, bi, [ThreadDepEdge], conds)]
-      )++(if sameThread || not (aa `sameWarp` ba && not sameTBGroup) then []
-            else [(ai, bi, [WarpDepEdge], conds)]
-      )++(if not sameBlock then []
-            else [(ai, bi, [BlockDepEdge], conds)]
-      -}
-      )
-  where (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
-        loops = if getLoops ad == getLoops bd
-                  then [DataDep $ map (DAny,) $ getLoopsBelow an ad]
-                  else [DataAnyDep]
+    makeEdges :: [Exp Bool] -> Bool -> Bool -> (Access,Access) -> [DepEdge]
+    makeEdges conds local nosync (aa@(an,a,arw,ad,ai),ba@(bn,b,brw,bd,bi))
+      | an /= bn   = [] --different arrays
+      | arw && brw = [] --read read
+      | otherwise  = [(ai, bi, loops, conds)]
+          ++(if not (local && nosync) then []
+                else [(ai, bi, [SyncDepEdge], conds)]
+          {- )++(if not (sameThread && sameTBGroup) then []
+                else [(ai, bi, [ThreadDepEdge], conds)]
+          )++(if sameThread || not (aa `sameWarp` ba && not sameTBGroup) then []
+                else [(ai, bi, [WarpDepEdge], conds)]
+          )++(if not sameBlock then []
+                else [(ai, bi, [BlockDepEdge], conds)]
+          -}
+          )
+      where (local, same, sameThread, sameBlock, sameWarp) = whatSame aa ba
+            loops = if getLoopsBelow an ad == getLoopsBelow bn bd
+                      then [DataDep $ map (DAny,) $ getLoopsBelow an ad]
+                      else [DataAnyDep]
+
 
 eliminateIndependent :: M.Map (Int,Int) Access -> [DepEdge] -> [DepEdge]
 eliminateIndependent accesses edges = catMaybes $ map tryEdge edges

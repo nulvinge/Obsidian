@@ -56,7 +56,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
 
         imActions1 :: [IMList IMData -> IMList IMData]
         imActions1 = [id
-          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           -- , transformLoops
           -- dependence testing for moveLoops
           -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
@@ -65,7 +65,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , cleanupAssignments
           , removeUnusedAllocations
           , insertSyncs
-          -- , (\im -> trace (printIM (emptyIM im)) im)
+          , (\im -> trace (printIM (emptyIM im)) im)
           -- perform old analysis
           ]
 
@@ -282,6 +282,7 @@ moveLoops = traverseIMaccDown trav []
     trav loops (SFor t pl name n l0,d)
       = map (,[]) 
       $ foldr (\(t,l,name,n,d) li -> [(SFor t l name n li,d)]) l0
+      $ L.reverse
       $ loopInsert (t,pl,name,n,d) loops
     trav [] (p,d) = [((p,d),[])]
 
@@ -289,11 +290,24 @@ moveLoops = traverseIMaccDown trav []
     simpleL _ = False
 
     loopInsert :: LoopInfo -> [LoopInfo] -> [LoopInfo]
-    loopInsert = insertBy c
-      where c (Seq,_,_,_,_) (Seq,_,_,_,_) = EQ
-            c (Par,_,_,_,_) (Seq,_,_,_,_) = LT
-            c (Seq,_,_,_,_) (Par,_,_,_,_) = GT
-            c (_,l1,_,_,_)  (_,l2,_,_,_)  = compare l1 l2
+    loopInsert x [] = [x]
+    loopInsert x (y:ys) | shouldMove x y && (simpleCanMove x y
+                       || canMove (getDirection x) (getDirection y))
+      = y : loopInsert x ys
+      where
+        shouldMove (_,l1,_,_,_)  (_,l2,_,_,_) = compare l1 l2 == LT
+        -- insert advanced analysis
+        getDirection (_,_,_,_,_) = DAny
+        canMove DEqual DEqual = True
+        canMove DEqual DLess  = True
+        canMove DLess  DLess  = True
+        canMove DLess  DEqual = True
+        canMove DLess  DMore  = False
+        canMove _      _      = False
+        simpleCanMove (Par,_,_,_,_) (Par,_,_,_,_) = True
+        simpleCanMove (Seq,_,_,_,_) (Par,_,_,_,_) = True
+        simpleCanMove _             _             = False
+    loopInsert x ys = x : ys
 
 mergeLoops :: IMList IMData -> IMList IMData
 mergeLoops = traverseIMaccDown trav []
@@ -368,18 +382,6 @@ removeUnusedAllocations im = mapIMs trav im
     trav (SAllocate n _ _,_) | S.notMember n names = []
     trav (SComment ""    ,_)                       = []
     trav (p,d) = [(p,d)]
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
