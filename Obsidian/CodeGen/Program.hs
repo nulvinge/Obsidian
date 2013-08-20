@@ -63,6 +63,7 @@ instance Show (Statement t) where
   show (SOutput     _ _) = "SOutput"
   show (SComment      _) = "SComment"
   show (SSynchronize   ) = "SSynchronize"
+  show (SWithStrategy _ _) = "SWithStrategy"
 
 -- compileStep1 :: P.Program t a -> IM
 -- compileStep1 p = snd $ cs1 ns p
@@ -292,8 +293,12 @@ printStm (SDeclare name t,m) =
 printStm (SOutput name t,m) =
   show t ++ " " ++ name ++ ";" ++ meta m
 printStm (SCond bexp im,m) =
-  "if " ++ show bexp ++ "{\n" ++ 
-  concatMap printStm im ++ "\n};" ++ meta m
+  "if " ++ show bexp ++ "{\n" ++ meta m ++ 
+  concatMap printStm im ++ "\n};"
+
+printStm (SWithStrategy s im,m) =
+  "WithStrategy " ++ show s ++ "{\n" ++ meta m ++ 
+  concatMap printStm im ++ "\n};"
 
 printStm (SSynchronize,m) =
   "sync();" ++ meta m

@@ -774,6 +774,10 @@ saxpy5 :: (Num a, ASize l)
 saxpy5 a x y = pushA [(Par,Thread,256),(Seq,Thread,2),(Par,Block,0)]
              $ fmap (\(x,y) -> y+a*x) $ zipp (x,y)
 
+saxpy6 :: (Num a, ASize l)
+       => a -> Pull l a -> Pull l a -> Push l a
+saxpy6 a x y = push $ fmap (\(x,y) -> y+a*x) $ zipp (x,y)
+
 tsx0  = printAnalysis saxpy0 (2 :- inputSI :- inputSI :- ())
 tsx0D = printAnalysis saxpy0 (2 :- inputDI :- inputDI :- ())
 tsx1  = printAnalysis saxpy1 (2 :- inputSI :- inputSI :- ())
@@ -787,6 +791,9 @@ tsx4D = printAnalysis saxpy4 (2 :- inputDI :- inputDI :- ())
 tsx5  = printAnalysis saxpy5 (2 :- inputSI :- inputSI :- ())
 tsx5D = printAnalysis saxpy5 (2 :- inputDI :- inputDI :- ())
 tsx5M = printAnalysis saxpy5 (2 :- inputMI :- inputMI :- ())
+tsx6  = printAnalysis saxpy6 (2 :- inputSI :- inputSI :- ())
+tsx6D = printAnalysis saxpy6 (2 :- inputDI :- inputDI :- ())
+tsx6M = printAnalysis saxpy6 (2 :- inputMI :- inputMI :- ())
 
 bitonicMerge1 :: (MemoryOps a, OrdE a) => Word32 -> Word32 -> Pull Word32 a -> Program (Push Word32 a)
 bitonicMerge1 s m a = do

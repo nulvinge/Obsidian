@@ -41,18 +41,17 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
   where (inScalars,inConstSizes) = mapFst (map fst)
                                  $ partition ((==0).snd)
                                    [(n,l) | (n,Left l) <- inSizes]
-        sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im
-        threadBudget = case numThreads im of
+        sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im0
+        threadBudget = case numThreads im0 of
           Left tb -> fromIntegral tb
           Right tb -> tb
 
-        outs = error $ show $ getOutputs im
+        outs = error $ show $ getOutputs im0
 
         im1, imF :: IMList IMData
         im0 = splitLoops defaultStrategy im
         (im1,depEdges1,_,_)            = runAnalysis threadBudget inScalars imActions1 im0
         (imF,depEdgesF,accesses,syncs) = runAnalysis threadBudget inScalars imActions2 $ emptyIM im1
-
 
         imActions1 :: [IMList IMData -> IMList IMData]
         imActions1 = [id
@@ -444,12 +443,14 @@ splitLoops oldStrat im = traverseIMaccDown trav newStrat im
         f (t,l,i,s) li lix = [(SFor t l var s (li ((t,l,s,variable var):lix)),d)]
           where var = name ++ "s" ++ show i
     trav strat (p@(SFor t l _ n ll),d) = [((p,d),removeStrategy' strat (t,l,n))]
+    trav strat (SWithStrategy s p,d) = concat $ map (trav strat) p
     trav strat (p,d) = [((p,d),strat)]
 
     newStrat = makeStrat $ collectIM collectLoops im
     makeStrat i = oldStrat
 
-    collectLoops (SFor t l name n ll,d) = [(t,l,name,n)]
+    collectLoops (SFor t l name n ll,d) = [Left (t,l,name,n)]
+    collectLoops (SWithStrategy s _,d) = [Right s]
     collectLoops _ = []
 
     addStrategy (a,b,pl) pl' = (a,b,pl++pl')
