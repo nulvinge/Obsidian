@@ -37,6 +37,7 @@ data Statement t
   | SCond (Exp Bool) (IMList t) 
   | SSeqWhile (EBool) (IMList t)
   | SPar [(IMList t)]
+  | SWithStrategy PreferredLoopLocation (IMList t)
 
   --Statements
   | forall a. (Show a, Scalar a) => SAssign Name [Exp Word32] (Exp a)
@@ -68,6 +69,7 @@ instance Show (Statement t) where
 --   where
 --     ns = unsafePerformIO$ newEnumSupply
 
+defaultStrategy, defaultStrategy' :: PreferredLoopLocation
 defaultStrategy' =
   [(Par,Block,1)
   ,(Par,Thread,32)
@@ -88,46 +90,28 @@ defaultStrategy =
 compileStep1 :: P.Program a -> IM
 compileStep1 p = snd $ compile ns p
   where
-    ns = (nsa,nsb,defaultStrategy)
+    ns = (nsa,nsb)
     (nsa,nsb) = unsafePerformIO$ do
       a <- newEnumSupply
       b <- newEnumSupply
       return (a,b)
 
-type CompileState = (Supply Int, Supply Int,PreferredLoopLocation)
+type CompileState = (Supply Int, Supply Int)
 
-supplyVar    (a,b,pl) = supplyValue a
-supplyOutput (a,b,pl) = supplyValue b
-supplySplit  (a,b,pl) = ((a1,b1,pl),(a2,b2,pl))
+supplyVar    (a,b) = supplyValue a
+supplyOutput (a,b) = supplyValue b
+supplySplit  (a,b) = ((a1,b1),(a2,b2))
   where (a1,a2) = split2 a
         (b1,b2) = split2 b
-addStrategy (a,b,pl) pl' = (a,b,pl++pl')
-getStrategy (a,b,pl) = pl
-removeStrategy :: CompileState -> (LoopType,LoopLocation,EWord32) -> CompileState
-removeStrategy (a,b,pl) pl' = (a,b,removeStrategy' pl pl')
-removeStrategy' :: PreferredLoopLocation -> (LoopType,LoopLocation,EWord32) -> PreferredLoopLocation
-removeStrategy' [] _ = []
-removeStrategy' ((t,l,s):pl) (t',l',s'')
-  | t == t' && l == l' && 1 == s' = pl
-  | t == t' && l == l' && s == s' = pl
-  | t == t' && l == l' && s <  s' = removeStrategy' pl (t',l',s''`div`fromIntegral s)
-  | t == t' && l == l' && s >  s' = pl -- ((t,l,s`div`s'):pl)
-  | otherwise = (t,l,s) : removeStrategy' pl (t',l',s'')
-  where s' = fromInteger $ maxDivable s''
-
-compileFor :: CompileState -> P.Program a -> (a,IM)
-compileFor i (P.For t l n ff) | not (t == Par && l == Unknown)
-  = (a, out $ SFor t l var n im)
-    where
-      (s1,s2) = supplySplit i
-      var = "i" ++ show (supplyVar s2)
-      (a,im) = compileFor (removeStrategy s1 (t,l,n)) $ ff (variable var)
-compileFor i p = compile i p
 
 compile :: CompileState -> P.Program a -> (a,IM)
---compile s (P.For t pl n f) = (a,out (SFor var t pl n im))
-compile i (P.For Par Unknown n ff) = compileFor i $ P.preferredFor (getStrategy i) n ff
-compile i p@(P.For _ _ _ _) = compileFor i p
+compile s (P.For t pl n ff) = (a,out $ SFor t pl var n im)
+  where (a,im) = compile s1 (ff (variable var))
+        (s1,s2) = supplySplit s
+        var = "i" ++ show (supplyVar s2)
+-- compile i (P.For Par Unknown n ff) = compileFor i $ P.preferredFor (getStrategy i) n ff
+-- compile i p@(P.For _ _ _ _) = compileFor i p
+
 
 
 
@@ -167,7 +151,8 @@ compile i (P.ParBind a b) = ((a',b'),out $ SPar [ima, imb])
         (a',ima) = compile s1 a
         (b',imb) = compile s2 b
 
-compile i (P.WithStrategy s a) = compile (addStrategy i s) a
+compile i (P.WithStrategy s p) = (a,out $ SWithStrategy s im)
+  where (a,im) = compile i p
 
 compile i (P.Bind p f) = (b,im1 ++ im2) 
   where

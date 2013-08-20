@@ -200,41 +200,50 @@ printPrg' i (Bind m f) =
 
 preferredFor :: PreferredLoopLocation -> EWord32 -> (EWord32 -> Program ()) -> Program ()
 preferredFor [] n ll = For Par Unknown n ll
-preferredFor pl n ll = fors []
-    where
+preferredFor pl n ll = fst $ splitLoop pl n f ll
+  where f (t,l,i,s) li lix = For t l s (\ix -> li ((t,l,s,ix):lix))
 
-      forFs = map (\a@((t,l,_):_) -> (t,l, product $ map (\(_,_,s) -> s) a))
-            $ groupBy (\(t,l,_) (t',l',_) -> t==t' && l==l')
-            $ sortBy snd3comp
-            $ strace
-            $ makeFor pl n
-      fors = foldr (\(t,l,s) li lix -> For t l s (\ix -> li ((t,l,s,ix):lix)))
-                   (\lix -> ll $ makeExp lix)
-                   forFs
-      makeExp lix = foldl (\eb (_,_,s,ix) -> eb * s + ix) 0 $ oexp ++ texp
-        where (texp,oexp) = partition (\(t,l,_,_) -> t == Par && l==Thread) lix
+splitLoop :: PreferredLoopLocation -> EWord32
+     -> ((LoopType, LoopLocation, Int, EWord32)
+         -> ([(LoopType, LoopLocation, EWord32, EWord32)] -> a)
+         -> [(LoopType, LoopLocation, EWord32, EWord32)]
+         -> a)
+     -> (EWord32 -> a) 
+     -> (a,[(LoopType, LoopLocation, EWord32)])
+splitLoop pl n f ll = (fors [],map (\(t,l,i,e) -> (t,l,e)) forFs)
+  where
+    forFs = map (\(i,a@((t,l,_):_)) -> (t,l,i, product $ map (\(_,_,s) -> s) a))
+          $ zip [0..]
+          $ groupBy (\(t,l,_) (t',l',_) -> t==t' && l==l')
+          $ sortBy snd3comp
+          $ splitLoopInfo pl n
+    fors = foldr f
+                 (\lix -> ll $ makeExp lix)
+                 forFs
+    makeExp lix = foldl (\eb (_,_,s,ix) -> eb * s + ix) 0 $ oexp ++ texp
+      where (texp,oexp) = partition (\(t,l,_,_) -> t == Par && l==Thread) lix
 
-      snd3comp (t1,l1,_) (t2,l2,_) | l1 == l2 =
-        case (t1,t2) of
-          (Par,Par) -> EQ
-          (Par,Seq) -> LT
-          (Seq,Par) -> GT
-          (Seq,Seq) -> EQ
-      snd3comp (_,l1,_) (_,l2,_) = compare l1 l2
+    snd3comp (t1,l1,_) (t2,l2,_) | l1 == l2 =
+      case (t1,t2) of
+        (Par,Par) -> EQ
+        (Par,Seq) -> LT
+        (Seq,Par) -> GT
+        (Seq,Seq) -> EQ
+    snd3comp (_,l1,_) (_,l2,_) = compare l1 l2
 
-      makeFor :: PreferredLoopLocation -> Exp Word32 -> [(LoopType,LoopLocation,EWord32)]
-      makeFor a           (Literal 0) = error "zero loop"
-      makeFor []          n = [(Seq,Unknown,n)]
-      -- makeFor a  1 = [(Par,Unknown,1)]
-      makeFor ((t,l,s):r) (Literal n) | n <= s = [(t,l,fromIntegral n)]
-      makeFor ((t,l,s):r) n | s == 0 = [(t,l,n)]
-      makeFor ((t,l,s):r) n | m > 1
-        = (t,l,fromIntegral m)
-        : case linerizel $ n`div`Literal m of
-            []      -> []
-            [(1,1)] -> []
-            _       -> makeFor r (n`div`fromIntegral m)
-        where m = traces (s,maxDivable n,n) $ strace $ s `gcd` (fromInteger $ maxDivable n)
-      makeFor ((t,l,0):r) n = [(t,l,n)]
-      makeFor (_:r) n = makeFor r n
+    splitLoopInfo :: PreferredLoopLocation -> Exp Word32 -> [(LoopType,LoopLocation,EWord32)]
+    splitLoopInfo a (Literal 0) = error "zero loop"
+    splitLoopInfo [] n = [(Seq,Unknown,n)]
+    -- splitLoopInfo a  1 = [(Par,Unknown,1)]
+    splitLoopInfo ((t,l,s):r) (Literal n) | n <= s = [(t,l,fromIntegral n)]
+    splitLoopInfo ((t,l,s):r) n | s == 0 = [(t,l,n)]
+    splitLoopInfo ((t,l,s):r) n | m > 1
+      = (t,l,fromIntegral m)
+      : case linerizel $ n`div`Literal m of
+          []      -> []
+          [(1,1)] -> []
+          _       -> splitLoopInfo r (n`div`fromIntegral m)
+      where m = traces (s,maxDivable n,n) $ strace $ s `gcd` (fromInteger $ maxDivable n)
+    splitLoopInfo ((t,l,0):r) n = [(t,l,n)]
+    splitLoopInfo (_:r) n = splitLoopInfo r n
 

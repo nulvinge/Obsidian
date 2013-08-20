@@ -49,7 +49,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
         outs = error $ show $ getOutputs im
 
         im1, imF :: IMList IMData
-        im0 = im --transformLoops im
+        im0 = splitLoops defaultStrategy im
         (im1,depEdges1,_,_)            = runAnalysis threadBudget inScalars imActions1 im0
         (imF,depEdgesF,accesses,syncs) = runAnalysis threadBudget inScalars imActions2 $ emptyIM im1
 
@@ -57,9 +57,6 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
         imActions1 :: [IMList IMData -> IMList IMData]
         imActions1 = [id
           , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
-          -- , transformLoops
-          -- dependence testing for moveLoops
-          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , moveLoops
           , mergeLoops
           , loopUnroll 4
@@ -434,4 +431,38 @@ loopUnroll maxUnroll = mapIMs unroll
       : concatMap (\i -> (SAssign name [] ((fromIntegral i) :: Exp Word32),d) : ll) [0..s-1]
     unroll (p,d) = [(p,d)]
 
+splitLoops :: PreferredLoopLocation -> IM -> IM
+splitLoops oldStrat im = traverseIMaccDown trav newStrat im
+  where
+    trav :: PreferredLoopLocation -> (Statement d,d) -> [((Statement d,d),PreferredLoopLocation)]
+    trav strat (SFor Par Unknown name n ll,d) = map (,removeStrategy strat forFs) fors
+      where 
+        (fors,forFs) = splitLoop strat n f l0
+        l0 e = (SDeclare name Word32,d)
+             : (SAssign name [] e,d)
+             : ll
+        f (t,l,i,s) li lix = [(SFor t l var s (li ((t,l,s,variable var):lix)),d)]
+          where var = name ++ "s" ++ show i
+    trav strat (p@(SFor t l _ n ll),d) = [((p,d),removeStrategy' strat (t,l,n))]
+    trav strat (p,d) = [((p,d),strat)]
+
+    newStrat = makeStrat $ collectIM collectLoops im
+    makeStrat i = oldStrat
+
+    collectLoops (SFor t l name n ll,d) = [(t,l,name,n)]
+    collectLoops _ = []
+
+    addStrategy (a,b,pl) pl' = (a,b,pl++pl')
+    getStrategy (a,b,pl) = pl
+    removeStrategy :: PreferredLoopLocation -> [(LoopType,LoopLocation,EWord32)] -> PreferredLoopLocation
+    removeStrategy pl pl' = foldr (flip removeStrategy') pl pl'
+    removeStrategy' :: PreferredLoopLocation -> (LoopType,LoopLocation,EWord32) -> PreferredLoopLocation
+    removeStrategy' [] _ = []
+    removeStrategy' ((t,l,s):pl) (t',l',s'')
+      | t == t' && l == l' && 1 == s' = pl
+      | t == t' && l == l' && s == s' = pl
+      | t == t' && l == l' && s <  s' = removeStrategy' pl (t',l',s''`div`fromIntegral s)
+      | t == t' && l == l' && s >  s' = pl -- ((t,l,s`div`s'):pl)
+      | otherwise = (t,l,s) : removeStrategy' pl (t',l',s'')
+      where s' = fromInteger $ maxDivable s''
 
