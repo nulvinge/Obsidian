@@ -346,7 +346,7 @@ matMul x y = zipWithG body (replicate n x) (replicate m (transpose y))
 --        m  = len y'
 
 
-matMulIn  a b = matMul (toMatrix 256 256 a) (toMatrix 256 256 b)
+-- matMulIn  a b = matMul (toMatrix 256 256 a) (toMatrix 256 256 b)
 
 
 toMatrix :: Word32 -> Word32 -> Pull Word32 a -> SMatrix a 
@@ -733,15 +733,23 @@ scan1' f s' a = do
 
 ts4 = printAnalysis ((pConcatMap $ pJoinPush . scan1 (+)) . splitUpS 1024) (inputSI :- ())
 
-matMul a b = pConcatMapJoin (matMulRow (transpose b)) a
-  where matMulRow mat row = return $ pConcatMapJoin (dotP row) mat
-        dotP a b = return
-                 $ seqReduce (+)
+matMul0 a b = pConcatMap (matMulRow (transpose b)) a
+  where matMulRow mat row = pConcatMap (dotP row) mat
+        dotP a b = seqReduce (+)
                  $ zipWith (*) a b
 
-tmm0 = printAnalysis matMulIn
-             ((undefinedGlobal (256*256) {-(variable "X")-} :: Pull Word32 EFloat) :-
-              (undefinedGlobal (256*256) {-(variable "Y")-} :: Pull Word32 EFloat) :- ())
+tmm0 = printAnalysis (curry $ (uncurry matMul0 . unzipp . fmap unzipp) . splitUp 256 . zipp)
+        ((undefinedGlobal (256*256) {-(variable "X")-} :: Pull Word32 EFloat) :-
+         (undefinedGlobal (256*256) {-(variable "Y")-} :: Pull Word32 EFloat) :- ())
+
+matMul1 a b = prConcat [(Par,Thread,8),(Par,Block,32)] $ fmap (matMulRow (transpose b)) a
+  where matMulRow mat row = prConcat [(Par,Thread,32),(Par,Block,16)] $ fmap (dotP row) mat
+        dotP a b = seqReduce (+)
+                 $ zipWith (*) a b
+
+tmm1 = printAnalysis (curry $ (uncurry matMul1 . unzipp . fmap unzipp) . splitUp 256 . zipp)
+        ((undefinedGlobal (256*256) {-(variable "X")-} :: Pull Word32 EFloat) :-
+         (undefinedGlobal (256*256) {-(variable "Y")-} :: Pull Word32 EFloat) :- ())
 
 saxpy0 :: (Num a, ASize l)
        => a -> Pull l a -> Pull l a -> Push l a

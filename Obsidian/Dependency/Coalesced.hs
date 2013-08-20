@@ -35,6 +35,7 @@ isCoalesced (n,e,rw,cs) = appendCost $ case local of
 
         isWarpConstant :: Scalar a => Exp a -> Bool
         isWarpConstant (ThreadIdx X) = True --handled above with stride
+        isWarpConstant (BinOp Mod (ThreadIdx X) (Literal b)) | b >= 32 = True
         isWarpConstant e = and $ collectExp f e
           where f :: Scalar a => Exp a -> [Bool]
                 f = (map (\a -> isWarpConstant' (witness a) a) . getLeaves)

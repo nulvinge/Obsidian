@@ -243,7 +243,7 @@ splitLoop pl n f ll = (fors [],map (\(t,l,i,e) -> (t,l,e)) forFs)
           []      -> []
           [(1,1)] -> []
           _       -> splitLoopInfo r (n`div`fromIntegral m)
-      where m = traces (s,maxDivable n,n) $ strace $ s `gcd` (fromInteger $ maxDivable n)
+      where m = s `gcd` (fromInteger $ maxDivable n)
     splitLoopInfo ((t,l,0):r) n = [(t,l,n)]
     splitLoopInfo (_:r) n = splitLoopInfo r n
 

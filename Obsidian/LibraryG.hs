@@ -8,6 +8,7 @@ import Obsidian.Program
 import Obsidian.Exp
 import Obsidian.Memory
 import Obsidian.Library
+import Obsidian.Globs
 
 import Control.Monad
 import Data.Word
@@ -32,6 +33,15 @@ pConcat :: ASize l => Pull l (SPush a) -> Push l a
 pConcat arr =
   Push (len arr * fromIntegral rn) $ \wf ->
     forAll (sizeConv $ len arr) $ \bix ->
+      let (Push _ p) = arr ! bix
+      in p (\a i -> wf a (i+bix*sizeConv rn))
+  where
+    rn = len $ arr ! 0
+
+prConcat :: ASize l => PreferredLoopLocation -> Pull l (SPush a) -> Push l a
+prConcat pl arr =
+  Push (len arr * fromIntegral rn) $ \wf ->
+    preferredFor pl (sizeConv $ len arr) $ \bix ->
       let (Push _ p) = arr ! bix
       in p (\a i -> wf a (i+bix*sizeConv rn))
   where

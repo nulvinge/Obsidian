@@ -63,7 +63,6 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , removeUnusedAllocations --move after scalar lifting
           , insertSyncs
           , (\im -> trace (printIM (emptyIM im)) im)
-          -- perform old analysis
           ]
 
         imActions2 :: [IMList IMData -> IMList IMData]
@@ -316,15 +315,15 @@ mergeLoops = traverseIMaccDown trav []
     trav loops (SFor Par pl name n l0,d)
       = map (,[]) 
       $ foldr merge l0
-      $ groupBy interchangeble
+      $ groupBy interchangeable
       $ L.reverse
       $ loopInsert (Par,pl,name,n,d) loops
     trav [] (p,d) = [((p,d),[])]
 
-    interchangable (Par,_,_,_,_) (Par,Unknown,_,_,_) = True
-    interchangable (Par,Unknown,_,_,_) (Par,_,_,_,_) = True
-    interchangable (Par,l1,_,_,_) (Par,l2,_,_,_)     = l1 == l2
-    interchangeble _ _ = False
+    interchangeable (Par,_,_,_,_) (Par,Unknown,_,_,_) = True
+    -- interchangeable (Par,Unknown,_,_,_) (Par,_,_,_,_) = True
+    interchangeable (Par,l1,_,_,_) (Par,l2,_,_,_)     = l1 == l2
+    interchangeable a b = False
 
     simpleL [(SFor Par _ _ _ _,_)] = True
     simpleL _ = False
@@ -363,15 +362,18 @@ cleanupAssignments = fst.traverseIMaccPrePost pre id []
       where e' = witnessConv Word32Witness e
     pre ((p,d),a) = ((traverseExp (replace a) p,d),a)
 
+    simpleE :: Exp a -> Bool
     simpleE (Index (n,[])) = True
     simpleE (ThreadIdx X)  = True
     simpleE (BlockIdx X)   = True
     simpleE (Literal n)    = True
+    simpleE (BinOp op a (Literal b)) = simpleE a
+    simpleE (BinOp op (Literal a) b) = simpleE b
     simpleE _              = False
     replace :: forall a. [(Name,Exp Word32)] -> Exp a -> Exp a
     replace m e@(Index (n,[])) = fromMaybe e $ witnessConv (witness e) =<< look n m
     replace m e = e
-    look n m = liftM (replace m) $ lookup n m
+    look n m = liftM (traverseExp $ replace m) $ lookup n m
 
 removeUnusedAllocations :: IMList IMData -> IMList IMData
 removeUnusedAllocations im = mapIMs trav im
@@ -446,12 +448,17 @@ splitLoops oldStrat im = traverseIMaccDown trav newStrat im
     trav strat (SWithStrategy s p,d) = concat $ map (trav strat) p
     trav strat (p,d) = [((p,d),strat)]
 
-    newStrat = makeStrat $ collectIM collectLoops im
-    makeStrat i = oldStrat
+    newStrat = makeStrat $ merge $ snd $ traverseIMaccUp collectLoops im
+    makeStrat i = traces i $ oldStrat
 
-    collectLoops (SFor t l name n ll,d) = [Left (t,l,name,n)]
-    collectLoops (SWithStrategy s _,d) = [Right s]
-    collectLoops _ = []
+    collectLoops pl p@(SFor t l name n ll,d) = (p, Left (t,l,name,n) : merge pl)
+    collectLoops pl p@(SWithStrategy s _ ,d) = (p, Right s : merge pl)
+    collectLoops pl p = (p,merge pl)
+
+    merge [] = []
+    merge [a] = a
+    merge t = foldr1 merge' t
+    merge' a b = a
 
     addStrategy (a,b,pl) pl' = (a,b,pl++pl')
     getStrategy (a,b,pl) = pl
