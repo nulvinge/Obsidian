@@ -426,17 +426,18 @@ eliminateIndependent accesses edges = catMaybes $ map tryEdge edges
   where
     tryEdge :: DepEdge -> Maybe DepEdge
     tryEdge (a',b',t,c) =
-        if tf == [] -- || isIndependent aa ba
+        if tf == [] && t'' == [] -- || isIndependent aa ba
           then Nothing
-          else Just (a',b',tf,c)
+          else Just (a',b',t2'++tf,c)
       where aa@(an,a,arw,ad,ai) = fromJust $ M.lookup a' accesses
             ba@(bn,b,brw,bd,bi) = fromJust $ M.lookup b' accesses
-            tf = t2' ++ (mapMaybe (fmap DataDep
-                                  .mfilter (/=[])
-                                  .Just
-                                  .updateDependence aa ba)
-                        t')
+            tf = (mapMaybe (fmap DataDep
+                           .mfilter (/=[])
+                           .Just
+                           .updateDependence aa ba)
+                 t')
             (t',t2') = partitionMaybes getDataDep t
+            t'' = filter (==DataAnyDep) t2'
             getDataDep (DataDep l) = Just l
             getDataDep _           = Nothing
 

@@ -62,8 +62,9 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , moveLoops
           , mergeLoops
+          , loopUnroll 4
           , cleanupAssignments
-          , removeUnusedAllocations
+          , removeUnusedAllocations --move after scalar lifting
           , insertSyncs
           , (\im -> trace (printIM (emptyIM im)) im)
           -- perform old analysis
@@ -367,13 +368,14 @@ cleanupAssignments = fst.traverseIMaccPrePost pre id []
     pre ((p,d),a) = ((traverseExp (replace a) p,d),a)
 
     simpleE (Index (n,[])) = True
-    simpleE (ThreadIdx X) = True
-    simpleE (BlockIdx X)  = True
-    simpleE _             = False
+    simpleE (ThreadIdx X)  = True
+    simpleE (BlockIdx X)   = True
+    simpleE (Literal n)    = True
+    simpleE _              = False
     replace :: forall a. [(Name,Exp Word32)] -> Exp a -> Exp a
-    replace a e@(Index (n,[])) = fromMaybe e $ witnessConv (witness e) =<< look n a
-    replace a e = e
-    look n a = liftM (replace a) $ lookup n a
+    replace m e@(Index (n,[])) = fromMaybe e $ witnessConv (witness e) =<< look n m
+    replace m e = e
+    look n m = liftM (replace m) $ lookup n m
 
 removeUnusedAllocations :: IMList IMData -> IMList IMData
 removeUnusedAllocations im = mapIMs trav im
@@ -425,5 +427,11 @@ scalarLifting depEdges = mapIMs liftAssigns
     replaceExp _ e = e
 
 
+loopUnroll maxUnroll = mapIMs unroll
+  where
+    unroll (SFor Seq _ name (Literal s) ll,d) | s <= maxUnroll
+      = (SDeclare name Word32,d)
+      : concatMap (\i -> (SAssign name [] ((fromIntegral i) :: Exp Word32),d) : ll) [0..s-1]
+    unroll (p,d) = [(p,d)]
 
 
