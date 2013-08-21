@@ -186,6 +186,8 @@ imToSPMDC nt im = concatMap processG im
         code
       where 
         code = concatMap processT im
+    processB (SFor Seq pl name e im,_) =
+      [cFor name (expToCExp e) (concatMap processB im)]
     processB (SComment s,_) = [cComment s]
     processB (SAllocate name size t,_) = []
     processB (SSynchronize,_)   = [CSync]

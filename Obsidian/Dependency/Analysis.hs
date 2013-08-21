@@ -55,14 +55,14 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
 
         imActions1 :: [IMList IMData -> IMList IMData]
         imActions1 = [id
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , moveLoops
           , mergeLoops
           , loopUnroll 4
           , cleanupAssignments
           , removeUnusedAllocations --move after scalar lifting
           , insertSyncs
-          , (\im -> trace (printIM (emptyIM im)) im)
+          -- , (\im -> trace (printIM (emptyIM im)) im)
           ]
 
         imActions2 :: [IMList IMData -> IMList IMData]
@@ -398,13 +398,22 @@ scalarLifting depEdges = mapIMs liftAssigns
             getVar (Just n) e = variable n
     liftAssigns (p,d) = [(p,d)]
 
+    findSingle f l = case filter f l of
+      [a] -> Just a
+      _   -> Nothing
     hasOtherDependences d = not $ all (\(_,(bi,br),t,_) -> (getInstruction d == bi) `implies` isThreadDep t) depEdges
     implies True False = False
     implies _    _     = True
     getLiftable d = do
-      _ <- find (\(_,(bi,br),t,_) -> getInstruction d == bi && isThreadDep t) depEdges
+      _ <- getLift $ filter (\(_,(bi,br),_,_) -> getInstruction d == bi) depEdges
       return $ makeName $ getInstruction d
-    isThreadDep t = and $ map isThreadDep' t
+
+    getLift l = do
+      guard $ all (\(_,_,t,_) -> isThreadDep t) l
+      guard $ length l == 1
+      let [a] = l
+      return a
+    isThreadDep t = all isThreadDep' t
     isThreadDep' DataAnyDep = False
     isThreadDep' SyncDepEdge = True
     isThreadDep' (DataDep ts) = all (\(d,(e,_)) -> if e == ThreadIdx X || e == BlockIdx X then d == DEqual else False) ts
@@ -416,7 +425,7 @@ scalarLifting depEdges = mapIMs liftAssigns
             replaceMap = mapMaybe getLiftables $ getAccessesIM (p,d)
     getLiftables (n,e,r,d,i) = do
       guard r
-      (_,(bi,br),_,_) <- find (\(a,_,t,_) -> i == a && isThreadDep t) depEdges
+      (_,(bi,br),_,_) <- getLift $ filter (\(a,_,_,_) -> i == a) depEdges
       return (e,n,makeName bi)
     replaceExp m (Index (n,[i])) =
       case find (\(e,n',_) -> n==n' && e==i) m of
@@ -449,7 +458,7 @@ splitLoops oldStrat im = traverseIMaccDown trav newStrat im
     trav strat (p,d) = [((p,d),strat)]
 
     newStrat = makeStrat $ merge $ snd $ traverseIMaccUp collectLoops im
-    makeStrat i = traces i $ oldStrat
+    makeStrat i = oldStrat
 
     collectLoops pl p@(SFor t l name n ll,d) = (p, Left (t,l,name,n) : merge pl)
     collectLoops pl p@(SWithStrategy s _ ,d) = (p, Right s : merge pl)

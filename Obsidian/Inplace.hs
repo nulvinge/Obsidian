@@ -151,3 +151,23 @@ reducetest' i n = do
   reducetest' o (n`div`2)
 
 -}
+
+
+{-
+seqFoldAI :: (ASize l, ASize l2, MemoryOps a)
+          => (EWord32 -> a -> b -> Program a)
+          -> Push l a
+          -> Pull l2 b
+          -> Push l a
+seqFoldAI f a arr = do
+  forceInplace a
+  
+  ns <- names (valType a)
+  allocateArray ns
+  assignScalar ns a
+  seqFor (sizeConv $ len arr) $ \ix -> do
+    a' <- f ix (readFrom ns) (arr ! ix)
+    assignScalar ns a'
+  return (readFrom ns)
+-}
+

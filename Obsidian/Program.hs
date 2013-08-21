@@ -27,6 +27,7 @@ import Obsidian.Types
 import Obsidian.Globs
 import Obsidian.Atomic
 import Obsidian.Helpers
+import Control.Monad (liftM)
 
 
 ---------------------------------------------------------------------------
@@ -116,6 +117,9 @@ forAllBlocks = forAll
 instance Monad (Program) where
   return = Return
   (>>=) = Bind
+
+instance Functor (Program) where
+  fmap = liftM
 
 ---------------------------------------------------------------------------
 -- runPrg (RETHINK!) (Works for Block programs, but all?)

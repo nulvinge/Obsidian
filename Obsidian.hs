@@ -1,16 +1,18 @@
-module Obsidian (module Obsidian.Array,
-                 module Obsidian.Program,
-                 module Obsidian.Globs,
-                 module Obsidian.Exp, 
-                 module Obsidian.Types, 
-                 module Obsidian.Force, 
-                 module Obsidian.Library,
-                 module Obsidian.LibraryG,
-                 module Obsidian.CodeGen.InOut,
-                 module Obsidian.CodeGen.CUDA,
-                 module Obsidian.Atomic, 
-                 module Obsidian.SeqLoop, 
-                 module Obsidian.Memory ) where
+module Obsidian (module Obsidian.Array
+                ,module Obsidian.Program
+                ,module Obsidian.Globs
+                ,module Obsidian.Exp
+                ,module Obsidian.Types
+                ,module Obsidian.Force
+                ,module Obsidian.Library
+                ,module Obsidian.LibraryG
+                ,module Obsidian.CodeGen.InOut
+                ,module Obsidian.CodeGen.CUDA
+                ,module Obsidian.Atomic
+                ,module Obsidian.SeqLoop
+                ,module Obsidian.Memory
+                ,module Data.Word
+                ) where
 
 
 
@@ -27,4 +29,5 @@ import Obsidian.CodeGen.CUDA
 import Obsidian.Atomic
 import Obsidian.SeqLoop
 import Obsidian.Memory
+import Data.Word
 

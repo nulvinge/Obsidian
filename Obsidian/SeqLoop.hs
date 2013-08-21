@@ -22,11 +22,30 @@ import Data.Word
 ---------------------------------------------------------------------------
 -- seqReduce (actually reduce) 
 ---------------------------------------------------------------------------
-seqReduceTI1 :: (ASize l, MemoryOps a)
+seqFoldPI :: (ASize l, MemoryOps a)
+          => a
+          -> Pull l b
+          -> (EWord32 -> a -> b -> Program a)
+          -> Program a
+seqFoldPI a arr f = do
+  ns <- names a
+  allocateScalar ns
+  assignScalar ns a
+  seqFor (sizeConv $ len arr) $ \ix -> do
+    a' <- f ix (readFrom ns) (arr ! ix)
+    assignScalar ns a'
+  return (readFrom ns)
+
+seqFoldP a arr f = seqFoldPI a arr (\i a b -> f a b)
+seqFold  a arr f = seqFoldPI a arr (\i a b -> return $ f a b)
+seqFoldI a arr f = seqFoldPI a arr (\i a b -> return $ f i a b)
+
+
+seqReducePI1 :: (ASize l, MemoryOps a)
              => (EWord32 -> a -> a -> Program a)
              -> Pull l a
              -> Push l a
-seqReduceTI1 op arr =
+seqReducePI1 op arr =
   Push 1 $ \wf -> 
   do
     ns <- names (valType arr)
@@ -48,7 +67,7 @@ seqReduce :: (ASize l, MemoryOps a)
           => (a -> a -> a)
           -> Pull l a
           -> Push l a
-seqReduce op = seqReduceTI1 (\i a b -> return (op a b))
+seqReduce op = seqReducePI1 (\i a b -> return (op a b))
 
 -- TODO: This is dangerous when array lengths are unknown! 
 
