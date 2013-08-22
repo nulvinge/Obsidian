@@ -74,8 +74,8 @@ instance (MemoryOps a) => GetTypes (Pull Word32 a) where
       where names = createNames (valType a) name
 
 instance (MemoryOps a) => GetTypes (Pull (Exp Word32) a) where
-  getTypes a name = ((namen, Word32) : typesArray names
-                    ,(namen,Left 0) : map (\n -> (n,sizeEither $ nvar)) (getNames names)
+  getTypes a name = ((typesArray names) ++ [(namen, Word32)]
+                    ,(map (\n -> (n,sizeEither $ nvar)) (getNames names)) ++ [(namen,Left 0)]
                     ,pullFrom names nvar)
       where namen = name ++ "n"
             nvar = variable namen * (fromIntegral $ maxDivable $ len a)
