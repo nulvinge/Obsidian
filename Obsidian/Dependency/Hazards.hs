@@ -184,6 +184,7 @@ bitTests' a b grad grbd loops = -- strace $ trace (show (same,local,varIdBits (T
     sameCheck i = (grad i) == (grbd i)
       && case (grad i) of
           Just (_,ir) -> possibleBits ir == (varIdBits i)
+          Nothing | varBits == [] -> False
           Nothing     -> let (t,i') = Prelude.last varBits --not completely safe
             in if i /= i'
               then False

@@ -11,7 +11,10 @@
 module Obsidian.Dependency.ExpAnalysis where
 
 import Obsidian.Globs
-import Obsidian
+import Obsidian.Exp
+import Obsidian.Program
+import Obsidian.Memory
+import Obsidian.CodeGen.Program
 import qualified Obsidian.CodeGen.Program as P
 
 import Data.Word

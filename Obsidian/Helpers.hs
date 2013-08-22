@@ -15,6 +15,7 @@ import Data.Either
 import Data.Bits
 import Control.Monad
 
+
 linerizel :: (Num a, Ord (Exp a), Eq a, Integral a) => Exp a -> [(Exp a,Integer)]
 linerizel = M.toList . linerize
 

@@ -15,23 +15,29 @@ module Obsidian.Dependency.Helpers
   , module Data.Either
   , module Data.Bits
   , module Control.Monad
-  , module Obsidian
   , module Obsidian.Globs
   , module Obsidian.Exp
+  , module Obsidian.Array
+  , module Obsidian.Types
+  , module Obsidian.Library
+  , module Obsidian.Program
   , module Obsidian.Helpers
   , module Obsidian.CodeGen.Program
   , module Obsidian.Dependency.ExpAnalysis
   , module Debug.Trace
   ) where
 
-import qualified Obsidian.CodeGen.CUDA as CUDA
+--import qualified Obsidian.CodeGen.CUDA as CUDA
 import qualified Obsidian.CodeGen.InOut as InOut
 import Obsidian.CodeGen.Program
 import Obsidian.Globs
 import Obsidian.Dependency.ExpAnalysis
 import Obsidian.Helpers
 import Obsidian.Exp
-import Obsidian
+import Obsidian.Array
+import Obsidian.Types
+import Obsidian.Library
+import Obsidian.Program
 
 import Data.Word
 import Data.Tuple
@@ -48,10 +54,6 @@ import qualified Data.List as L
 import qualified Data.VMultiSet as MS
 import qualified Data.Map as M
 import qualified Data.Set as S
-
-quickPrint :: ToProgram prg => prg -> InputList prg -> IO ()
-quickPrint prg input =
-  putStrLn $ CUDA.genKernel "kernel" prg input 
 
 type Cost = (CostT,CostT)
 

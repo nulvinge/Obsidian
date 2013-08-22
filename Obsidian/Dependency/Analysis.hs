@@ -5,9 +5,10 @@
              TupleSections,
              FlexibleInstances #-}
 
-module Obsidian.Dependency.Analysis (insertAnalysis, printAnalysis) where
+module Obsidian.Dependency.Analysis (insertAnalysis) where
 
---import qualified Obsidian.CodeGen.Program as P
+import qualified Obsidian.CodeGen.Program as P
+import Obsidian.CodeGen.InOut
 import Obsidian.Dependency.ExpAnalysis
 import Obsidian.Dependency.Helpers
 import Obsidian.Dependency.Range
@@ -18,15 +19,6 @@ import Obsidian.Dependency.Hazards
 import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.List as L
-
-instance ToProgram (Inputs,ArraySizes,IM) where
-  toProgram i a () = a
-
-type instance InputList (Inputs,ArraySizes,IM) = () 
-
-printAnalysis :: ToProgram prg => prg -> InputList prg -> IO ()
-printAnalysis p a = quickPrint (ins, sizes, insertAnalysis ins sizes im) ()
-    where (ins,sizes,im) = toProgram 0 p a
 
 insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
 insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) imF
@@ -55,7 +47,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
 
         imActions1 :: [IMList IMData -> IMList IMData]
         imActions1 = [id
-          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , moveLoops
           , mergeLoops
           , loopUnroll 4
@@ -74,7 +66,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           -- , insertStringsIM "Hazards"       $ insertEdges accesses hazardEdges
           , insertStringsIM "Unnessary sync"$ unneccessarySyncs syncs accesses depEdgesF
           , mapIMData insertCost
-          , scalarLifting depEdgesF
+          -- , scalarLifting depEdgesF
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Uppers" $ \(p,d) -> [Just $ show (M.toList $ getUpperMap d)]
           -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getLoops d)]
@@ -125,10 +117,12 @@ traverseComment f = mapDataIM (const ()) . traverseIM makeComment
                             (catMaybes $ f a)
                     ++ [a]
 
+{-
 input1 :: DPull  EInt 
 input1 = namedGlobal "apa" (variable "X")
 
 t0 = printAnalysis (pushN 32 . fmap (+1). ixMap (+5)) (input1 :- ())
+-}
 
 
 -- Hazards

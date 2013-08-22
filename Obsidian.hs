@@ -1,7 +1,6 @@
 module Obsidian (module Obsidian.Array
                 ,module Obsidian.Program
-                ,module Obsidian.Globs
-                ,module Obsidian.Exp
+                ,module Obsidian.Globs ,module Obsidian.Exp
                 ,module Obsidian.Types
                 ,module Obsidian.Force
                 ,module Obsidian.Library
@@ -12,6 +11,8 @@ module Obsidian (module Obsidian.Array
                 ,module Obsidian.SeqLoop
                 ,module Obsidian.Memory
                 ,module Data.Word
+                ,quickPrint
+                ,printAnalysis
                 ) where
 
 
@@ -30,4 +31,11 @@ import Obsidian.Atomic
 import Obsidian.SeqLoop
 import Obsidian.Memory
 import Data.Word
+
+quickPrint :: ToProgram prg => prg -> InputList prg -> IO ()
+quickPrint prg input =
+  putStrLn $ genKernel "kernel" prg input 
+
+printAnalysis :: ToProgram prg => prg -> InputList prg -> IO ()
+printAnalysis = quickPrint
 

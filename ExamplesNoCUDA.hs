@@ -37,13 +37,6 @@ inputMI :: Pull (Exp Word32) EInt
 inputMI = namedGlobal "apa" (1024*variable "X")
 
 ---------------------------------------------------------------------------
--- Util 
----------------------------------------------------------------------------
-quickPrint :: ToProgram prg => prg -> InputList prg -> IO ()
-quickPrint prg input =
-  putStrLn $ CUDA.genKernel "kernel" prg input 
- 
----------------------------------------------------------------------------
 -- MapFusion example
 ---------------------------------------------------------------------------
 

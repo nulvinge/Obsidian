@@ -2,7 +2,9 @@
 
 {-# LANGUAGE GADTs #-} 
 module Obsidian.CodeGen.CUDA 
-       (genKernel) where  
+       (genKernel
+       ,genKernelM
+       ) where  
 
 import Data.List
 import Data.Word 
@@ -28,6 +30,7 @@ import Obsidian.CodeGen.Program
 import qualified Obsidian.Program as P 
 
 import Obsidian.CodeGen.SPMDC
+import Obsidian.Dependency.Analysis (insertAnalysis)
 
 ---------------------------------------------------------------------------
 -- a gc
@@ -55,21 +58,25 @@ kernelHead name ins outs =
 ---------------------------------------------------------------------------
 -- genKernel 
 ---------------------------------------------------------------------------
-    
+genKernel name kernel a = s
+  where (s,_,_,_) = genKernelM name kernel a
+
 --genKernel :: ToProgram a b => String -> (a -> b) -> Ips a b -> String
-genKernel :: ToProgram a => String -> a -> InputList a -> String     
-genKernel name kernel a = proto ++ ts ++ cuda 
+genKernelM :: ToProgram a => String -> a -> InputList a -> (String,Bytes,Word32,Word32)
+genKernelM name kernel a = (proto ++ ts ++ cuda, size m, 1, tb)
   where
-    (ins,_,im) = toProgram 0 kernel a
+    (ins,sizes,im0) = toProgram 0 kernel a
+    im = insertAnalysis ins sizes im0
 
     outs = getOutputs im
-    
+
     lc  = computeLiveness im 
     
     -- Creates (name -> memory address) map      
     (m,mm) = mmIM lc sharedMem Map.empty
-             
+
     threadBudget = numThreads im
+    tb = case threadBudget of Left a -> a
     ts = "/* number of threads needed " ++ show threadBudget ++ "*/\n"
 
     spmd = imToSPMDC threadBudget im
