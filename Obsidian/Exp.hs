@@ -318,7 +318,7 @@ instance (Eq a, Scalar a) => Eq (Exp a) where
 -- INT Instances
 ---------------------------------------------------------------------------
 -- Added new cases for literal 0 (2012/09/25)
-instance (Scalar a, Bits a) => Bits (Exp a) where  
+instance (Scalar a, Num a, Bits a) => Bits (Exp a) where  
   (.&.) x (Literal 0) = Literal 0
   (.&.) (Literal 0) x = Literal 0 
   (.&.) (Literal a) (Literal b) = Literal (a .&. b) 

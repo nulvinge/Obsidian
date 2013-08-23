@@ -50,14 +50,14 @@ instance (MemoryOps a) => Choice (TProgram a) where
     return (readFrom ns)
 -}
 
-getNext2Powerm :: Bits a => a -> a
+getNext2Powerm :: (Bits a,Num a) => a -> a
 getNext2Powerm v = if v == 0 then 0 else f (v-1) (bitSize v) 1
   where f v m n =
           if m < n
             then v
             else f (v .|. (v `shiftR` n)) m (n `shiftL` 1)
 
-getNext2Power :: Bits a => a -> a
+getNext2Power :: (Bits a,Num a) => a -> a
 getNext2Power = (+1).getNext2Powerm
 
 is2Power x = x .&. (x-1) == 0
