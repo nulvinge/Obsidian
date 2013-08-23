@@ -23,14 +23,18 @@ t arr = Push 1 $ \wf ->
             forAll 1 $ \ix ->
               wf ((+1) $ arr!0!0) 0
 
+t2 :: (MemoryOps a,Num a) => DPull (SPull a) -> DPush a
+t2 = pConcat . fmap (push . fmap (+1))
+
 performSmall =
   withCUDA $
   do
-    kern <- capture (t . splitUp 512) (input :- ())
+    --kern <- capture (t . splitUp 512) (input :- ())
+    kern <- capture (t2 . splitUp 512) (input :- ())
     --kern <- capture (reduce (+) . splitUp 512) (input :- ())
 
     useVector (V.fromList [0..511 :: Int32]) $ \i ->
-      useVector (V.fromList [0,0 :: Int32]) $ \ o ->
+      useVector (V.fromList [0..511 :: Int32]) $ \ o ->
       do
         sync
         lift $ putStrLn "test"
