@@ -606,6 +606,21 @@ printOp BitwiseOr  = " | "
 printOp BitwiseXor = " ^ " 
 printOp BitwiseNeg = " ~ "  
 
+printOp Tan           = " Tan           "
+printOp ASin          = " ASin          "
+printOp ATan          = " ATan          "
+printOp ACos          = " ACos          "
+printOp SinH          = " SinH          "
+printOp TanH          = " TanH          "
+printOp CosH          = " CosH          "
+printOp ASinH         = " ASinH         "
+printOp ATanH         = " ATanH         "
+printOp ACosH         = " ACosH         "
+printOp Int32ToWord32 = " Int32ToWord32 "
+printOp Word32ToInt32 = " Word32ToInt32 "
+printOp Word32ToFloat = " Word32ToFloat "
+printOp Word32ToWord8 = " Word32ToWord8 "
+
 ---------------------------------------------------------------------------
 -- Turn expressions into backend-expressions
 ---------------------------------------------------------------------------

@@ -155,17 +155,17 @@ bKung op arr = undefined
 ---------------------------------------------------------------------------
 -- Go Towards Counting sort again.  
 --------------------------------------------------------------------------- 
-histogram :: Pull EWord32 EInt32 -> Program ()
-histogram arr = do
-  global <- Output $ Pointer Word32
+histogram :: EWord32 -> DPull EInt32 -> Program ()
+histogram max arr = do
+  global <- Output (Pointer Word32) max
   forAll (len arr) $ \gix -> atomicOp global (i32ToW32 (arr ! gix)) AtomicInc
 
-  
+
 atomicOp n e1 a = AtomicOp n e1 a >> return () 
 
 getHist =
-  quickPrint histogram
-             ((undefinedGlobal (variable "X") :: Pull (Exp Word32) EInt32) :- ())
+  quickPrint (histogram 256)
+             ((undefinedGlobal (variable "X") :: DPull EInt32) :- ())
   
 reconstruct :: Pull EWord32 EWord32 -> Push EWord32 EInt32
 reconstruct arr = Push (len arr) f
