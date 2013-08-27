@@ -288,7 +288,7 @@ simpleIMmap (P.SAtomicOp n1 n2 e a) = (P.SAtomicOp n1 n2 e a)
 simpleIMmap (P.SBreak             ) = (P.SBreak             )
 simpleIMmap (P.SAllocate n s t    ) = (P.SAllocate n s t    )
 simpleIMmap (P.SDeclare  n t      ) = (P.SDeclare  n t      )
-simpleIMmap (P.SOutput   n t      ) = (P.SOutput   n t      )
+simpleIMmap (P.SOutput   n s t    ) = (P.SOutput   n s t    )
 simpleIMmap (P.SComment s         ) = (P.SComment s         )
 simpleIMmap (P.SSynchronize       ) = (P.SSynchronize       )
 

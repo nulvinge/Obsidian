@@ -60,7 +60,7 @@ halve arr = splitAt n2 arr
 ---------------------------------------------------------------------------
 -- replicate 
 ---------------------------------------------------------------------------
-replicate n a = mkPullArray n (\ix -> a)
+replicate n a = mkPullArray n (const a)
 
 singleton a = replicate 1 a 
 
@@ -143,6 +143,9 @@ zipp :: ASize l => (Pull l a, Pull l b) -> Pull l (a, b)
 zipp (arr1,arr2) =  Pull (minE (len arr1) (len arr2))
                       $ \ix -> (arr1 ! ix, arr2 ! ix) 
 
+zip :: ASize l => Pull l a -> Pull l b -> Pull l (a, b)             
+zip = curry zipp
+
 unzipp3 :: ASize l => Pull l (a,b,c) 
            -> (Pull l a, Pull l b, Pull l c)       
 unzipp3 arr = (fmap (\(x,_,_) -> x) arr,
@@ -155,6 +158,12 @@ zipp3 :: ASize l =>  (Pull l a, Pull l b, Pull l c)
 zipp3 (arr1,arr2,arr3) = 
   mkPullArray (len arr1 `minE` len arr2 `minE` len arr3)
   (\ix -> (arr1 ! ix, arr2 ! ix, arr3 ! ix))
+
+zipp4 :: ASize l =>  (Pull l a, Pull l b, Pull l c, Pull l d)
+         -> Pull l (a,b,c,d)
+zipp4 (arr1,arr2,arr3,arr4) = 
+  mkPullArray (len arr1 `minE` len arr2 `minE` len arr3 `minE` len arr4)
+  (\ix -> (arr1 ! ix, arr2 ! ix, arr3 ! ix, arr4 ! ix))
     
 
 zipWith :: ASize l => (a -> b -> c) -> Pull l a -> Pull l b -> Pull l c

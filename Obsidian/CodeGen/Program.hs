@@ -44,9 +44,9 @@ data Statement t
   | forall a. (Show a, Scalar a) => SAtomicOp Name Name (Exp Word32) (Atomic a)
   | SBreak
     -- Memory Allocation..
+  | SOutput   Name EWord32 Type
   | SAllocate Name Word32 Type
   | SDeclare  Name Type
-  | SOutput   Name Type
   | SComment String
   | SSynchronize
 
@@ -58,9 +58,9 @@ instance Show (Statement t) where
   show (SAssign _ _   _) = "SAssign"
   show (SAtomicOp _ _ _ _) = "SAtomicOp"
   show (SBreak)          = "SBreak"
+  show (SOutput   _ _ _) = "SOutput"
   show (SAllocate _ _ _) = "SAllocate"
   show (SDeclare    _ _) = "SDeclare"
-  show (SOutput     _ _) = "SOutput"
   show (SComment      _) = "SComment"
   show (SSynchronize   ) = "SSynchronize"
   show (SWithStrategy _ _) = "SWithStrategy"
@@ -143,7 +143,7 @@ compile i (P.Allocate id n t) = ((),out (SAllocate id n t))
 compile i (P.Declare  id t)   = ((),out (SDeclare id t))
 -- Output works in a different way! (FIX THIS!)
 --  Uniformity! (Allocate Declare Output) 
-compile i (P.Output   t)      = (nom,out (SOutput nom t))
+compile i (P.Output   t l)      = (nom,out (SOutput nom l t))
   where nom = "output" ++ show (supplyOutput i) 
 compile i (P.Comment c)       = ((),out (SComment c))
 
@@ -261,11 +261,11 @@ numThreads im = foldl maxCheck (Left 0) $ map process im
     maxCheck (Right a) (Right b) = Right $ maxE a b
 
 
-getOutputs :: IMList a -> [(Name,Type)]
+getOutputs :: IMList a -> [(Name,EWord32,Type)]
 getOutputs im = concatMap process im
   where
-    process (SOutput name t,_)      = [(name,t)]
-    process (SFor _ _ _ _ im,_)     = getOutputs im
+    process (SOutput name l t,_) = [(name,l,t)]
+    process (SFor _ _ _ _ im,_)  = getOutputs im
     process a = []
     
 
@@ -290,8 +290,8 @@ printStm (SAllocate name n t,m) =
   name ++ " = malloc(" ++ show n ++ ");" ++ meta m
 printStm (SDeclare name t,m) =
   show t ++ " " ++ name ++ ";" ++ meta m
-printStm (SOutput name t,m) =
-  show t ++ " " ++ name ++ ";" ++ meta m
+printStm (SOutput name l t,m) =
+  show t ++ " " ++ show l ++ " " ++ name ++ ";" ++ meta m
 printStm (SCond bexp im,m) =
   "if " ++ show bexp ++ "{\n" ++ meta m ++ 
   concatMap printStm im ++ "\n};"

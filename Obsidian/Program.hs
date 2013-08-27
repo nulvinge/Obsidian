@@ -80,7 +80,7 @@ data Program a where
   Break      :: Program () 
   Allocate   :: Name -> Word32 -> Type -> Program () 
   Declare    :: Name -> Type -> Program () 
-  Output     :: Type -> Program Name
+  Output     :: Type -> EWord32 -> Program Name
   --Sync       :: Program ()
   Comment    :: String -> Program ()
 

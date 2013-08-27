@@ -20,8 +20,8 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.List as L
 
-insertAnalysis :: Inputs -> ArraySizes -> IM -> IM
-insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) imF
+insertAnalysis :: ArraySizes -> IM -> IM
+insertAnalysis inSizes im = traverseComment (map Just . getComments . snd) imF
                         -- ++ [(SComment (show $ M.assocs sizes),())]
                         ++ [(SComment "Depth:\t  Work:\tType:\tTotal cost:",())]
                         ++ map (\s -> (SComment s,())) (showCost cost)
@@ -32,7 +32,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
                         -- ++ [(SComment $ show $ getOutputs im,())]
   where (inScalars,inConstSizes) = mapFst (map fst)
                                  $ partition ((==0).snd)
-                                   [(n,l) | (n,Left l) <- inSizes]
+                                 $ [(n,s) | (n,Literal s) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im0
         threadBudget = case numThreads im0 of
           Left tb -> fromIntegral tb
@@ -66,6 +66,7 @@ insertAnalysis ins inSizes im = traverseComment (map Just . getComments . snd) i
           , insertStringsIM "Hazards"       $ insertEdges accesses hazardEdges
           , insertStringsIM "Unnessary sync"$ unneccessarySyncs syncs accesses depEdgesF
           , mapIMData insertCost
+          , scalarLiftingS accesses
           , scalarLifting depEdgesF
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Uppers" $ \(p,d) -> [Just $ show (M.toList $ getUpperMap d)]
@@ -377,6 +378,33 @@ removeUnusedAllocations im = mapIMs trav im
     trav (SAllocate n _ _,_) | S.notMember n names = []
     trav (SComment ""    ,_)                       = []
     trav (p,d) = [(p,d)]
+
+scalarLiftingS :: M.Map (Int,Int) Access -> IMList IMData -> IMList IMData
+scalarLiftingS accesses = mapIMs liftAssigns
+                        . mapIM (traverseExp replaceExp)
+  where
+    arrmap = M.fromListWith (++)
+           $ map (\(n,e,l,d,i) -> (n,[e]))
+           $ M.elems accesses
+    liftarrs = S.fromList
+             $ map (\(n,es) -> n)
+             $ filter (\(n,es) -> isSame es)
+             $ M.toList arrmap
+    isSame = all isSame'
+    isSame' (ThreadIdx X) = True
+    isSame' _ = False
+    makeName n e = "ts" ++ n
+
+    liftAssigns (SAssign n i e,d) | S.member n liftarrs =
+                [(SAssign liftable [] e,d)]
+        where liftable = makeName n e
+    liftAssigns (p,d) = [(p,d)]
+
+    replaceExp :: Exp e -> Exp e
+    replaceExp (Index (n,[i])) | S.member n liftarrs =
+               (variable $ makeName n i)
+    replaceExp e = e
+-- type Access = (Name, Exp Word32, Bool, IMData, (Int,Int))
 
 scalarLifting :: [DepEdge] -> IMList IMData -> IMList IMData
 scalarLifting depEdges = mapIMs liftAssigns

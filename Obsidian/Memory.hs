@@ -14,7 +14,8 @@
 module Obsidian.Memory (MemoryOps(..), Names,
   typesScalar, typesArray, getNames,
   allocateScalar, allocateArray, outputArray,
-  names, inNames, valType, atomicArray
+  names, inNames, valType, atomicArray,
+  forceScalar 
   )  where
 
 
@@ -115,6 +116,34 @@ instance (MemoryOps a, MemoryOps b, MemoryOps c) => MemoryOps (a, b, c) where
         p3 = readFrom ns3
     in (p1,p2,p3)
 
+instance (MemoryOps a, MemoryOps b, MemoryOps c, MemoryOps d) => MemoryOps (a, b, c, d) where
+  createNames _ n = Tuple [createNames (undefined :: a) (n++"a")
+                          ,createNames (undefined :: b) (n++"b")
+                          ,createNames (undefined :: c) (n++"c")
+                          ,createNames (undefined :: d) (n++"d")]
+  assignArray (Tuple [ns1,ns2,ns3,ns4]) (a,b,c,d) ix = do
+    assignArray ns1 a ix 
+    assignArray ns2 b ix 
+    assignArray ns3 c ix 
+    assignArray ns4 d ix 
+  assignScalar (Tuple [ns1,ns2,ns3,ns4]) (a,b,c,d) = do
+    assignScalar ns1 a
+    assignScalar ns2 b 
+    assignScalar ns3 c 
+    assignScalar ns4 d 
+  pullFrom (Tuple [ns1,ns2,ns3,ns4]) n =
+    let p1 = pullFrom ns1 n
+        p2 = pullFrom ns2 n
+        p3 = pullFrom ns3 n
+        p4 = pullFrom ns4 n
+    in Pull n (\ix -> (p1 ! ix, p2 ! ix, p3 ! ix, p4 ! ix))
+  readFrom (Tuple [ns1,ns2,ns3,ns4])  =
+    let p1 = readFrom ns1
+        p2 = readFrom ns2
+        p3 = readFrom ns3
+        p4 = readFrom ns4
+    in (p1,p2,p3,p4)
+
 
 atomicArray  (Single name t s) ix f = AtomicOp name ix f --what about a?
 
@@ -149,21 +178,26 @@ allocateArray (Single name t s) n =
 allocateArray (Tuple ns) n =
   mapM_ (\a -> allocateArray a n) ns
 
-outputArray :: (MemoryOps a) => p s a -> Program Names
+outputArray :: (MemoryOps a, ASize s, Array p) => p s a -> Program Names
 outputArray a = do
   let ns = createNames (valType a) "dummyOutput"
-  outputArray' ns
-outputArray' (Single name t s) = do
-  name' <- Output (Pointer t)
+  outputArray' (sizeConv $ len a) ns
+outputArray' l (Single name t s) = do
+  name' <- Output (Pointer t) l
   return $ Single name' t s
-outputArray' (Tuple ns) = do
-  ns' <- mapM outputArray' ns
+outputArray' l (Tuple ns) = do
+  ns' <- mapM (outputArray' l) ns
   return $ Tuple ns'
 
+forceScalar :: (MemoryOps a) => Name -> a -> Program a
 forceScalar name a = do
   let names = createNames a name
   allocateScalar names
   assignScalar names a
   return $ readFrom names
 
+scalarForce a = do
+  n <- uniqueSM
+  forceScalar n a
+  
 

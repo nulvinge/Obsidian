@@ -59,7 +59,7 @@ import Data.Char
 -} 
 
 type Inputs = [(Name,Type)]
-type ArraySizes = [(Name,Either Word32 (Exp Word32))]
+type ArraySizes = [(Name,EWord32)]
 
 class ToProgram a where
   toProgram :: Int -> a -> InputList a -> (Inputs,ArraySizes,CG.IM)
@@ -69,13 +69,13 @@ class GetTypes a where
 
 instance (MemoryOps a) => GetTypes (Pull Word32 a) where
   getTypes a name = (typesArray names
-                    ,map (\n -> (n,sizeEither $ len a)) (getNames names)
+                    ,map (\n -> (n,sizeConv $ len a)) (getNames names)
                     ,pullFrom names (len a))
       where names = createNames (valType a) name
 
 instance (MemoryOps a) => GetTypes (Pull (Exp Word32) a) where
   getTypes a name = ((typesArray names) ++ [(namen, Word32)]
-                    ,(map (\n -> (n,sizeEither $ nvar)) (getNames names)) ++ [(namen,Left 0)]
+                    ,(map (\n -> (n,nvar)) (getNames names)) ++ [(namen,0)]
                     ,pullFrom names nvar)
       where namen = name ++ "n"
             nvar = variable namen * (fromIntegral $ maxDivable $ len a)
@@ -83,29 +83,36 @@ instance (MemoryOps a) => GetTypes (Pull (Exp Word32) a) where
 
 instance (Scalar a) => GetTypes (Exp a) where
   getTypes a name = (typesScalar names
-                    ,map (\n -> (n,Left 0)) (getNames names)
+                    ,map (\n -> (n,0)) (getNames names)
                     ,readFrom names)
       where names = createNames a name
 
 instance (GetTypes a, GetTypes b) => GetTypes (a,b) where
-  getTypes a name = (i1++i2,s1++s2, (a,b))
-    where (i1,s1,a) = getTypes a (name ++ "a")
-          (i2,s2,b) = getTypes b (name ++ "b")
+  getTypes (a',b') name = (i1++i2,s1++s2, (a,b))
+    where (i1,s1,a) = getTypes a' (name ++ "a")
+          (i2,s2,b) = getTypes b' (name ++ "b")
+
+instance (GetTypes a, GetTypes b, GetTypes c) => GetTypes (a,b,c) where
+  getTypes (a',b',c') name = (i1++i2++i3,s1++s2++s3, (a,b,c))
+    where (i1,s1,a) = getTypes a' (name ++ "a")
+          (i2,s2,b) = getTypes b' (name ++ "b")
+          (i3,s3,c) = getTypes c' (name ++ "c")
+
+instance (GetTypes a, GetTypes b, GetTypes c, GetTypes d) => GetTypes (a,b,c,d) where
+  getTypes (a',b',c',d') name = (i1++i2++i3++i4,s1++s2++s3++s4, (a,b,c,d))
+    where (i1,s1,a) = getTypes a' (name ++ "a")
+          (i2,s2,b) = getTypes b' (name ++ "b")
+          (i3,s3,c) = getTypes c' (name ++ "c")
+          (i4,s4,d) = getTypes d' (name ++ "d")
 
 instance ToProgram (Program a) where
   toProgram i prg () = ([], [], CG.compileStep1 prg)
 
 instance (MemoryOps a, ASize l) => ToProgram (Push l a) where
-  toProgram i a@(Push _ p) () = (ins
-                                ,s ++ sizes
-                                ,b)
-    where (ins,s,b) = toProgram i prg ()
-          prg = do
+  toProgram i a@(Push _ p) () = toProgram i prg ()
+    where prg = do
             output <- outputArray a
             p (\a ix -> assignArray output a ix)
-          --small hack, presumes there are no other outputs
-          sizes = map (\n -> (n,sizeEither $ len a))
-                $ getNames $ createNames (valType a) "output0"
 
 instance (GetTypes a, ToProgram b) => ToProgram (a -> b) where
   toProgram i f (a :- rest) = (ins ++ types, s1 ++ s2, prg)
