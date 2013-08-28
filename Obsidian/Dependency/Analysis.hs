@@ -21,6 +21,24 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.List as L
 
+defaultStrategy, defaultStrategy' :: PreferredLoopLocation
+defaultStrategy' =
+  [(Par,Block,1)
+  ,(Par,Thread,32)
+  ,(Par,Block,32)
+  ,(Par,Thread,32)
+  ,(Par,Block,32)
+  ,(Par,Vector,4)
+  ,(Par,Block,32)
+  ,(Seq,Thread,0)
+  ]
+defaultStrategy =
+  [(Par,Block,65536)
+  ,(Par,Thread,1024)
+  ,(Par,Vector,4)
+  ,(Par,Block,0)
+  ]
+
 insertAnalysis :: ArraySizes -> IM -> IM
 insertAnalysis inSizes im = traverseComment (map Just . getComments . snd) imF
                         -- ++ [(SComment (show $ M.assocs sizes),())]
@@ -42,7 +60,7 @@ insertAnalysis inSizes im = traverseComment (map Just . getComments . snd) imF
         outs = error $ show $ getOutputs im0
 
         im1, imF :: IMList IMData
-        im0 = splitLoops defaultStrategy im
+        im0 = splitLoops defaultStrategy' im
         (im1,depEdges1,_,_)            = runAnalysis threadBudget inScalars imActions1 im0
         (imF,depEdgesF,accesses,syncs) = runAnalysis threadBudget inScalars imActions2 $ emptyIM im1
 
@@ -55,7 +73,7 @@ insertAnalysis inSizes im = traverseComment (map Just . getComments . snd) imF
           , cleanupAssignments
           , removeUnusedAllocations --move after scalar lifting
           , insertSyncs
-          -- , (\im -> trace (printIM (emptyIM im)) im)
+          , (\im -> trace (printIM (emptyIM im)) im)
           ]
 
         imActions2 :: [IMList IMData -> IMList IMData]

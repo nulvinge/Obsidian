@@ -51,16 +51,25 @@ splitLoops oldStrat im = traverseIMaccDown trav newStrat im
     trav strat (p,d) = [((p,d),strat)]
 
     newStrat = makeStrat $ merge $ snd $ traverseIMaccUp collectLoops im
-    makeStrat i = oldStrat
+    makeStrat (n,p,s) = s2 ++ s3
+      where s1 = strace $ splitLoopInfo oldStrat (p*s)
+            s2 = map (\(t,l,s) -> (t,l,tryConst s)) s1
+            s3 = removeStrategy oldStrat s1
+            tryConst (Literal a) = a
+            tryConst _ = 0
 
-    collectLoops pl p@(SFor t l name n ll,d) = (p, Left (t,l,name,n) : merge pl)
-    collectLoops pl p@(SWithStrategy s _ ,d) = (p, Right s : merge pl)
-    collectLoops pl p = (p,merge pl)
 
-    merge [] = []
+    collectLoops pl pr@(SFor Par l name nn ll,d) = (pr, (n+1,p*nn,s))
+      where (n,p,s) = merge pl
+    collectLoops pl pr@(SFor Seq l name nn ll,d) = (pr, (n+1,p,s*nn))
+      where (n,p,s) = merge pl
+    --collectLoops pl p@(SWithStrategy s _ ,d) = (p, Right s : merge pl)
+    collectLoops pl pr = (pr,merge pl)
+
+    merge [] = (0,1,1)
     merge [a] = a
     merge t = foldr1 merge' t
-    merge' a b = a
+    merge' (n1,p1,s1) (n2,p2,s2) = (n1 `max` n2, p1 `maxE` p2, s1 `maxE` s2)
 
     addStrategy (a,b,pl) pl' = (a,b,pl++pl')
     getStrategy (a,b,pl) = pl

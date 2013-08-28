@@ -216,10 +216,8 @@ splitLoop :: PreferredLoopLocation -> EWord32
      -> (a,[(LoopType, LoopLocation, EWord32)])
 splitLoop pl n f ll = (fors [],map (\(t,l,i,e) -> (t,l,e)) forFs)
   where
-    forFs = map (\(i,a@((t,l,_):_)) -> (t,l,i, product $ map (\(_,_,s) -> s) a))
+    forFs = map (\(i,(t,l,s)) -> (t,l,i,s))
           $ zip [0..]
-          $ groupBy (\(t,l,_) (t',l',_) -> t==t' && l==l')
-          $ sortBy snd3comp
           $ splitLoopInfo pl n
     fors = foldr f
                  (\lix -> ll $ makeExp lix)
@@ -227,6 +225,12 @@ splitLoop pl n f ll = (fors [],map (\(t,l,i,e) -> (t,l,e)) forFs)
     makeExp lix = foldl (\eb (_,_,s,ix) -> eb * s + ix) 0 $ oexp ++ texp
       where (texp,oexp) = partition (\(t,l,_,_) -> t == Par && l==Thread) lix
 
+splitLoopInfo :: PreferredLoopLocation -> Exp Word32 -> [(LoopType,LoopLocation,EWord32)]
+splitLoopInfo pl n = map (\a@((t,l,_):_) -> (t,l, product $ map (\(_,_,s) -> s) a))
+                   $ groupBy (\(t,l,_) (t',l',_) -> t==t' && l==l')
+                   $ sortBy snd3comp
+                   $ splitLoopInfo' pl n
+  where
     snd3comp (t1,l1,_) (t2,l2,_) | l1 == l2 =
       case (t1,t2) of
         (Par,Par) -> EQ
@@ -234,20 +238,18 @@ splitLoop pl n f ll = (fors [],map (\(t,l,i,e) -> (t,l,e)) forFs)
         (Seq,Par) -> GT
         (Seq,Seq) -> EQ
     snd3comp (_,l1,_) (_,l2,_) = compare l1 l2
-
-    splitLoopInfo :: PreferredLoopLocation -> Exp Word32 -> [(LoopType,LoopLocation,EWord32)]
-    splitLoopInfo a (Literal 0) = error "zero loop"
-    splitLoopInfo [] n = [(Seq,Unknown,n)]
-    -- splitLoopInfo a  1 = [(Par,Unknown,1)]
-    splitLoopInfo ((t,l,s):r) (Literal n) | n <= s = [(t,l,fromIntegral n)]
-    splitLoopInfo ((t,l,s):r) n | s == 0 = [(t,l,n)]
-    splitLoopInfo ((t,l,s):r) n | m > 1
-      = (t,l,fromIntegral m)
-      : case linerizel $ n`div`Literal m of
-          []      -> []
-          [(1,1)] -> []
-          _       -> splitLoopInfo r (n`div`fromIntegral m)
-      where m = s `gcd` (fromInteger $ maxDivable n)
-    splitLoopInfo ((t,l,0):r) n = [(t,l,n)]
-    splitLoopInfo (_:r) n = splitLoopInfo r n
+splitLoopInfo' a (Literal 0) = error "zero loop"
+splitLoopInfo' [] n = [(Seq,Unknown,n)]
+-- splitLoopInfo a  1 = [(Par,Unknown,1)]
+splitLoopInfo' ((t,l,s):r) (Literal n) | n <= s = [(t,l,fromIntegral n)]
+splitLoopInfo' ((t,l,s):r) n | s == 0 = [(t,l,n)]
+splitLoopInfo' ((t,l,s):r) n | m > 1
+  = (t,l,fromIntegral m)
+  : case linerizel $ n`div`Literal m of
+      []      -> []
+      [(1,1)] -> []
+      _       -> splitLoopInfo r (n`div`fromIntegral m)
+  where m = s `gcd` (fromInteger $ maxDivable n)
+splitLoopInfo' ((t,l,0):r) n = [(t,l,n)]
+splitLoopInfo' (_:r) n = splitLoopInfo r n
 
