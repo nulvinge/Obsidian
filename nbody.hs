@@ -2,6 +2,7 @@ import Obsidian
 import Obsidian.Dependency.Analysis
 import Obsidian.Inplace
 import Prelude hiding (replicate,zip)
+import Control.Monad
 
 -- http://http.developer.nvidia.com/GPUGems3/gpugems3_ch31.html
 
@@ -15,10 +16,10 @@ calcA :: Pos -> Pos -> Pos3 -> Program Pos3
 calcA pi pj ai = do
   let bi = getPos3 pi
       bj = getPos3 pj
-  r <- forceScalar "r" $ op (-) bi bj
-  dist <- forceScalar "dist" $ add $ op (*) r r
+  r <- scalarForce $ op (-) bi bj
+  dist <- scalarForce $ add $ op (*) r r
   let invDistCube = 1 / (sqrt $ dist * dist * dist)
-  s <- forceScalar "s" $ invDistCube * getW pj
+  s <- scalarForce $ invDistCube * getW pj
   return $ op (+) ai $ sop (*s) r
 
 getPos3 :: Pos -> Pos3
@@ -79,27 +80,27 @@ seqFoldA a arr f = seqFoldAII (sizeConv $ len arr) a
                               (\i a -> f a (arr!i))
 
 
-nbody1 :: SPull Pos -> SPush Pos3
-nbody1 arr = pSplitMap (256 :: Word32) (pJoin . fmap push . f) arr
+nbody1 :: Word32 -> Word32 -> SPull Pos -> SPush Pos3
+nbody1 bs ur arr = pSplitMap (bs :: Word32) (pJoin . fmap push . f) arr
   where
     n=sizeConv $ len arr
     f :: SPull Pos -> Program (SPull Pos3)
     f barr = do
-      seqFoldA (push $ replicate 256 zeroPos3) 
-               (splitUp 256 arr) (g barr)
+      seqFoldA (push $ replicate bs zeroPos3) 
+               (splitUp bs arr) (g barr)
     g :: SPull Pos -> SPull Pos3 -> SPull Pos -> SPush Pos3
     g barr ai carr = pJoin $ do
       sh <- force carr
-      return $ pConcatMap (singletonP . h sh) $ zip ai barr
-    h :: SPull Pos -> (Pos3,Pos) -> Program Pos3
+      let sh' = splitUp ur sh
+      return $ pConcatMap (singletonP . h sh') $ zip ai barr
+    h :: SPull (SPull Pos) -> (Pos3,Pos) -> Program Pos3
     h sh (ai,b) = do
-      seqFoldP ai sh $ \ai' c -> do
-        ai'' <- calcA b c ai'
-        return ai''
-
+      seqFoldP ai sh $ \ai' cs -> do
+        foldM (\ai'' i -> calcA b (cs ! fromIntegral i) ai'') ai' [0..len cs-1]
 
 tn0 = printAnalysis (nbody0.zipp4) (inputPos :- ())
-tn1 = printAnalysis (nbody1.zipp4) (inputPos :- ())
+tn1 = printAnalysis (nbody1 256 1 . zipp4) (inputPos :- ())
+tn2 = printAnalysis (nbody1 256 4 . zipp4) (inputPos :- ())
 
 -- [(Par,Block,0),(Par,Thread,256)]
 -- [(Par,Thread,4),(Seq,Thread,0)]

@@ -65,10 +65,11 @@ insertAnalysis strategy inSizes im = traverseComment (map Just . getComments . s
           , insertStringsIM "Diverging"     $ diverges
           , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>=0) . Just . getInstruction . snd
           , insertStringsIM "Hazards"       $ insertEdges accesses hazardEdges
-          , insertStringsIM "Unnessary sync"$ unneccessarySyncs syncs accesses depEdgesF
+          -- , insertStringsIM "Unnessary sync"$ unneccessarySyncs syncs accesses depEdgesF
           , mapIMData insertCost
           , scalarLiftingS accesses
           , scalarLifting depEdgesF
+          , removeUnneccessarySyncs syncs accesses depEdgesF
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Uppers" $ \(p,d) -> [Just $ show (M.toList $ getUpperMap d)]
           -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getLoops d)]

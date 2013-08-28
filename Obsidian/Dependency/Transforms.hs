@@ -286,3 +286,12 @@ loopUnroll maxUnroll = mapIMs unroll
       : concatMap (\i -> (SAssign name [] ((fromIntegral i) :: Exp Word32),d) : ll) [0..s-1]
     unroll (p,d) = [(p,d)]
 
+removeUnneccessarySyncs :: [Int] -> M.Map (Int,Int) Access -> [DepEdge] -> IMList IMData -> IMList IMData
+removeUnneccessarySyncs syncs' accesses edges = fst . traverseIMaccPrePost pre id syncs'
+  where
+    pre (p@(SSynchronize,d),syncs) =
+      case unneccessarySyncs syncs accesses edges p of
+        []       -> (p,syncs)
+        [Just s] -> ((SComment $ "removed unnessary sync: " ++ s,d),delete (getInstruction d) syncs)
+    pre p = p
+

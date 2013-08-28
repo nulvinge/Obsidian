@@ -15,7 +15,7 @@ module Obsidian.Memory (MemoryOps(..), Names,
   typesScalar, typesArray, getNames,
   allocateScalar, allocateArray, outputArray,
   names, inNames, valType, atomicArray,
-  forceScalar 
+  forceScalar, scalarForce
   )  where
 
 
