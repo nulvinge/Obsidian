@@ -115,7 +115,7 @@ pushN n arr =
     forAll (fromIntegral n) $ \tix -> wf (arr ! (bix * fromIntegral n + tix))
                                                 (bix * fromIntegral n + tix) 
 
-pushA :: ASize s => PreferredLoopLocation -> Pull s e -> Push s e
+pushA :: ASize s => Strategy -> Pull s e -> Push s e
 pushA pl arr = Push (len arr) $ \wf ->
                 preferredFor pl (sizeConv (len arr)) $ \i ->
                   wf (arr ! i) i

@@ -13,6 +13,7 @@ module Obsidian (module Obsidian.Array
                 ,module Data.Word
                 ,quickPrint
                 ,printAnalysis
+                ,printWithStrategy
                 ) where
 
 
@@ -32,10 +33,31 @@ import Obsidian.SeqLoop
 import Obsidian.Memory
 import Data.Word
 
+defaultStrategy, defaultStrategy' :: Strategy
+defaultStrategy' =
+  [(Par,Block,1)
+  ,(Par,Thread,32)
+  ,(Par,Block,32)
+  ,(Par,Thread,32)
+  ,(Par,Vector,4)
+  ,(Par,Block,32)
+  ,(Par,Block,32)
+  ,(Seq,Thread,0)
+  ]
+defaultStrategy =
+  [(Par,Block,65536)
+  ,(Par,Thread,1024)
+  ,(Par,Vector,4)
+  ,(Par,Block,0)
+  ]
+
 quickPrint :: ToProgram prg => prg -> InputList prg -> IO ()
 quickPrint prg input =
-  putStrLn $ genKernel "kernel" prg input 
+  putStrLn $ genKernel "kernel" defaultStrategy' prg input 
 
 printAnalysis :: ToProgram prg => prg -> InputList prg -> IO ()
 printAnalysis = quickPrint
+
+printWithStrategy strat prg input =
+  putStrLn $ genKernel "kernel" strat prg input 
 

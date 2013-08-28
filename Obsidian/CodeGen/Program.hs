@@ -37,7 +37,6 @@ data Statement t
   | SCond (Exp Bool) (IMList t) 
   | SSeqWhile (EBool) (IMList t)
   | SPar [(IMList t)]
-  | SWithStrategy PreferredLoopLocation (IMList t)
 
   --Statements
   | forall a. (Show a, Scalar a) => SAssign Name [Exp Word32] (Exp a)
@@ -63,7 +62,6 @@ instance Show (Statement t) where
   show (SDeclare    _ _) = "SDeclare"
   show (SComment      _) = "SComment"
   show (SSynchronize   ) = "SSynchronize"
-  show (SWithStrategy _ _) = "SWithStrategy"
 
 -- compileStep1 :: P.Program t a -> IM
 -- compileStep1 p = snd $ cs1 ns p
@@ -133,9 +131,6 @@ compile i (P.ParBind a b) = ((a',b'),out $ SPar [ima, imb])
   where (s1,s2) = supplySplit i
         (a',ima) = compile s1 a
         (b',imb) = compile s2 b
-
-compile i (P.WithStrategy s p) = (a,out $ SWithStrategy s im)
-  where (a,im) = compile i p
 
 compile i (P.Bind p f) = (b,im1 ++ im2) 
   where
@@ -276,10 +271,6 @@ printStm (SOutput name l t,m) =
   show t ++ " " ++ show l ++ " " ++ name ++ ";" ++ meta m
 printStm (SCond bexp im,m) =
   "if " ++ show bexp ++ "{\n" ++ meta m ++ 
-  concatMap printStm im ++ "\n};"
-
-printStm (SWithStrategy s im,m) =
-  "WithStrategy " ++ show s ++ "{\n" ++ meta m ++ 
   concatMap printStm im ++ "\n};"
 
 printStm (SSynchronize,m) =

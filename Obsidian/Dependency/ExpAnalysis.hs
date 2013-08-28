@@ -211,7 +211,6 @@ collectIM f = concatMap (collectIM' f)
     collectIM' f a@(P.SCond         _ l,_) = f a ++ collectIM f l
     collectIM' f a@(P.SSeqWhile     _ l,_) = f a ++ collectIM f l
     collectIM' f a@(P.SFor _ _ _    _ l,_) = f a ++ collectIM f l
-    collectIM' f a@(P.SWithStrategy _ l,_) = f a ++ collectIM f l
     collectIM' f a                         = f a
 
 traverseIM :: ((P.Statement a,a) -> [(P.Statement a,c)]) -> P.IMList a -> P.IMList c
@@ -237,7 +236,6 @@ traverseIMaccDown f acc = map g . concat . map (f acc)
       (P.SCond         e l) -> (P.SCond         e (traverseIMaccDown f acc' l),c)
       (P.SSeqWhile     e l) -> (P.SSeqWhile     e (traverseIMaccDown f acc' l),c)
       (P.SFor t nn pl  e l) -> (P.SFor t nn pl  e (traverseIMaccDown f acc' l),c)
-      (P.SWithStrategy s l) -> (P.SWithStrategy s (traverseIMaccDown f acc' l),c)
       p                     -> (simpleIMmap p                                 ,c)
 
 traverseIMaccUp :: ([b] -> (P.Statement c, a) -> ((P.Statement c, c), b))
@@ -249,7 +247,6 @@ traverseIMaccUp f = unzip . map (g f)
     g f (P.SCond         e l,a) = h f l $ \lt -> (P.SCond         e lt,a)
     g f (P.SSeqWhile     e l,a) = h f l $ \lt -> (P.SSeqWhile     e lt,a)
     g f (P.SFor t nn pl  e l,a) = h f l $ \lt -> (P.SFor t nn pl  e lt,a)
-    g f (P.SWithStrategy s l,a) = h f l $ \lt -> (P.SWithStrategy s lt,a)
     g f (p,a) = f [] (simpleIMmap p,a)
     --h :: [(P.Statement a, a)] -> ([(P.Statement c, c)], [b])
     h :: ([b] -> (P.Statement c, a) -> ((P.Statement c, c), b))
@@ -268,7 +265,6 @@ traverseIMaccPrePost pre post b = swap . mapAccumL (curry $ swap . post . g (tra
     g f ((P.SCond         e l,a),b) = h f b l $ \lt -> (P.SCond         e lt,a)
     g f ((P.SSeqWhile     e l,a),b) = h f b l $ \lt -> (P.SSeqWhile     e lt,a)
     g f ((P.SFor t nn pl  e l,a),b) = h f b l $ \lt -> (P.SFor t nn pl  e lt,a)
-    g f ((P.SWithStrategy s l,a),b) = h f b l $ \lt -> (P.SWithStrategy s lt,a)
     g f ((p,a),b) = ((simpleIMmap p,a),b)
     h :: (b -> P.IMList a -> (P.IMList d,b)) -> b -> P.IMList a
       -> (P.IMList d -> (P.Statement d,c)) -> ((P.Statement d,c),b)

@@ -55,8 +55,6 @@ data Program a where
       -> (EWord32 -> Program ())
       -> Program ()
 
-  WithStrategy :: PreferredLoopLocation -> Program a -> Program a
-
   Cond     :: Exp Bool -> Program () -> Program ()
   SeqWhile :: Exp Bool -> Program () -> Program () 
   ParBind  :: Program a -> Program b -> Program (a,b)
@@ -144,7 +142,6 @@ runPrg i (Declare _ _) = ((),i)
 runPrg i (Allocate _ _ _ ) = ((),i)
 runPrg i (Assign _ _ a) = ((),i) -- Probaby wrong.. 
 runPrg i (AtomicOp _ _ _) = (variable ("new"++show i),i+1)
-runPrg i (WithStrategy _ a) = runPrg i a
 
 {- What do I want from runPrg ?
 
@@ -180,12 +177,6 @@ printPrg' i (Cond p f) =
          `append` prg2
          `append` pack "\n}\n",
        i')
-printPrg' i (WithStrategy s f) =
-  let (a,prg2,i') = printPrg' i f
-  in ( a,pack ("WithStrategy " ++ show s ++ " {\n")
-         `append` prg2
-         `append` pack "\n}\n",
-       i')
 printPrg' i (For t pl n f) =
   let (a,prg2,i') = printPrg' i (f (variable "i"))
   in ( a, pack (show t ++ "for (i in 0.." ++ show n ++ ") " ++ (show pl) ++ " {\n")
@@ -202,12 +193,12 @@ printPrg' i (Bind m f) =
 -- a = [lts]
 -- (a -> ([lix] -> Program) -> ([lix] -> Program))
 
-preferredFor :: PreferredLoopLocation -> EWord32 -> (EWord32 -> Program ()) -> Program ()
+preferredFor :: Strategy -> EWord32 -> (EWord32 -> Program ()) -> Program ()
 preferredFor [] n ll = For Par Unknown n ll
 preferredFor pl n ll = fst $ splitLoop pl n f ll
   where f (t,l,i,s) li lix = For t l s (\ix -> li ((t,l,s,ix):lix))
 
-splitLoop :: PreferredLoopLocation -> EWord32
+splitLoop :: Strategy -> EWord32
      -> ((LoopType, LoopLocation, Int, EWord32)
          -> ([(LoopType, LoopLocation, EWord32, EWord32)] -> a)
          -> [(LoopType, LoopLocation, EWord32, EWord32)]
@@ -225,7 +216,7 @@ splitLoop pl n f ll = (fors [],map (\(t,l,i,e) -> (t,l,e)) forFs)
     makeExp lix = foldl (\eb (_,_,s,ix) -> eb * s + ix) 0 $ oexp ++ texp
       where (texp,oexp) = partition (\(t,l,_,_) -> t == Par && l==Thread) lix
 
-splitLoopInfo :: PreferredLoopLocation -> Exp Word32 -> [(LoopType,LoopLocation,EWord32)]
+splitLoopInfo :: Strategy -> Exp Word32 -> [(LoopType,LoopLocation,EWord32)]
 splitLoopInfo pl n = map (\a@((t,l,_):_) -> (t,l, product $ map (\(_,_,s) -> s) a))
                    $ groupBy (\(t,l,_) (t',l',_) -> t==t' && l==l')
                    $ sortBy snd3comp
@@ -238,18 +229,19 @@ splitLoopInfo pl n = map (\a@((t,l,_):_) -> (t,l, product $ map (\(_,_,s) -> s) 
         (Seq,Par) -> GT
         (Seq,Seq) -> EQ
     snd3comp (_,l1,_) (_,l2,_) = compare l1 l2
-splitLoopInfo' a (Literal 0) = error "zero loop"
-splitLoopInfo' [] n = [(Seq,Unknown,n)]
--- splitLoopInfo a  1 = [(Par,Unknown,1)]
-splitLoopInfo' ((t,l,s):r) (Literal n) | n <= s = [(t,l,fromIntegral n)]
-splitLoopInfo' ((t,l,s):r) n | s == 0 = [(t,l,n)]
-splitLoopInfo' ((t,l,s):r) n | m > 1
-  = (t,l,fromIntegral m)
-  : case linerizel $ n`div`Literal m of
-      []      -> []
-      [(1,1)] -> []
-      _       -> splitLoopInfo r (n`div`fromIntegral m)
-  where m = s `gcd` (fromInteger $ maxDivable n)
-splitLoopInfo' ((t,l,0):r) n = [(t,l,n)]
-splitLoopInfo' (_:r) n = splitLoopInfo r n
+
+    splitLoopInfo' a (Literal 0) = error "zero loop"
+    splitLoopInfo' [] n = [(Seq,Unknown,n)]
+    -- splitLoopInfo a  1 = [(Par,Unknown,1)]
+    splitLoopInfo' ((t,l,s):r) (Literal n) | n <= s = [(t,l,fromIntegral n)]
+    splitLoopInfo' ((t,l,s):r) n | s == 0 = [(t,l,n)]
+    splitLoopInfo' ((t,l,s):r) n | m > 1
+      = (t,l,fromIntegral m)
+      : case linerizel $ n`div`Literal m of
+          []      -> []
+          [(1,1)] -> []
+          _       -> splitLoopInfo r (n`div`fromIntegral m)
+      where m = s `gcd` (fromInteger $ maxDivable n)
+    splitLoopInfo' ((t,l,0):r) n = [(t,l,n)]
+    splitLoopInfo' (_:r) n = splitLoopInfo r n
 

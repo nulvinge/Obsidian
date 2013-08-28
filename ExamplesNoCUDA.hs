@@ -512,7 +512,7 @@ red13 :: MemoryOps a
      -> Program (SPush a)
 red13 f arr
     | len arr == 1 = return $ push arr
-    | otherwise    = WithStrategy [(Par,Thread,128),(Seq,Thread,0)] $ do
+    | otherwise    = do
         let (a1,a2) = halve arr
         arr' <- force $ zipWith f a1 a2
         red13 f arr'
@@ -543,7 +543,11 @@ tr7 = printAnalysis (pSplitMapJoin 1024 $ red7 (+)) (inputSI :- ())
 tr10= printAnalysis (pSplitMapJoin 1024 $ red10(+)) (inputSI :- ())
 tr11= printAnalysis (pSplitMapJoin 1024 $ red11(+)) (inputSI :- ())
 tr12= printAnalysis (pSplitMapJoin 1024 $ red12(+)) (inputSI :- ())
-tr13= printAnalysis (pSplitMapJoin 1024 $ red13(+)) (inputSI :- ())
+tr13'=printAnalysis (pSplitMapJoin 1024 $ red13(+)) (inputSI :- ())
+tr13= printWithStrategy
+        [(Par,Block,0),(Par,Thread,128),(Seq,Thread,0)]
+        (pSplitMapJoin 1024 $ red13(+))
+        (inputSI :- ())
 trl0= printAnalysis (pSplitMapJoin 1024 $ redl0(*)) (inputSF :- ())
 trc0= printAnalysis (pSplitMapJoin 1024 $ redc0(+)) (inputSF :- ())
 trc1= printAnalysis (pSplitMapJoin 1024 $ redc0(*)) (inputSF :- ())

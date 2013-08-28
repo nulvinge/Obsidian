@@ -34,10 +34,10 @@ insertSyncs = traverseIMaccDown trav architecture
             simplePL l = l == loc
     trav as p                      = [(p,as)]
 
-splitLoops :: PreferredLoopLocation -> IM -> IM
+splitLoops :: Strategy  -> IM -> IM
 splitLoops oldStrat im = traverseIMaccDown trav newStrat im
   where
-    trav :: PreferredLoopLocation -> (Statement d,d) -> [((Statement d,d),PreferredLoopLocation)]
+    trav :: Strategy  -> (Statement d,d) -> [((Statement d,d),Strategy)]
     trav strat (SFor Par Unknown name n ll,d) = map (,removeStrategy strat forFs) fors
       where 
         (fors,forFs) = splitLoop strat n f l0
@@ -47,7 +47,6 @@ splitLoops oldStrat im = traverseIMaccDown trav newStrat im
         f (t,l,i,s) li lix = [(SFor t l var s (li ((t,l,s,variable var):lix)),d)]
           where var = name ++ "s" ++ show i
     trav strat (p@(SFor t l _ n ll),d) = [((p,d),removeStrategy' strat (t,l,n))]
-    trav strat (SWithStrategy s p,d) = concat $ map (trav strat) p
     trav strat (p,d) = [((p,d),strat)]
 
     newStrat = makeStrat $ merge $ snd $ traverseIMaccUp collectLoops im
@@ -63,7 +62,6 @@ splitLoops oldStrat im = traverseIMaccDown trav newStrat im
       where (n,p,s) = merge pl
     collectLoops pl pr@(SFor Seq l name nn ll,d) = (pr, (n+1,p,s*nn))
       where (n,p,s) = merge pl
-    --collectLoops pl p@(SWithStrategy s _ ,d) = (p, Right s : merge pl)
     collectLoops pl pr = (pr,merge pl)
 
     merge [] = (0,1,1)
@@ -73,9 +71,9 @@ splitLoops oldStrat im = traverseIMaccDown trav newStrat im
 
     addStrategy (a,b,pl) pl' = (a,b,pl++pl')
     getStrategy (a,b,pl) = pl
-    removeStrategy :: PreferredLoopLocation -> [(LoopType,LoopLocation,EWord32)] -> PreferredLoopLocation
+    removeStrategy :: Strategy -> [(LoopType,LoopLocation,EWord32)] -> Strategy
     removeStrategy pl pl' = foldr (flip removeStrategy') pl pl'
-    removeStrategy' :: PreferredLoopLocation -> (LoopType,LoopLocation,EWord32) -> PreferredLoopLocation
+    removeStrategy' :: Strategy -> (LoopType,LoopLocation,EWord32) -> Strategy
     removeStrategy' [] _ = []
     removeStrategy' ((t,l,s):pl) (t',l',s'')
       | t == t' && l == l' && 1 == s' = pl
@@ -174,7 +172,7 @@ cleanupAssignments = fst.traverseIMaccPrePost pre id []
                     Block  -> Just $ BlockIdx  X
                     -- Just Vector -> Just $ variable "Vec"
                     _      -> Nothing
-    pre ((SAssign name [] e,d),a) | simpleE (replace a e) && isJust e'
+    pre ((SAssign name [] e,d),a) | simpleE (traverseExp (replace a) e) && isJust e'
       = ((SComment "",d), (name,fromJust e') : a)
       where e' = witnessConv Word32Witness e
     pre ((p,d),a) = ((traverseExp (replace a) p,d),a)
@@ -280,6 +278,9 @@ scalarLifting depEdges = mapIMs liftAssigns
 
 loopUnroll maxUnroll = mapIMs unroll
   where
+    unroll (SFor Par Vector name (Literal s) ll,d) | s <= maxUnroll
+      = (SDeclare name Word32,d)
+      : concatMap (\i -> (SAssign name [] ((fromIntegral i) :: Exp Word32),d) : ll) [0..s-1]
     unroll (SFor Seq _ name (Literal s) ll,d) | s <= maxUnroll
       = (SDeclare name Word32,d)
       : concatMap (\i -> (SAssign name [] ((fromIntegral i) :: Exp Word32),d) : ll) [0..s-1]

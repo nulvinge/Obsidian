@@ -22,7 +22,7 @@ instance Ord LoopLocation where
   compare _ Unknown = EQ
   compare a b = fromEnum a `compare` fromEnum b
 
-type PreferredLoopLocation = [(LoopType,LoopLocation,Word32)]
+type Strategy = [(LoopType,LoopLocation,Word32)]
 data LoopType = Seq | Par
   deriving (Show,Eq)
 

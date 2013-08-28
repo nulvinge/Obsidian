@@ -58,17 +58,17 @@ kernelHead name ins outs =
 ---------------------------------------------------------------------------
 -- genKernel 
 ---------------------------------------------------------------------------
-genKernel name kernel a = s
-  where (s,_,_,_) = genKernelM name kernel a
+genKernel name strategy kernel a = s
+  where (s,_,_,_) = genKernelM name strategy kernel a
 
 --genKernel :: ToProgram a b => String -> (a -> b) -> Ips a b -> String
-genKernelM :: ToProgram a => String -> a -> InputList a -> (String,Bytes,Word32,Word32)
-genKernelM name kernel a = (proto ++ ts ++ cuda, size m, 1, tb)
+genKernelM :: ToProgram a => String -> Strategy -> a -> InputList a -> (String,Bytes,Word32,Word32)
+genKernelM name strategy kernel a = (proto ++ ts ++ cuda, size m, 1, tb)
   where
     (ins,sizes,im0) = toProgram 0 kernel a
     outs' = getOutputs im0
     sizes' = sizes ++ map (\(n,s,_) -> (n,s)) outs'
-    im = insertAnalysis sizes' im0
+    im = insertAnalysis strategy sizes' im0
 
     outs = map (\(n,s,t) -> (n,t)) outs'
 
