@@ -222,15 +222,24 @@ compile i (P.Return a) = (a,[])
 ---------------------------------------------------------------------------
 -- Analysis
 --------------------------------------------------------------------------- 
-numThreads :: IMList a -> Either Word32 (EWord32)
-numThreads im = foldl maxCheck (Left 0) $ map process im
+numThreads :: IMList a -> (Either Word32 (EWord32), Either Word32 (EWord32))
+numThreads im = (recT im, recB im)
   where
-    process (SCond bexp im,_) = numThreads im
-    process (SFor Seq _ _ _ _,_) = Left 1
-    process (SFor Par Thread _ (Literal n) _,_) = Left n
-    process (SFor Par Thread _ n _,_) = Right n
-    process (SFor Par _ _              n im,_) = numThreads im
-    process a = Left 0 -- ok ? 
+    recT im = foldl maxCheck (Left 0) $ map processT im
+    processT (SCond bexp im,_) = recT im
+    processT (SFor Seq _ _ _ _,_) = Left 1
+    processT (SFor Par Thread _ (Literal n) _,_) = Left n
+    processT (SFor Par Thread _ n _,_) = Right n
+    processT (SFor Par _ _              n im,_) = recT im
+    processT a = Left 0 -- ok ? 
+
+    recB im = foldl maxCheck (Left 0) $ map processB im
+    processB (SCond bexp im,_) = recB im
+    processB (SFor Seq _ _ _ _,_) = Left 1
+    processB (SFor Par Block _ (Literal n) _,_) = Left n
+    processB (SFor Par Block _ n _,_) = Right n
+    processB (SFor Par _ _              n im,_) = recB im
+    processB a = Left 0 -- ok ? 
 
     maxCheck (Left a) (Right b)  = Right $ maxE (fromIntegral a) b
     maxCheck (Right a) (Left b)  = Right $ maxE a (fromIntegral b)

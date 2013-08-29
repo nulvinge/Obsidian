@@ -63,7 +63,7 @@ genKernel name strategy kernel a = s
 
 --genKernel :: ToProgram a b => String -> (a -> b) -> Ips a b -> String
 genKernelM :: ToProgram a => String -> Strategy -> a -> InputList a -> (String,Bytes,Word32,Word32)
-genKernelM name strategy kernel a = (proto ++ ts ++ cuda, size m, 1, tb)
+genKernelM name strategy kernel a = (proto ++ ts ++ cuda, size m, bb, tb)
   where
     (ins,sizes,im0) = toProgram 0 kernel a
     outs' = getOutputs im0
@@ -78,8 +78,9 @@ genKernelM name strategy kernel a = (proto ++ ts ++ cuda, size m, 1, tb)
     -- Creates (name -> memory address) map      
     (m,mm) = mmIM lc sharedMem Map.empty
 
-    threadBudget = numThreads im
+    (threadBudget,blockBudget) = numThreads im
     Left tb = threadBudget
+    Left bb = blockBudget
     ts = "/* number of threads needed " ++ show threadBudget ++ "*/\n"
 
     spmd = imToSPMDC threadBudget im

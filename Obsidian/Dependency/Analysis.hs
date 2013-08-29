@@ -36,8 +36,8 @@ insertAnalysis strategy inSizes im = traverseComment (map Just . getComments . s
                                  $ [(n,s) | (n,Literal s) <- inSizes]
         sizes = M.fromList $ inConstSizes ++ collectIM getSizesIM im0
         threadBudget = case numThreads im0 of
-          Left tb -> fromIntegral tb
-          Right tb -> tb
+          (Left tb,_)  -> fromIntegral tb
+          (Right tb,_) -> tb
 
         outs = error $ show $ getOutputs im0
 
@@ -48,10 +48,10 @@ insertAnalysis strategy inSizes im = traverseComment (map Just . getComments . s
 
         imActions1 :: [IMList IMData -> IMList IMData]
         imActions1 = [id
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , moveLoops
           , mergeLoops
           , loopUnroll 4
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , cleanupAssignments
           , removeUnusedAllocations --move after scalar lifting
           , insertSyncs
@@ -63,13 +63,13 @@ insertAnalysis strategy inSizes im = traverseComment (map Just . getComments . s
           , insertStringsIM "Out-of-bounds" $ map (inRange sizes).getIndicesIM
           , insertStringsCostIM "Coalesce"  $ map isCoalesced.getIndicesIM
           , insertStringsIM "Diverging"     $ diverges
-          , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>=0) . Just . getInstruction . snd
+          -- , insertStringsIM "Instruction"   $ (:[]) . liftM show . mfilter (>=0) . Just . getInstruction . snd
           , insertStringsIM "Hazards"       $ insertEdges accesses hazardEdges
-          -- , insertStringsIM "Unnessary sync"$ unneccessarySyncs syncs accesses depEdgesF
+          , insertStringsIM "Unnessary sync"$ unneccessarySyncs syncs accesses depEdgesF
           , mapIMData insertCost
-          , scalarLiftingS accesses
-          , scalarLifting depEdgesF
-          , removeUnneccessarySyncs syncs accesses depEdgesF
+          -- , scalarLiftingS accesses
+          -- , scalarLifting depEdgesF
+          -- , removeUnneccessarySyncs syncs accesses depEdgesF
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Uppers" $ \(p,d) -> [Just $ show (M.toList $ getUpperMap d)]
           -- , insertStringsIM "Factors" $ \(p,d) -> [Just $ show (getLoops d)]

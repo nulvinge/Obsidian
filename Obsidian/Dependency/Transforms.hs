@@ -213,7 +213,7 @@ scalarLiftingS accesses = mapIMs liftAssigns
     isSame = all isSame'
     isSame' (ThreadIdx X) = True
     isSame' _ = False
-    makeName n e = "ts" ++ n
+    makeName n e = "ss" ++ n
 
     liftAssigns (SAssign n i e,d) | S.member n liftarrs =
                 [(SAssign liftable [] e,d)]
@@ -231,7 +231,8 @@ scalarLifting depEdges = mapIMs liftAssigns
                        . mapIM liftReads
   where
     liftAssigns (SAssign n i e,d) | isJust liftable
-        = (SAssign (fromJust liftable) [] e,d)
+        = -- (SDeclare (fromJust liftable) (typeOf e),d)
+          (SAssign (fromJust liftable) [] e,d)
         : if hasOtherDependences d
             then [(SAssign n i $ getVar liftable $ e,d)]
             else []

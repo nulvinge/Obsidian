@@ -24,6 +24,7 @@ import qualified Obsidian.CodeGen.CUDA as CG
 
 import Obsidian.Types -- experimental
 import Obsidian.Exp
+import Obsidian.Globs
 import Obsidian.Array
 import Obsidian.Program (Program)
 -- import Obsidian.Mutable
@@ -103,6 +104,7 @@ data Kernel = Kernel {kFun :: CUDA.Fun,
 -- represents the "captured" type, with CUDAVectors instead of Pull, Push vectors. 
 data KernelT a = KernelT {ktFun :: CUDA.Fun,
                           ktThreadsPerBlock :: Word32,
+                          ktBlocks :: Word32,
                           ktSharedBytes :: Word32,
                           ktInputs :: [CUDA.FunParam],
                           ktOutput :: [CUDA.FunParam] }
@@ -122,11 +124,18 @@ class KernelO a where
   type KOutput a 
   addOutParam :: KernelT (KOutput a) -> a -> KernelT () 
 
+{-
 instance Scalar a => KernelI (CUDAVector a) where
   type KInput (CUDAVector a) = DPull (Exp a) 
   addInParam (KernelT f t s i o) b =
     KernelT f t s (i ++ [CUDA.VArg (cvPtr b),
                          CUDA.VArg (cvLen b)]) o
+-}
+
+instance Scalar a => KernelI (CUDAVector a) where
+  type KInput (CUDAVector a) = SPull (Exp a) 
+  addInParam (KernelT f t bb s i o) b =
+    KernelT f t bb s (CUDA.VArg (cvPtr b) : i) o
 
 {-
 instance Scalar a => KernelM (CUDAVector a) where
@@ -137,35 +146,46 @@ instance Scalar a => KernelM (CUDAVector a) where
 -}
 
 instance Scalar a => KernelO (CUDAVector a) where
-  type KOutput (CUDAVector a) = DPush (Exp a) 
-  addOutParam (KernelT f t s i o) b =
-    KernelT f t s i (o ++ [CUDA.VArg (cvPtr b)])
+  type KOutput (CUDAVector a) = SPush (Exp a) 
+  addOutParam (KernelT f t bb s i o) b =
+    KernelT f t bb s i (o ++ [CUDA.VArg (cvPtr b)])
+
+instance (Scalar a, Scalar b) => KernelO (CUDAVector a, CUDAVector b) where
+  type KOutput (CUDAVector a,CUDAVector b) = SPush (Exp a, Exp b)
+  addOutParam (KernelT f t bb s i o) (a,b) =
+    KernelT f t bb s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b)])
+
+instance (Scalar a, Scalar b, Scalar c)
+    => KernelO (CUDAVector a, CUDAVector b, CUDAVector c) where
+  type KOutput (CUDAVector a, CUDAVector b, CUDAVector c) = SPush (Exp a, Exp b, Exp c)
+  addOutParam (KernelT f t bb s i o) (a,b,c) =
+    KernelT f bb t s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b),CUDA.VArg (cvPtr c)])
 
 ---------------------------------------------------------------------------
 -- (<>) apply a kernel to an input
 ---------------------------------------------------------------------------
 (<>) :: KernelI a
-        => (Word32,KernelT (KInput a -> b)) -> a -> (Word32,KernelT b)
-(<>) (blocks,kern) a = (blocks,addInParam kern a)
+        => KernelT (KInput a -> b) -> a -> KernelT b
+(<>) kern a = addInParam kern a
 
 ---------------------------------------------------------------------------
 -- Assign a mutable input/output to a kernel
 --------------------------------------------------------------------------- 
 (<:>) :: KernelM a
-         => (Word32, KernelT (KMutable a -> b)) -> a -> (Word32, KernelT b)
-(<:>) (blocks,kern) a = (blocks, addMutable kern a)
+         => KernelT (KMutable a -> b) -> a -> KernelT b
+(<:>) kern a = addMutable kern a
 
 
 ---------------------------------------------------------------------------
 -- Execute a kernel and store output to an array
 ---------------------------------------------------------------------------
-(<==) :: KernelO b => b -> (Word32, KernelT (KOutput b)) -> CUDA ()
-(<==) o (nb,kern) =
+(<==) :: KernelO b => b -> KernelT (KOutput b) -> CUDA ()
+(<==) o kern =
   do
     let k = addOutParam kern o
     lift $ CUDA.launchKernel
       (ktFun k)
-      (fromIntegral nb,1,1)
+      (fromIntegral (ktBlocks k),1,1)
       (fromIntegral (ktThreadsPerBlock k), 1, 1)
       (fromIntegral (ktSharedBytes k))
       Nothing -- stream
@@ -219,8 +239,12 @@ withCUDA p =
 ---------------------------------------------------------------------------
 -- Capture without an inputlist! 
 ---------------------------------------------------------------------------    
+
 capture :: ToProgram prg => prg -> InputList prg -> CUDA (KernelT prg) 
-capture f a =
+capture = captureWithStrategy defaultStrategy
+
+captureWithStrategy :: ToProgram prg => Strategy -> prg -> InputList prg -> CUDA (KernelT prg) 
+captureWithStrategy strat f a =
   do
     i <- newIdent
 
@@ -230,7 +254,7 @@ capture f a =
         fn     = kn ++ ".cu"
         cub    = fn ++ ".cubin"
 
-        (prgstr,bytesShared,threadsPerBlock,blocks) = CG.genKernelM kn f a
+        (prgstr,bytesShared,threadsPerBlock,blocks) = CG.genKernelM kn strat f a
         header = "#include <stdint.h>\n" -- more includes ? 
 
     when debug $ 
@@ -248,7 +272,7 @@ capture f a =
     {- After loading the binary into the running process
        can I delete the .cu and the .cu.cubin ? -} 
            
-    return $ KernelT fun threadsPerBlock bytesShared [] []
+    return $ KernelT fun threadsPerBlock blocks bytesShared [] []
 
 
 
@@ -349,3 +373,4 @@ storeAndCompile arch fp code =
       createProcess (shell ("nvcc " ++ arch ++ " -cubin -o " ++ nfp ++ " " ++ fp))
     exitCode <- waitForProcess pid
     return nfp
+
