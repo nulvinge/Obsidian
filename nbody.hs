@@ -4,12 +4,16 @@ import Obsidian.Inplace
 import Obsidian.Run.CUDA.Exec
 import Prelude hiding (replicate,zip,abs)
 import Control.Monad
-import Control.Monad.State
+import qualified Control.Monad.State as ST
 import System.Random
 import qualified Data.Vector.Storable as V
 import qualified Data.List as L
 import Graphics.Rendering.OpenGL hiding (Program)
 import Graphics.UI.GLUT hiding (Program)
+import Data.IORef
+import Foreign.C.Types (CFloat)
+
+lift = ST.lift
 
 -- http://http.developer.nvidia.com/GPUGems3/gpugems3_ch31.html
 
@@ -25,7 +29,7 @@ calcA :: Pos -> Pos -> Pos3 -> Program Pos3
 calcA pi pj ai = do
   let bi = getPos3 pi
       bj = getPos3 pj
-  r <- scalarForce $ op (-) bi bj
+  r <- scalarForce $ op (-) bj bi
   dist <- scalarForce $ eps + abs r
   let invDistCube = 1 / (sqrt $ dist * dist * dist)
   s <- scalarForce $ invDistCube * getW pj
@@ -121,15 +125,39 @@ tn2 = printAnalysis (nbody1 0.1 256 4 . zipp4) (inputPos :- ())
 
 
 getPoint = do
-  x <- randomRIO (0,1)
-  y <- randomRIO (0,1)
-  z <- randomRIO (0,1)
-  w <- randomRIO (0.1,1)
+  x <- randomRIO (0,1 :: Float)
+  y <- randomRIO (0,1 :: Float)
+  z <- randomRIO (0,1 :: Float)
+  w <- randomRIO (0.1,1 :: Float)
   return (x,y,z,w)
 
+
+pingPongLoop :: a -> a -> (a -> a -> CUDA ()) -> CUDA ()
 pingPongLoop a b p = do
-  p a b
-  pingPongLoop b a p
+  st <- ST.get
+  lift $ do
+    tick <- newIORef 0
+    state <- newIORef st
+    (progname, _) <- getArgsAndInitialize
+    createWindow "Hello World"
+    displayCallback $= (display tick state)
+    idleCallback $= Just idle
+    mainLoop
+  where
+    display tick state = do
+      t <- get tick
+      st <- get state
+      tick $=! (t+1)
+      st' <- if t `mod` 2 == 0
+        then
+          ST.execStateT (p a b) st
+        else
+          ST.execStateT (p b a) st
+      state $=! st'
+      flush
+    idle :: IO ()
+    idle = do
+      postRedisplay Nothing
 
 useVectors :: V.Storable a => [[a]] -> ([CUDAVector a] -> CUDA b) -> CUDA b
 useVectors l p = useVectors' [] l p
@@ -139,7 +167,7 @@ useVectors' vl (v:l) p = useVector (V.fromList v) $ \vv -> useVectors' (vv:vl) l
 performSmall = withCUDA $ do
   let input = namedGlobal "apa" (16*1024)
   --kern <- capture (\x y z w -> push $ fmap getPos3 $ zipp4 (x,y,z,w))
-  kern <- capture (\x y z w -> nbody1 0.00000001 256 1 $ zipp4 (x,y,z,w))
+  kern <- capture (\x y z w -> nbody1 0.0000001 256 1 $ zipp4 (x,y,z,w))
                   (input :- input :- input :- input :- ())
   points <- lift $ mapM (const getPoint) [0..len input-1]
   let (x,y,z,w) = L.unzip4 $ points
@@ -147,61 +175,22 @@ performSmall = withCUDA $ do
 
   useVectors [x,y,z,x0,x0,x0,w] $ \[x1,y1,z1,x2,y2,z2,w] -> do
     pingPongLoop (x1,y1,z1) (x2,y2,z2) $ \(x1,y1,z1) (x2,y2,z2) -> do
-      sync
-      lift $ putStrLn "test1"
-      pp x2
-      pp y2
-      pp z2
       (x2,y2,z2) <== kern <> x1 <> y1 <> z1 <> w
-      sync
-      lift $ putStrLn "test2"
-      pp x1
-      pp y1
-      pp z1
-      pp w
-      pp x2
-      pp y2
-      pp z2
-      lift $ putStrLn "test2"
+
       ri <- peekCUDAVector x1
       ro <- peekCUDAVector x2
-      sync
-      lift $ putStrLn "test3"
       lift $ putStrLn $ show $ foldr1 max $ L.zipWith (-) ro ri
-      --lift $ putStrLn $ show $ L.zip ro ri
-      --lift $ putStrLn $ show $ ro
-      --lift $ putStrLn $ show $ ro
+
+      px <- peekCUDAVector x2
+      py <- peekCUDAVector y2
+      pz <- peekCUDAVector z2
+      lift $ clear [ColorBuffer]
+      lift $ renderPrimitive Points $ mapM_ (\(x,y,z)-> vertex $ Vertex3 (cFloat (2*x-1)) (cFloat (2*y-1)) (cFloat z)) $ zip3 px py pz
+
+cFloat :: Float -> CFloat
+cFloat = fromRational . toRational 
 
 pp a = do
   ri <- peekCUDAVector a
   lift $ putStrLn $ show $ head ri
-  
-myPoints :: [(GLfloat,GLfloat,GLfloat)]
-myPoints = map (\k -> (sin(2*pi*k/12),cos(2*pi*k/12),0.0)) [1..12]
-main = do 
-  (progname, _) <- getArgsAndInitialize
-  createWindow "Hello World"
-  displayCallback $= display
-  mainLoop
-display = do 
-  clear [ColorBuffer]
-  renderPrimitive Points $ mapM_ (\(x, y, z)->vertex$Vertex3 x y z) myPoints
-  flush
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

@@ -94,7 +94,7 @@ data CUDAState = CUDAState { csIdent :: Int,
                              csCtx   :: CUDA.Context,
                              csProps :: CUDA.DeviceProperties}
 
-type CUDA a =  StateT CUDAState IO a
+type CUDA a = StateT CUDAState IO a
 
 data Kernel = Kernel {kFun :: CUDA.Fun,
                       kThreadsPerBlock :: Word32,
