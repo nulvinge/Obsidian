@@ -94,7 +94,7 @@ data CUDAState = CUDAState { csIdent :: Int,
                              csCtx   :: CUDA.Context,
                              csProps :: CUDA.DeviceProperties}
 
-type CUDA a = StateT CUDAState IO a
+type CUDA a =  StateT CUDAState IO a
 
 data Kernel = Kernel {kFun :: CUDA.Fun,
                       kThreadsPerBlock :: Word32,
@@ -160,6 +160,13 @@ instance (Scalar a, Scalar b, Scalar c)
   type KOutput (CUDAVector a, CUDAVector b, CUDAVector c) = SPush (Exp a, Exp b, Exp c)
   addOutParam (KernelT f t bb s i o) (a,b,c) =
     KernelT f bb t s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b),CUDA.VArg (cvPtr c)])
+
+instance (Scalar a, Scalar b, Scalar c, Scalar d, Scalar e, Scalar f)
+    => KernelO ((CUDAVector a, CUDAVector b, CUDAVector c), (CUDAVector d, CUDAVector e, CUDAVector f)) where
+  type KOutput ((CUDAVector a, CUDAVector b, CUDAVector c), (CUDAVector d, CUDAVector e, CUDAVector f))
+          = SPush ((Exp a, Exp b, Exp c),(Exp d, Exp e, Exp f))
+  addOutParam (KernelT ff t bb s i o) ((a,b,c),(d,e,f)) =
+    KernelT ff bb t s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b),CUDA.VArg (cvPtr c),CUDA.VArg (cvPtr d),CUDA.VArg (cvPtr e),CUDA.VArg (cvPtr f)])
 
 ---------------------------------------------------------------------------
 -- (<>) apply a kernel to an input
