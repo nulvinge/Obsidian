@@ -12,6 +12,7 @@ import Graphics.Rendering.OpenGL hiding (Program)
 import Graphics.UI.GLUT hiding (Program)
 import Data.IORef
 import Foreign.C.Types (CFloat)
+import Foreign.CUDA.Driver.Graphics.OpenGL
 
 
 lift = ST.lift
@@ -158,17 +159,17 @@ getUniCircle = do
     else return (x1,x2)
 
 
-pingPongLoop :: a -> a -> (a -> a -> CUDA [(Float,Float,Float)]) -> CUDA ()
-pingPongLoop a b p = do
+pingPongLoop :: a -> a -> (IORef [b] -> IO ()) -> (a -> a -> CUDA [b]) -> CUDA ()
+pingPongLoop a b display p = do
   st <- ST.get
   lift $ do
     tick <- newIORef 0
     state <- newIORef st
     dispData <- newIORef []
-    (progname, _) <- getArgsAndInitialize
-    createWindow "Hello World"
+    pstate <- newIORef (0,0,0)
     displayCallback $= (display dispData)
     idleCallback $= Just (idle tick state dispData)
+    specialCallback $= Just (specialKeyboardCallback pstate)
     mainLoop
   where
     idle tick state dispData = do
@@ -185,37 +186,42 @@ pingPongLoop a b p = do
       if t `mod` 8 == 0
         then postRedisplay Nothing
         else return ()
-    display dispData = do
+
+performSmall = do 
+  (progname, _) <- getArgsAndInitialize
+  createWindow "Hello World"
+  withCUDA True $ do
+    let input = namedGlobal "apa" (16*1024)
+    --kern <- capture (\x y z w -> push $ fmap getPos3 $ zipp4 (x,y,z,w))
+    kern <- capture (\w x y z vx vy vz -> nbody1 0.000000001 256 1 $ zipp3 (w,zipp3 (x,y,z),zipp3 (vx,vy,vz)))
+                    (input :- input :- input :- input :- input :- input :- input :- ())
+    points <- lift $ mapM (const getPoint) [0..len input-1]
+    let (x,y,z,w) = L.unzip4 $ points
+        x0 = map (*0) x
+
+    useGLVectors (map V.fromList [w,x,y,z,x0,x0,x0,x0,x0,x0,x0,x0,x0]) $ \arrs -> do
+      let [w,x1,y1,z1,x2,y2,z2,vx1,vy1,vz1,vx2,vy2,vz2] = map fst arrs
+      let disp = map snd $ L.take 4 arrs
+      pingPongLoop (x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) (display disp) $ \(x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) -> do
+        withMappedResources [w,x1,y1,z1,x2,y2,z2,vx1,vy1,vz1,vx2,vy2,vz2]
+          $ \[w,x1,y1,z1,x2,y2,z2,vx1,vy1,vz1,vx2,vy2,vz2] -> do
+            lift $ putStrLn "test1"
+            ((x2,y2,z2),(vx2,vy2,vz2)) <== kern <> w <> x1 <> y1 <> z1 <> vx1 <> vy1 <> vz1
+            sync
+
+            -- px <- peekCUDAVector x2
+            -- py <- peekCUDAVector y2
+            -- pz <- peekCUDAVector z2
+            -- ri <- peekCUDAVector x1
+            -- lift $ putStrLn $ show $ foldr1 max $ L.zipWith (-) px ri
+            -- return $ zip3 px py pz
+            return []
+  where
+    display [w,x,y,z] dispData = do
       dispD <- get dispData
-      clear [ColorBuffer]
+      clear [ColorBuffer,DepthBuffer]
       renderPrimitive Points $ mapM_ (\(x,y,z)-> vertex $ Vertex3 (cFloat x) (cFloat y) (cFloat z)) $ dispD
       flush
-
-useVectors :: V.Storable a => [[a]] -> ([CUDAVector a] -> CUDA b) -> CUDA b
-useVectors l p = useVectors' [] l p
-useVectors' vl [] p = p $ L.reverse vl
-useVectors' vl (v:l) p = useVector (V.fromList v) $ \vv -> useVectors' (vv:vl) l p
-
-performSmall = withCUDA $ do
-  let input = namedGlobal "apa" (16*1024)
-  --kern <- capture (\x y z w -> push $ fmap getPos3 $ zipp4 (x,y,z,w))
-  kern <- capture (\w x y z vx vy vz -> nbody1 0.000000001 256 1 $ zipp3 (w,zipp3 (x,y,z),zipp3 (vx,vy,vz)))
-                  (input :- input :- input :- input :- input :- input :- input :- ())
-  points <- lift $ mapM (const getPoint) [0..len input-1]
-  let (x,y,z,w) = L.unzip4 $ points
-      x0 = map (*0) x
-
-  useVectors [w,x,y,z,x0,x0,x0,x0,x0,x0,x0,x0,x0] $ \[w,x1,y1,z1,x2,y2,z2,vx1,vy1,vz1,vx2,vy2,vz2] -> do
-    pingPongLoop (x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) $ \(x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) -> do
-      ((x2,y2,z2),(vx2,vy2,vz2)) <== kern <> w <> x1 <> y1 <> z1 <> vx1 <> vy1 <> vz1
-
-
-      px <- peekCUDAVector x2
-      py <- peekCUDAVector y2
-      pz <- peekCUDAVector z2
-      ri <- peekCUDAVector x1
-      lift $ putStrLn $ show $ foldr1 max $ L.zipWith (-) px ri
-      return $ zip3 px py pz
 
 cFloat :: Float -> CFloat
 cFloat = fromRational . toRational 
@@ -223,4 +229,23 @@ cFloat = fromRational . toRational
 pp a = do
   ri <- peekCUDAVector a
   lift $ putStrLn $ show $ head ri
+
+data ProgramState = ProgramState
+  { axes :: (String,String,String)
+  , camerarotation :: (Float,Float,Float)
+  }
+
+specialKeyboardCallback state KeyUp _ = do
+  (x,y,z) <- readIORef state
+  state `writeIORef` (x+3,y,z)
+specialKeyboardCallback state KeyDown _ = do
+  (x,y,z) <- readIORef state
+  state `writeIORef` (x-3,y,z)
+specialKeyboardCallback state KeyRight _ = do
+  (x,y,z) <- readIORef state
+  state `writeIORef` (x,y+3,z)
+specialKeyboardCallback state KeyLeft _ = do
+  (x,y,z) <- readIORef state
+  state `writeIORef` (x,y-3,z)
+specialKeyboardCallback _ _ _ = return ()
 

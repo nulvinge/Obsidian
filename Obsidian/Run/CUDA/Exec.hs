@@ -17,6 +17,9 @@ import qualified Foreign.CUDA.Driver as CUDA
 import qualified Foreign.CUDA.Driver.Device as CUDA
 import qualified Foreign.CUDA.Analysis.Device as CUDA
 import qualified Foreign.CUDA.Driver.Stream as CUDAStream
+import qualified Foreign.CUDA.Driver.Graphics as CUGL
+import qualified Foreign.CUDA.Driver.Graphics.OpenGL as CUGL
+import qualified Graphics.Rendering.OpenGL as GL
 
 import Obsidian.CodeGen.Program
 import Obsidian.CodeGen.InOut
@@ -32,8 +35,10 @@ import Obsidian.Program (Program)
 import Foreign.Marshal.Array
 import Foreign.ForeignPtr.Unsafe -- (req GHC 7.6 ?)
 import Foreign.ForeignPtr hiding (unsafeForeignPtrToPtr)
+import Foreign.Ptr (nullPtr)
 
 import qualified Data.Vector.Storable as V 
+import qualified Foreign.Storable as V 
 
 import Data.Word
 import Data.Int
@@ -231,7 +236,10 @@ newIdent =
 ---------------------------------------------------------------------------
 -- Run a CUDA computation
 ---------------------------------------------------------------------------
-withCUDA p =
+--if useGL == True:
+--remember to initialize GLUT and create a rendering context (create a window)
+
+withCUDA useGL p =
   do
     CUDA.initialise []
     devs <- getDevices
@@ -239,7 +247,7 @@ withCUDA p =
       [] -> error "No CUDA device found!" 
       (x:xs) ->
         do 
-          ctx <- CUDA.create (fst x) [CUDA.SchedAuto] 
+          ctx <- (if useGL then CUGL.createGLContext else CUDA.create) (fst x) [CUDA.SchedAuto]
           runStateT p (CUDAState 0 ctx (snd x)) 
           CUDA.destroy ctx
 
@@ -300,6 +308,52 @@ useVector v f =
     lift $ CUDA.free dptr
     return b
 
+useVectors :: V.Storable a => [[a]] -> ([CUDAVector a] -> CUDA b) -> CUDA b
+useVectors l p = useVectors' [] l p
+  where
+    useVectors' vl [] p = p $ reverse vl
+    useVectors' vl (v:l) p = useVector (V.fromList v) $ \vv -> useVectors' (vv:vl) l p
+
+---------------------------------------------------------------------------
+-- useVector: Copies a Data.Vector from "Haskell" onto the GPU Global mem 
+--------------------------------------------------------------------------- 
+useGLVectors :: V.Storable a =>
+                [V.Vector a] -> ([(CUGL.Resource, GL.BufferObject)] -> CUDA b) -> CUDA b
+useGLVectors vs f =
+  do
+    buffs <- lift $ GL.genObjectNames $ length vs
+    ress <- mapM makeResource $ zip vs buffs
+    withMappedResources ress $ \devs -> do
+      mapM writeArrays $ zip vs devs
+
+    b <- f $ zip ress buffs
+
+    lift $ mapM CUGL.unregisterResource ress
+    lift $ GL.deleteObjectNames buffs
+    
+    return b
+
+  where makeResource (v,buff) = do
+          lift $ GL.bindBuffer GL.ArrayBuffer GL.$= (Just buff)
+          let size = fromIntegral $ V.sizeOf (V.head v) * V.length v
+          lift $ GL.bufferData GL.ArrayBuffer GL.$= (size, nullPtr, GL.DynamicDraw)
+          lift $ GL.bindBuffer GL.ArrayBuffer GL.$= Nothing
+          lift $ CUGL.registerBuffer buff CUGL.RegisterNone
+        writeArrays (v,CUDAVector dev n) = do
+          let (hfptr,n) = V.unsafeToForeignPtr0 v
+          let hptr = unsafeForeignPtrToPtr hfptr
+          lift $ CUDA.pokeArray n hptr dev
+
+withMappedResources :: [CUGL.Resource] -> ([CUDAVector a] -> CUDA b) -> CUDA b
+withMappedResources ress f = do
+  lift $ CUGL.mapResources ress Nothing
+  ps <- lift $ mapM CUGL.getMappedPointer ress
+  let cvectors = map (\(devptr,n) -> CUDAVector devptr (fromIntegral n)) ps
+  b <- f cvectors
+  lift $ CUGL.unmapResources ress Nothing
+  return b
+
+
 ---------------------------------------------------------------------------
 -- allocaVector: allocates room for a vector in the GPU Global mem
 ---------------------------------------------------------------------------
@@ -342,7 +396,7 @@ fill (CUDAVector dptr n) a =
 peekCUDAVector :: V.Storable a => CUDAVector a -> CUDA [a]
 peekCUDAVector (CUDAVector dptr n) = 
     lift $ CUDA.peekListArray (fromIntegral n) dptr
-    
+
 copyOut :: V.Storable a => CUDAVector a -> CUDA (V.Vector a)
 copyOut (CUDAVector dptr n) =
   do
