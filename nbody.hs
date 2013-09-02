@@ -193,7 +193,7 @@ pingPongLoop a b display p = do
         then postRedisplay Nothing
         else return ()
 
-performSmall = do 
+runVector = do 
   (progname, _) <- getArgsAndInitialize
   initialDisplayMode $= [DoubleBuffered]
   createWindow "Hello World"
@@ -248,6 +248,106 @@ performSmall = do
 
     fixOutputs :: KernelT (SPush (Exp a, Exp b)) -> (CUDAVector a,CUDAVector Float) -> KernelT () 
     fixOutputs (KernelT f t bb s i o) (a,b) = KernelT f t bb s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b)])
+
+runNormal = do 
+  (progname, _) <- getArgsAndInitialize
+  createWindow "Hello World"
+  withCUDA True $ do
+    let input = namedGlobal "apa" (16*1024)
+    kern <- capture (\w x y z vx vy vz -> nbody1 0.000000001 256 1 $ zipp3 (w,zipp3 (x,y,z),zipp3 (vx,vy,vz)))
+                    (input :- input :- input :- input :- input :- input :- input :- ())
+    points <- lift $ mapM (const getPoint) [0..len input-1]
+    let (x,y,z,w) = L.unzip4 $ points
+        x0 = map (*0) x
+
+    useVectors [w,x,y,z,x0,x0,x0,x0,x0,x0,x0,x0,x0] $ \[w,x1,y1,z1,x2,y2,z2,vx1,vy1,vz1,vx2,vy2,vz2] -> do
+      pingPongLoop (x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) display $ \(x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) -> do
+        ((x2,y2,z2),(vx2,vy2,vz2)) <== kern <> w <> x1 <> y1 <> z1 <> vx1 <> vy1 <> vz1
+
+        px <- peekCUDAVector x2
+        py <- peekCUDAVector y2
+        pz <- peekCUDAVector z2
+        ri <- peekCUDAVector x1
+        lift $ putStrLn $ show $ foldr1 max $ L.zipWith (-) px ri
+        return $ zip3 px py pz
+  where
+    display dispData = do
+      dd <- get dispData
+      case dd of
+        Nothing -> return ()
+        Just dispD -> do
+          clear [ColorBuffer,DepthBuffer]
+          renderPrimitive Points $ mapM_ (\(x,y,z)-> vertex $ Vertex3 (cFloat x) (cFloat y) (cFloat z)) $ dispD
+          swapBuffers
+
+runInterop = do 
+  (progname, _) <- getArgsAndInitialize
+  createWindow "Hello World"
+  withCUDA True $ do
+    let input = namedGlobal "apa" (16*1024)
+    kern <- capture (\w x y z vx vy vz -> nbody1 0.000000001 256 1 $ zipp3 (w,zipp3 (x,y,z),zipp3 (vx,vy,vz)))
+                    (input :- input :- input :- input :- input :- input :- input :- ())
+    restructureKern <- captureWithStrategy [(Par,Block,32),(Par,Thread,512),(Seq,Thread,0)] rest3
+                    (input :- input :- input :- input :- ())
+    points <- lift $ mapM (const getPoint) [0..len input-1]
+    let (x,y,z,w) = L.unzip4 $ points
+        x0 = map (*0) x
+        d = L.replicate (4*length points) (0 :: Float)
+
+    useVectors [w,x,y,z,x0,x0,x0,x0,x0,x0,x0,x0,x0] $ \[w,x1,y1,z1,x2,y2,z2,vx1,vy1,vz1,vx2,vy2,vz2] -> do
+      useGLVectors [V.fromList d] $ \[d] -> do
+        pingPongLoop (x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) (display) $ \(x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) -> do
+          ((x2,y2,z2),(vx2,vy2,vz2)) <== kern <> w <> x1 <> y1 <> z1 <> vx1 <> vy1 <> vz1
+          --sync
+
+          withMappedResources [fst d] $ \[d] -> do
+            d <== restructureKern <> w <> x2 <> y2 <> z2
+          --sync
+
+          --px <- peekCUDAVector x2
+          --py <- peekCUDAVector y2
+          --pz <- peekCUDAVector z2
+          --ri <- peekCUDAVector x1
+          --lift $ putStrLn $ show $ foldr1 max $ L.zipWith (-) px ri
+          return $ (snd d,length points)
+          --return $ (zip3 px py pz,0)
+  where
+    display dispData = do
+      dd <- get dispData
+      case dd of
+        Nothing -> return ()
+        Just (pd,size) -> do
+          let Just (pd,size) = dd
+          clear [ColorBuffer,DepthBuffer]
+          --renderPrimitive Points $ mapM_ (\(x,y,z)-> vertex $ Vertex3 (cFloat x) (cFloat y) (cFloat z)) $ pd
+          drawBufferObject pd size
+          swapBuffers
+    rest :: SPull EFloat -> SPull EFloat -> SPull EFloat -> SPull EFloat -> SPush EFloat
+    rest w x y z = (\a -> traces (len a, len x, len y, len z, len w) a) $
+      Push (4*len x) $ \wf -> do
+        forAll (sizeConv $ len x) $ \ix -> do
+          wf (x!ix) (4*ix+0)
+          --wf (y!ix) (4*ix+1)
+          --wf (z!ix) (4*ix+2)
+          --wf (w!ix) (4*ix+3)
+    {-
+    rest2 :: SPull EFloat -> SPull EFloat -> SPull EFloat -> SPull EFloat -> SPush EFloat
+    rest2 w x y z = push $ fmap rf $ zipp4 (w,x,y,z)
+    rf w x y z =
+      ifThenElse (ix .&. 1 == 0)
+        (ifThenElse (ix .&. 2 == 0) x y)
+        (ifThenElse (ix .&. 2 == 0) z w)
+    -}
+    rest3 :: SPull EFloat -> SPull EFloat -> SPull EFloat -> SPull EFloat -> SPush EFloat
+    rest3 w x y z = pConcatMap rf3 $ resize (len x `div` 4) $  zipp4 (w,x,y,z)
+    rf3 (w,x,y,z) = 
+      Push 4 $ \wf -> do
+        wf x 0
+        wf y 1
+        wf z 2
+        wf w 3
+
+
 
 cFloat :: Float -> CFloat
 cFloat = fromRational . toRational 
