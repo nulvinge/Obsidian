@@ -48,6 +48,9 @@ type EWord32  = Exp Word32
 type EWord64  = Exp Word64 
 
 type EFloat  = Exp Float  
+type EFloat2 = Exp (Float,Float)
+type EFloat3 = Exp (Float,Float,Float)
+type EFloat4 = Exp (Float,Float,Float,Float)
 type EDouble = Exp Double 
 type EBool   = Exp Bool    
 
@@ -128,6 +131,23 @@ instance Scalar Word64 where
   sizeOf _ = 8 
   typeOf _ = Word64
 
+{-
+instance (Eq a, ExpToCExp a, Show a, Vector a) => Scalar a where
+  sizeOf a = (vectorSize a) * sizeOf (undefined :: Exp (VectorElem a))
+  typeOf a = VectorT (vectorSize a) (typeOf (undefined :: Exp (VectorElem a)))
+-}
+
+instance Scalar (Float,Float) where
+  sizeOf _ = 2*Storable.sizeOf (undefined :: Float)
+  typeOf _ = VectorT 2 Float
+
+instance Scalar (Float,Float,Float) where
+  sizeOf _ = 3*Storable.sizeOf (undefined :: Float)
+  typeOf _ = VectorT 3 Float
+
+instance Scalar (Float,Float,Float,Float) where
+  sizeOf _ = 4*Storable.sizeOf (undefined :: Float)
+  typeOf _ = VectorT 4 Float
 
 
 ---------------------------------------------------------------------------
@@ -171,6 +191,28 @@ data Exp a where
              -> Exp a 
              -> Exp b 
              -> Exp c 
+
+  TriOp   :: (Scalar a,
+              Scalar b, 
+              Scalar c, 
+              Scalar d) 
+             => Op ((a,b,c) -> d)
+             -> Exp a
+             -> Exp b
+             -> Exp c
+             -> Exp d
+
+  QuadOp  :: (Scalar a,
+              Scalar b,
+              Scalar c,
+              Scalar d,
+              Scalar e) 
+             => Op ((a,b,c,d) -> e)
+             -> Exp a
+             -> Exp b
+             -> Exp c
+             -> Exp d
+             -> Exp e
              
   UnOp    :: (Scalar a, 
               Scalar b)
@@ -251,6 +293,14 @@ data Op a where
   Word32ToInt32 :: Op (Word32 -> Int32)
   Word32ToFloat :: Op (Word32 -> Float)
   Word32ToWord8 :: Op (Word32 -> Word8) 
+
+  VectorIndex2 :: Int -> Op ((a,a) -> a)
+  VectorIndex3 :: Int -> Op ((a,a,a) -> a)
+  VectorIndex4 :: Int -> Op ((a,a,a,a) -> a)
+  MkVector2 :: Op ((a,a) -> (a,a))
+  MkVector3 :: Op ((a,a,a) -> (a,a,a))
+  MkVector4 :: Op ((a,a,a,a) -> (a,a,a,a))
+
   
 
 ---------------------------------------------------------------------------
@@ -261,33 +311,6 @@ index name ix = Index (name,[ix])
 
 warpSize :: Exp Word32
 warpSize = WarpSize
-
----------------------------------------------------------------------------
--- Collect array names
-
-collectArrays :: Scalar a => Exp a -> [Name]
-collectArrays (Literal _) = []
-collectArrays (ThreadIdx _) = []
-collectArrays (BlockIdx _) = [] 
-collectArrays (Index (name,[])) = []
-collectArrays (Index (name,_)) = [name]
-collectArrays (BinOp _ e1 e2) = collectArrays e1 ++ collectArrays e2
-collectArrays (UnOp  _ e) = collectArrays e
-collectArrays (If b e1 e2) = collectArrays b ++ 
-                             collectArrays e1 ++ 
-                             collectArrays e2
--- collectArrays a = error $ show a
-
-collectArrayIndexPairs :: Scalar a => Exp a -> [(Name,Exp Word32)]
-collectArrayIndexPairs (Literal _) = []
-collectArrayIndexPairs (Index (name,[])) = []
-collectArrayIndexPairs (Index (name,[ix])) = [(name,ix)]
-collectArrayIndexPairs (BinOp _ e1 e2) = collectArrayIndexPairs e1 ++ collectArrayIndexPairs e2
-collectArrayIndexPairs (UnOp  _ e) = collectArrayIndexPairs e
-collectArrayIndexPairs (If b e1 e2) = collectArrayIndexPairs b ++ 
-                                      collectArrayIndexPairs e1 ++ 
-                                      collectArrayIndexPairs e2
-
 
 ---------------------------------------------------------------------------
 -- Typecasts
@@ -532,6 +555,43 @@ infixr 2 ||*
 notE = UnOp Not
 
 ---------------------------------------------------------------------------
+-- Vector
+---------------------------------------------------------------------------
+
+class Vector a where
+  type MKVector a
+  type VectorElem a
+  toVector :: MKVector a -> Exp a
+  fromVector :: Exp a -> MKVector a
+  vectorIndex :: Int -> Exp a -> Exp (VectorElem a)
+  vectorSize :: Exp a -> Int
+
+instance Vector (Float,Float) where
+  type MKVector (Float,Float) = (Exp Float, Exp Float)
+  type VectorElem (Float,Float) = Float
+  toVector = uncurry $ BinOp MkVector2
+  fromVector a = (vectorIndex 0 a, vectorIndex 1 a)
+  vectorIndex i a | i < vectorSize a = UnOp (VectorIndex2 i) a
+  vectorSize _ = 2
+
+instance Vector (Float,Float,Float) where
+  type MKVector (Float,Float,Float) = (Exp Float, Exp Float, Exp Float)
+  type VectorElem (Float,Float,Float) = Float
+  toVector (a,b,c) = TriOp MkVector3 a b c
+  fromVector a = (vectorIndex 0 a, vectorIndex 1 a, vectorIndex 2 a)
+  vectorIndex i a | i < vectorSize a = UnOp (VectorIndex3 i) a
+  vectorSize _ = 3
+
+instance Vector (Float,Float,Float,Float) where
+  type MKVector (Float,Float,Float,Float) = (Exp Float, Exp Float, Exp Float, Exp Float)
+  type VectorElem (Float,Float,Float,Float) = Float
+  toVector (a,b,c,d) = QuadOp MkVector4 a b c d
+  fromVector a = (vectorIndex 0 a, vectorIndex 1 a, vectorIndex 2 a, vectorIndex 3 a)
+  vectorIndex i a | i < vectorSize a = UnOp (VectorIndex4 i) a
+  vectorSize _ = 4
+
+
+---------------------------------------------------------------------------
 -- Choice class
 ---------------------------------------------------------------------------
 class Choice a where 
@@ -558,6 +618,8 @@ printExp (Literal a) = show a
 printExp (Index (name,[])) = name
 printExp (Index (name,es)) = 
   name ++ "[" ++ ((concat . intersperse "," . map printExp) es) ++ "]"
+printExp (QuadOp op e1 e2 e3 e4) = "(" ++ printOp op ++ " " ++  printExp e1 ++ " " ++ printExp e2 ++ " " ++ printExp e3 ++ " " ++ printExp e4 ++ " )"
+printExp (TriOp op e1 e2 e3) = "(" ++ printOp op ++ " " ++  printExp e1 ++ " " ++ printExp e2 ++ " " ++ printExp e3 ++ " )"
 printExp (BinOp op e1 e2) = "(" ++ printOp op ++ " " ++  printExp e1 ++ " " ++ printExp e2 ++ " )"
 printExp (UnOp  op e) = "(" ++ printOp op ++ " " ++ printExp e ++ " )"
 printExp (If b e1 e2) = "(" ++ printExp b ++ " ? " ++ printExp e1 ++ " : " ++ printExp e2 ++ ")"
@@ -621,6 +683,18 @@ printOp Word32ToInt32 = " Word32ToInt32 "
 printOp Word32ToFloat = " Word32ToFloat "
 printOp Word32ToWord8 = " Word32ToWord8 "
 
+printOp MkVector2 = " float2 "
+printOp MkVector3 = " float3 "
+printOp MkVector4 = " float4 "
+printOp (VectorIndex2 i) = " ." ++ vectorIndexName i ++ " "
+printOp (VectorIndex3 i) = " ." ++ vectorIndexName i ++ " "
+printOp (VectorIndex4 i) = " ." ++ vectorIndexName i ++ " "
+
+vectorIndexName 0 = "x"
+vectorIndexName 1 = "y"
+vectorIndexName 2 = "z"
+vectorIndexName 3 = "w"
+
 ---------------------------------------------------------------------------
 -- Turn expressions into backend-expressions
 ---------------------------------------------------------------------------
@@ -681,7 +755,18 @@ instance ExpToCExp Word64 where
   expToCExp (Literal a) = cLiteral (Word64Val a) CWord64
   expToCExp a = expToCExpGeneral a 
 
+instance ExpToCExp (Float,Float) where
+  expToCExp e@(Literal (a,b)) = cFuncExpr "float3" (map (\x -> (cLiteral (FloatVal x) CFloat)) [a,b]) (typeToCType (typeOf e))
+  expToCExp a = expToCExpGeneral a
   
+instance ExpToCExp (Float,Float,Float) where
+  expToCExp e@(Literal (a,b,c)) = cFuncExpr "float3" (map (\x -> (cLiteral (FloatVal x) CFloat)) [a,b,c]) (typeToCType (typeOf e))
+  expToCExp a = expToCExpGeneral a
+
+instance ExpToCExp (Float,Float,Float,Float) where
+  expToCExp e@(Literal (a,b,c,d)) = cFuncExpr "float4" (map (\x -> (cLiteral (FloatVal x) CFloat)) [a,b,c,d]) (typeToCType (typeOf e))
+  expToCExp a = expToCExpGeneral a
+
 expToCExpGeneral :: ExpToCExp a  => Exp a -> CExpr
 expToCExpGeneral WarpSize      = cWarpSize 
 expToCExpGeneral (BlockIdx d)  = cBlockIdx d
@@ -696,6 +781,10 @@ expToCExpGeneral (UnOp Word32ToInt32 e) = cCast (expToCExp e) CInt32
 expToCExpGeneral (UnOp Int32ToWord32 e) = cCast (expToCExp e) CWord32
 expToCExpGeneral (UnOp Word32ToFloat e) = cCast (expToCExp e) CFloat
 expToCExpGeneral (UnOp Word32ToWord8 e) = cCast (expToCExp e) CWord8 
+
+expToCExpGeneral e@(QuadOp MkVector4 e1 e2 e3 e4) = cFuncExpr "make_float4" [expToCExp e1, expToCExp e2, expToCExp e3, expToCExp e4] (typeToCType (typeOf e)) 
+expToCExpGeneral e@(TriOp MkVector3 e1 e2 e3) = cFuncExpr "make_float3" [expToCExp e1, expToCExp e2, expToCExp e3] (typeToCType (typeOf e)) 
+expToCExpGeneral e@(BinOp MkVector2 e1 e2) = cFuncExpr "make_float2" [expToCExp e1, expToCExp e2] (typeToCType (typeOf e)) 
 
 expToCExpGeneral e@(BinOp Min e1 e2) = cFuncExpr "min" [expToCExp e1, expToCExp e2] (typeToCType (typeOf e)) 
 expToCExpGeneral e@(BinOp Max e1 e2) = cFuncExpr "max" [expToCExp e1, expToCExp e2] (typeToCType (typeOf e)) 
@@ -723,6 +812,10 @@ expToCExpGeneral (UnOp ASinH e)      = cFuncExpr "asinh" [expToCExp e] (typeToCT
 expToCExpGeneral (UnOp ACosH e)      = cFuncExpr "acosh" [expToCExp e] (typeToCType (typeOf e))
 expToCExpGeneral (UnOp ATanH e)      = cFuncExpr "atanh" [expToCExp e] (typeToCType (typeOf e))
  
+expToCExpGeneral (UnOp (VectorIndex2 i) e) = cMember (expToCExp e) (vectorIndexName i) (typeToCType (typeOf e))
+expToCExpGeneral (UnOp (VectorIndex3 i) e) = cMember (expToCExp e) (vectorIndexName i) (typeToCType (typeOf e))
+expToCExpGeneral (UnOp (VectorIndex4 i) e) = cMember (expToCExp e) (vectorIndexName i) (typeToCType (typeOf e))
+
 expToCExpGeneral e@(UnOp op e1)     = cUnOp  (unOpToCUnOp op) (expToCExp e1) (typeToCType (typeOf e))
  
 
@@ -741,6 +834,7 @@ typeToCType Word64 = CWord64
 typeToCType (Pointer t) = CPointer (typeToCType t)
 typeToCType (Global t)  = CQualified CQualifyerGlobal (typeToCType t) 
 typeToCType (Local t)  = CQualified CQualifyerLocal (typeToCType t) 
+typeToCType (VectorT i t) = CVector i (typeToCType t)
 
 -- maybe unnecessary
 binOpToCBinOp Add = CAdd

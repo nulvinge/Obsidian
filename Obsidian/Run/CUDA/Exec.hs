@@ -150,6 +150,10 @@ instance Scalar a => KernelM (CUDAVector a) where
                          CUDA.VArg (cvLen b)]) o
 -}
 
+instance KernelO () where
+  type KOutput () = ()
+  addOutParam k () = k
+
 instance Scalar a => KernelO (CUDAVector a) where
   type KOutput (CUDAVector a) = SPush (Exp a) 
   addOutParam (KernelT f t bb s i o) b =
@@ -176,9 +180,17 @@ instance (Scalar a, Scalar b, Scalar c, Scalar d, Scalar e, Scalar f)
 ---------------------------------------------------------------------------
 -- (<>) apply a kernel to an input
 ---------------------------------------------------------------------------
-(<>) :: KernelI a
-        => KernelT (KInput a -> b) -> a -> KernelT b
+(<>) :: KernelI a => KernelT (KInput a -> b) -> a -> KernelT b
 (<>) kern a = addInParam kern a
+
+(<^>) :: KernelT (SPull (Exp a) -> b) -> CUDAVector a -> KernelT b
+(<^>) (KernelT f t bb s i o) b = KernelT f t bb s (CUDA.VArg (cvPtr b) : i) o
+
+(<^^>) :: KernelT (SPull (Exp (a,a)) -> b) -> CUDAVector a -> KernelT b
+(<^^>) (KernelT f t bb s i o) b = KernelT f t bb s (CUDA.VArg (cvPtr b) : i) o
+
+(<^^^>) :: KernelT (SPull (Exp (a,a,a)) -> b) -> CUDAVector a -> KernelT b
+(<^^^>) (KernelT f t bb s i o) b = KernelT f t bb s (CUDA.VArg (cvPtr b) : i) o
 
 ---------------------------------------------------------------------------
 -- Assign a mutable input/output to a kernel
@@ -208,6 +220,9 @@ sync = lift $ CUDA.sync
 
 -- Tweak these 
 infixl 4 <>
+infixl 4 <^>
+infixl 4 <^^>
+infixl 4 <^^^>
 infixl 3 <==
 
 ---------------------------------------------------------------------------
@@ -274,8 +289,10 @@ captureWithStrategy strat f a =
 
     when debug $ 
       do 
-        lift $ putStrLn $ "Bytes shared mem: " ++ show bytesShared
         lift $ putStrLn $ prgstr
+        lift $ putStrLn $ "Bytes shared mem: " ++ show bytesShared
+        lift $ putStrLn $ "Threads per Block: " ++ show threadsPerBlock
+        lift $ putStrLn $ "Blocks: " ++ show blocks
 
     let arch = archStr props
         
@@ -303,7 +320,7 @@ useVector v f =
     dptr <- lift $ CUDA.mallocArray n
     let hptr = unsafeForeignPtrToPtr hfptr
     lift $ CUDA.pokeArray n hptr dptr
-    let cvector = CUDAVector dptr (fromIntegral (V.length v)) 
+    let cvector = CUDAVector dptr (fromIntegral (V.length v))
     b <- f cvector -- dptr     
     lift $ CUDA.free dptr
     return b
@@ -314,9 +331,6 @@ useVectors l p = useVectors' [] l p
     useVectors' vl [] p = p $ reverse vl
     useVectors' vl (v:l) p = useVector (V.fromList v) $ \vv -> useVectors' (vv:vl) l p
 
----------------------------------------------------------------------------
--- useVector: Copies a Data.Vector from "Haskell" onto the GPU Global mem 
---------------------------------------------------------------------------- 
 useGLVectors :: V.Storable a =>
                 [V.Vector a] -> ([(CUGL.Resource, GL.BufferObject)] -> CUDA b) -> CUDA b
 useGLVectors vs f =
@@ -335,7 +349,7 @@ useGLVectors vs f =
 
   where makeResource (v,buff) = do
           lift $ GL.bindBuffer GL.ArrayBuffer GL.$= (Just buff)
-          let size = fromIntegral $ V.sizeOf (V.head v) * V.length v
+          let size = fromIntegral $ V.sizeOf (V.head v) * 4*V.length v
           lift $ GL.bufferData GL.ArrayBuffer GL.$= (size, nullPtr, GL.DynamicDraw)
           lift $ GL.bindBuffer GL.ArrayBuffer GL.$= Nothing
           lift $ CUGL.registerBuffer buff CUGL.RegisterNone
@@ -348,11 +362,19 @@ withMappedResources :: [CUGL.Resource] -> ([CUDAVector a] -> CUDA b) -> CUDA b
 withMappedResources ress f = do
   lift $ CUGL.mapResources ress Nothing
   ps <- lift $ mapM CUGL.getMappedPointer ress
-  let cvectors = map (\(devptr,n) -> CUDAVector devptr (fromIntegral n)) ps
+  let elemsize = 4*4
+  let cvectors = map (\(devptr,n) -> CUDAVector devptr (fromIntegral n `div` elemsize)) ps
   b <- f cvectors
   lift $ CUGL.unmapResources ress Nothing
   return b
 
+drawBufferObject bo size = do
+  GL.bindBuffer GL.ArrayBuffer GL.$= Just bo
+  GL.arrayPointer GL.VertexArray GL.$= (GL.VertexArrayDescriptor 4 GL.Float 0 nullPtr)
+  GL.clientState GL.VertexArray GL.$= GL.Enabled
+  GL.drawArrays GL.Points 0 (fromIntegral size)
+  GL.clientState GL.VertexArray GL.$= GL.Disabled
+  GL.bindBuffer GL.ArrayBuffer GL.$= Nothing
 
 ---------------------------------------------------------------------------
 -- allocaVector: allocates room for a vector in the GPU Global mem

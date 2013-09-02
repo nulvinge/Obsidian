@@ -77,22 +77,6 @@ instance (MemoryOps a, MemoryOps b) => MemoryOps (a, b) where
         p2 = readFrom ns2
     in (p1,p2)
 
-{-
-instance (Scalar a) => MemoryOps (Exp a,Exp a) where
-  createNames (a,b) n = Single n (VectorT 2 (typeOf a)) (2*sizeOf a)
-  assignArray  (Single name t s) (a,b) ix   = do
-    Assign (name++"a") [ix] a
-    Assign (name++"b") [ix] b
-  assignScalar (Single name t s) (a,b)  = do
-    Assign (name++".x") [] a
-    Assign (name++".y") [] a
-  pullFrom (Single name t s) n =
-    let p1 = Pull n (\i -> index name i) 
-        p2 = Pull n (\i -> index name i) 
-    in Pull n (\ix -> (p1 ! ix, p2 ! ix))
-  readFrom (Single name t s) = (variable $ name++".x",variable $ name++".y")
--}
-
 instance (MemoryOps a, MemoryOps b, MemoryOps c) => MemoryOps (a, b, c) where
   createNames _ n = Tuple [createNames (undefined :: a) (n++"a")
                           ,createNames (undefined :: b) (n++"b")

@@ -152,6 +152,12 @@ unzipp3 arr = (fmap (\(x,_,_) -> x) arr,
                fmap (\(_,y,_) -> y) arr,
                fmap (\(_,_,z) -> z)  arr) 
 
+unzipp4 :: ASize l => Pull l (a,b,c,d)
+           -> (Pull l a, Pull l b, Pull l c, Pull l d)
+unzipp4 arr = (fmap (\(x,_,_,_) -> x) arr,
+               fmap (\(_,y,_,_) -> y) arr,
+               fmap (\(_,_,z,_) -> z) arr,
+               fmap (\(_,_,_,w) -> w) arr)
 
 zipp3 :: ASize l =>  (Pull l a, Pull l b, Pull l c) 
          -> Pull l (a,b,c)             

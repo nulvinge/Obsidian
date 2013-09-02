@@ -44,6 +44,7 @@ data CType = CVoid | CInt | CFloat | CDouble
            | CInt8 | CInt16 | CInt32 | CInt64 
            | CWord | CWord8 | CWord16 | CWord32 | CWord64
            | CPointer CType -- *type
+           | CVector Int CType
            | CArray [CExpr] CType -- type[e1][e2][e3]..[en] or type[] 
            | CQualified CQualifyer CType 
            deriving (Eq,Ord,Show)
@@ -62,10 +63,10 @@ data CQAttribute = CAttribAligned Word32
 
 data CExprP e  = CVar Name CType 
                -- Threads, Blocks, Grids (All of type Word32) 
-               | CBlockIdx  DimSpec 
-               | CThreadIdx DimSpec
-               | CBlockDim  DimSpec
-               | CGridDim   DimSpec
+               | CBlockIdx
+               | CThreadIdx
+               | CBlockDim
+               | CGridDim
                  
                | CLiteral Value CType
                | CIndex (e,[e]) CType
@@ -74,12 +75,13 @@ data CExprP e  = CVar Name CType
                | CUnOp  CUnOp  e    CType
                | CFuncExpr Name [e] CType  -- min, max, sin, cos 
                | CCast e CType             -- cast expr to type 
+               | CMember e Name CType
                deriving (Eq,Ord,Show)
 cTypeOfP (CVar _ t) = t
-cTypeOfP (CBlockIdx d) = CWord32
-cTypeOfP (CThreadIdx d) = CWord32
-cTypeOfP (CBlockDim d) = CWord32
-cTypeOfP (CGridDim d) = CWord32
+--cTypeOfP (CBlockIdx) = CWord32
+--cTypeOfP (CThreadIdx) = CWord32
+--cTypeOfP (CBlockDim) = CWord32
+--cTypeOfP (CGridDim) = CWord32
 cTypeOfP (CLiteral _ t) = t
 cTypeOfP (CIndex _ t) = t
 cTypeOfP (CCond  _ _ _ t) = t
@@ -87,6 +89,7 @@ cTypeOfP (CBinOp _ _ _ t) = t
 cTypeOfP (CUnOp _ _ t) = t
 cTypeOfP (CFuncExpr _ _ t) = t
 cTypeOfP (CCast _ t) = t
+cTypeOfP (CMember _ _ t) = t
 
 cSizeOf (CExpr (CIndex (e,es) _))  = 1 + max (cSizeOf e) (maximum (map cSizeOf es))
 cSizeOf (CExpr (CCond e1 e2 e3 _)) = 1 + maximum [cSizeOf e1, cSizeOf e2, cSizeOf e3] 
@@ -157,11 +160,15 @@ cexpr2 exp a b     = CExpr $ exp a b
 cexpr3 exp a b c   = CExpr $ exp a b c 
 cexpr4 exp a b c d = CExpr $ exp a b c d  
 
+dimToMember X = "x"
+dimToMember Y = "y"
+dimToMember Z = "z"
+
 cWarpSize  = CExpr $ CVar "warpSize" CWord32 
-cBlockIdx  = cexpr1 CBlockIdx
-cThreadIdx = cexpr1 CThreadIdx
-cBlockDim  = cexpr1 CBlockDim
-cGridDim   = cexpr1 CGridDim 
+cBlockIdx  m = cexpr3 CMember (CExpr CBlockIdx)  (dimToMember m) (CWord32)
+cThreadIdx m = cexpr3 CMember (CExpr CThreadIdx) (dimToMember m) (CWord32)
+cBlockDim  m = cexpr3 CMember (CExpr CBlockDim)  (dimToMember m) (CWord32)
+cGridDim   m = cexpr3 CMember (CExpr CGridDim)   (dimToMember m) (CWord32)
 cVar       = cexpr2 CVar 
 cLiteral   = cexpr2 CLiteral 
 cIndex     = cexpr2 CIndex 
@@ -170,6 +177,7 @@ cFuncExpr  = cexpr3 CFuncExpr
 cBinOp     = cexpr4 CBinOp 
 cUnOp      = cexpr3 CUnOp 
 cCast      = cexpr2 CCast 
+cMember    = cexpr3 CMember
 
 cAssign     = CAssign
 cAtomic     = CAtomic 
@@ -227,6 +235,7 @@ ppCType ppc CWord32  = line "uint32_t"
 ppCType ppc CWord64  = line "uint64_t" 
 ppCType ppc (CPointer t) = ppCType ppc t >> line "*"
 ppCType ppc (CQualified q t) = ppCQual ppc q >> space >> ppCType ppc t
+ppCType ppc (CVector i t) = ppCType ppc t >> line (show i)
 
 -- a hack (whats the correct way to handle C's t[] ?)
 -- Breaks down already for a[][], i think.
@@ -245,6 +254,7 @@ ppCTypedName ppc CInt64 nom = line "int64_t" >> space >> line nom
 ppCTypedName ppc (CPointer t) nom = ppCType ppc t >> line "*" >> line nom
 ppCTypedName ppc (CArray [] t) nom = ppCType ppc t >> space >> line nom >> line "[]"
 ppCTypedName ppc (CQualified q t) nom = ppCQual ppc q >> space >> ppCTypedName ppc t nom 
+ppCTypedName ppc (CVector i t) nom = ppCType ppc t >> line (show i) >> line nom
 
 ----------------------------------------------------------------------------
 ppValue (IntVal i)    = line$ showi i
@@ -379,18 +389,10 @@ ppCExpr :: PPConfig -> CExpr -> PP ()
 -- Cheat and do CUDA print for now!
   -- should do lookup in PPConfig and figure out how to 
   -- print these for CUDA/OpenCL
-ppCExpr ppc (CExpr (CBlockIdx X)) = line "blockIdx.x" 
-ppCExpr ppc (CExpr (CBlockIdx Y)) = line "blockIdx.y" 
-ppCExpr ppc (CExpr (CBlockIdx Z)) = line "blockIdx.z" 
-ppCExpr ppc (CExpr (CThreadIdx X)) = line "threadIdx.x" 
-ppCExpr ppc (CExpr (CThreadIdx Y)) = line "threadIdx.y" 
-ppCExpr ppc (CExpr (CThreadIdx Z)) = line "threadIdx.z" 
-ppCExpr ppc (CExpr (CBlockDim X)) = line "blockDim.x" 
-ppCExpr ppc (CExpr (CBlockDim Y)) = line "blockDim.y" 
-ppCExpr ppc (CExpr (CBlockDim Z)) = line "blockDim.z" 
-ppCExpr ppc (CExpr (CGridDim X)) = line "gridDim.x" 
-ppCExpr ppc (CExpr (CGridDim Y)) = line "gridDim.y" 
-ppCExpr ppc (CExpr (CGridDim Z)) = line "gridDim.z" 
+ppCExpr ppc (CExpr CBlockIdx) = line "blockIdx" 
+ppCExpr ppc (CExpr CThreadIdx) = line "threadIdx" 
+ppCExpr ppc (CExpr CBlockDim) = line "blockDim" 
+ppCExpr ppc (CExpr CGridDim) = line "gridDim" 
 
 ppCExpr ppc (CExpr (CVar nom _)) = line nom
 ppCExpr ppc (CExpr (CLiteral v _)) = ppValue v 
@@ -422,6 +424,9 @@ ppCExpr ppc (CExpr (CUnOp  uop  e _)) =
 ppCExpr ppc (CExpr (CFuncExpr nom args _)) =
   line nom >> 
   ppCommaSepList (ppCExpr ppc) "(" ")" args
+ppCExpr ppc (CExpr (CMember e nom _)) =
+  ppCExpr ppc e >> 
+  line ("." ++ nom)
 ppCExpr ppc (CExpr (CCast e t)) =
   line "((" >> 
   ppCType ppc t >> 
@@ -502,10 +507,10 @@ collectExps sp =  mapM_ process sp
 
 
     processE (CExpr (CVar _ _))     = return () -- too simple
-    processE (CExpr (CBlockIdx d))  = return () 
-    processE (CExpr (CThreadIdx d)) = return ()
-    processE (CExpr (CBlockDim d))  = return ()
-    processE (CExpr (CGridDim d))   = return ()
+    processE (CExpr (CBlockIdx))  = return () 
+    processE (CExpr (CThreadIdx)) = return ()
+    processE (CExpr (CBlockDim))  = return ()
+    processE (CExpr (CGridDim))   = return ()
     processE (CExpr (CLiteral _ _)) = return ()
     processE e@(CExpr (CIndex (e1,es) _)) =
       do 
@@ -529,6 +534,10 @@ collectExps sp =  mapM_ process sp
       do
         insert e
         mapM_ processE es
+    processE e@(CExpr (CMember e1 _ _)) =
+      do
+        insert e
+        processE e1
     processE e@(CExpr (CCast e1 _)) =
       do
         -- refine this step. Only insert if e1 is nonsimple
@@ -665,14 +674,14 @@ type CPD = M.Map CENode NodeID
 buildDAG :: CExpr -> State (Int,DAG,CPD) NodeID
 buildDAG (CExpr (CVar n t)) =
   addNode (CENode (CVar n t))
-buildDAG (CExpr (CBlockIdx d)) =
-  addNode (CENode (CBlockIdx d))
-buildDAG (CExpr (CThreadIdx d)) =
-  addNode (CENode (CThreadIdx d))
-buildDAG (CExpr (CBlockDim d)) =
-  addNode (CENode (CBlockDim d))
-buildDAG (CExpr (CGridDim d)) =
-  addNode (CENode (CGridDim d))
+buildDAG (CExpr (CBlockIdx)) =
+  addNode (CENode (CBlockIdx))
+buildDAG (CExpr (CThreadIdx)) =
+  addNode (CENode (CThreadIdx))
+buildDAG (CExpr (CBlockDim)) =
+  addNode (CENode (CBlockDim))
+buildDAG (CExpr (CGridDim)) =
+  addNode (CENode (CGridDim))
 buildDAG (CExpr (CLiteral v t)) =
   addNode (CENode (CLiteral v t))
 buildDAG (CExpr (CIndex (e,es) t)) =
@@ -696,6 +705,10 @@ buildDAG (CExpr (CFuncExpr n es t)) =
   do
     es' <- mapM buildDAG es
     addNode (CENode (CFuncExpr n es' t))
+buildDAG (CExpr (CMember e n t)) =
+  do
+    e' <- buildDAG e
+    addNode (CENode (CMember e' n t))
 buildDAG (CExpr (CCast e t)) =
   do
     e' <- buildDAG e
@@ -721,9 +734,9 @@ dagToExp dag nid =
   case M.lookup nid dag of
     Nothing -> error "dagToExp: Broken DAG"
     (Just (CENode (CVar nom t)))   -> ([],CExpr (CVar nom t))
-    (Just (CENode (CBlockIdx d)))  -> ([],CExpr (CBlockIdx d))
-    (Just (CENode (CThreadIdx d))) -> ([],CExpr (CThreadIdx d)) 
-    (Just (CENode (CGridDim d)))   -> ([],CExpr (CGridDim d))
+    (Just (CENode (CBlockIdx)))    -> ([],CExpr (CBlockIdx))
+    (Just (CENode (CThreadIdx)))   -> ([],CExpr (CThreadIdx)) 
+    (Just (CENode (CGridDim)))     -> ([],CExpr (CGridDim))
     (Just (CENode (CLiteral v t))) -> ([],CExpr (CLiteral v t))
 
     -- Bit of a special case 
@@ -761,6 +774,11 @@ dagToExp dag nid =
           exp = CExpr (CFuncExpr nom es' t)
           this = (nid,exp)
       in (ds++[this],tmp nid t)
+    (Just (CENode (CMember e nom t))) ->
+      let (d,e') = dagToExp dag e
+          exp = CExpr (CMember e' nom t)
+          this = (nid,exp)
+      in (d++[this],tmp nid t)
     -- never pull out just for a cast
     (Just (CENode (CCast e t))) ->
       let (d,e') = dagToExp dag e

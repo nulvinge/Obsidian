@@ -43,6 +43,9 @@ genType _ Word8 = "uint8_t "
 genType _ Word16 = "uint16_t "
 genType _ Word32 = "uint32_t "
 genType _ Word64 = "uint64_t "
+genType _ (VectorT 2 Float) = "float2 "
+genType _ (VectorT 3 Float) = "float3 "
+genType _ (VectorT 4 Float) = "float4 "
 
 genType gc (Pointer t) = genType gc t ++ "*"
 genType gc (Global t) = global gc ++" "++ genType gc t  -- "__global " ++ genType t
