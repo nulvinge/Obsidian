@@ -15,6 +15,7 @@ import Foreign.C.Types (CFloat)
 import Foreign.CUDA.Driver.Graphics.OpenGL
 import qualified Foreign.CUDA.Driver as CUDA
 import Control.Concurrent (threadDelay)
+import Data.Time.Clock
 
 
 lift = ST.lift
@@ -83,27 +84,6 @@ nbody0 arr = Push (len arr) $ \wf -> do
       wf (readFrom ns) (ib*256+it)
   where n=sizeConv $ len arr
 
-seqFoldAII :: (MemoryOps a)
-           => EWord32
-           -> SPush a
-           -> (EWord32 -> SPull a -> SPush a)
-           -> Program (SPull a)
-seqFoldAII n a f = do
-  t <- forceInplace a
-  seqFor n $ \i -> do
-    let t' = f i (pullInplace t)
-    t'' <- force t'
-    inplaceForce t $ push t''
-  return $ pullInplace t
-
-seqFoldA :: (ASize l, MemoryOps a)
-         => SPush a
-         -> Pull l b
-         -> (SPull a -> b -> SPush a)
-         -> Program (SPull a)
-seqFoldA a arr f = seqFoldAII (sizeConv $ len arr) a
-                              (\i a -> f a (arr!i))
-
 nbody1 :: EFloat -> Word32 -> Word32 -> SPull (EFloat,Pos3,Pos3) -> SPush (Pos3,Pos3)
 nbody1 t bs ur all =  pSplitMap bs f all
   where
@@ -162,36 +142,57 @@ getUniCircle = do
     else return (x1,x2)
 
 
-pingPongLoop :: a -> a -> (IORef (Maybe b) -> IO ()) -> (a -> a -> CUDA b) -> CUDA ()
+pingPongLoop :: a -> a -> (b -> CUDA ()) -> (a -> a -> CUDA b) -> CUDA ()
 pingPongLoop a b display p = do
   st <- ST.get
   lift $ do
     tick <- newIORef 0
     state <- newIORef st
     dispData <- newIORef Nothing
+    tt <- getCurrentTime
+    time <- newIORef tt
+    frameTick <- newIORef 0
     pstate <- newIORef (0,0,0)
-    displayCallback $= (display dispData)
-    idleCallback $= Just (idle tick state dispData)
+    displayCallback $= (disp state dispData)
+    idleCallback $= Just (idle tick frameTick time state dispData)
     specialCallback $= Just (specialKeyboardCallback pstate)
     mainLoop
   where
-    idle tick state dispData = do
+    disp state dispData = do
+      d <- get dispData
+      case d of
+        Nothing -> return ()
+        Just dd -> do
+          st <- get state
+          ((),st') <- ST.runStateT (display dd) st
+          state $=! st'
+    idle tick frameTick time state dispData = do
       t <- get tick
       st <- get state
       tick $=! (t+1)
-      putStrLn $ show t
-      (dispD,st') <- if t `mod` 2 == 0
-        then
-          ST.runStateT (p a b) st
-        else
-          ST.runStateT (p b a) st
-      (dispD,st') <- ST.runStateT (p a b) st
+      let (i,o) = if t `mod` 2 == 0 then (a,b) else (b,a)
+      (dispD,st') <- ST.runStateT (p i o) st
       state $=! st'
-      threadDelay 1000
       dispData $=! (Just dispD)
-      if t `mod` 1 == 0
-        then postRedisplay Nothing
-        else return ()
+      if t `mod` 1 /= 0
+        then return ()
+        else do
+          tt <- get time
+          tt' <- getCurrentTime
+          time $= tt'
+          ft <- get frameTick
+          frameTick $= (t+1)
+          CUDA.sync
+          let size = 32*1024
+              frames = (t+1-ft)
+              time = diffUTCTime tt' tt
+              flop = (fromIntegral $ (size*size*20 + size*10) * frames) / 1e9
+          putStrLn $ "FPS: " ++ show (fromIntegral frames / time)
+                  ++ "\tframes:" ++ show frames
+                  ++ "\ttime:"   ++ show time
+                  ++ "\tGFLOP:"   ++ show flop
+                  ++ "\tGFLOPs:"  ++ show (flop / time)
+          postRedisplay Nothing
 
 runVector = do 
   (progname, _) <- getArgsAndInitialize
@@ -205,7 +206,7 @@ runVector = do
         inputP = namedGlobal "apa" $ fromIntegral size
         wrap :: SPull EFloat4 -> SPull EFloat3 -> SPush (EFloat4,EFloat3)
         wrap p v = let (x,y,z,w) = unzipp4 $ fmap fromVector p
-                       a = nbody1 0.000000001 256 1 $ zipp3 (w,zipp3 (x,y,z),fmap fromVector v)
+                       a = nbody1 0.000000001 256 4 $ zipp3 (w,zipp3 (x,y,z),fmap fromVector v)
                    in imap (\ix ((x',y',z'),v') -> (toVector (x',y',z',1.0), toVector v')) a
     kern <- capture wrap (inputP :- inputV :- ())
     {-
@@ -235,16 +236,11 @@ runVector = do
             -- return $ zip3 px py pz
             return $ (pd,size)
   where
-    display dispData = do
-      dd <- get dispData
-      case dd of
-        Nothing -> return ()
-        Just (pd,size) -> do
-          let Just (pd,size) = dd
-          clear [ColorBuffer,DepthBuffer]
-          -- renderPrimitive Points $ mapM_ (\(x,y,z)-> vertex $ Vertex3 (cFloat x) (cFloat y) (cFloat z)) $ dispD
-          drawBufferObject pd size
-          swapBuffers
+    display (pd,size) = lift $ do
+      clear [ColorBuffer,DepthBuffer]
+      -- renderPrimitive Points $ mapM_ (\(x,y,z)-> vertex $ Vertex3 (cFloat x) (cFloat y) (cFloat z)) $ dispD
+      drawBufferObject pd size Points 4
+      swapBuffers
 
     fixOutputs :: KernelT (SPush (Exp a, Exp b)) -> (CUDAVector a,CUDAVector Float) -> KernelT () 
     fixOutputs (KernelT f t bb s i o) (a,b) = KernelT f t bb s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b)])
@@ -263,90 +259,60 @@ runNormal = do
     useVectors [w,x,y,z,x0,x0,x0,x0,x0,x0,x0,x0,x0] $ \[w,x1,y1,z1,x2,y2,z2,vx1,vy1,vz1,vx2,vy2,vz2] -> do
       pingPongLoop (x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) display $ \(x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) -> do
         ((x2,y2,z2),(vx2,vy2,vz2)) <== kern <> w <> x1 <> y1 <> z1 <> vx1 <> vy1 <> vz1
+        sync
 
         px <- peekCUDAVector x2
         py <- peekCUDAVector y2
         pz <- peekCUDAVector z2
-        ri <- peekCUDAVector x1
-        lift $ putStrLn $ show $ foldr1 max $ L.zipWith (-) px ri
+        --ri <- peekCUDAVector x1
+        --lift $ putStrLn $ show $ foldr1 max $ L.zipWith (-) px ri
+        --lift $ putStrLn $ show $ L.take 10 $ (zip3 px py pz)
         return $ zip3 px py pz
   where
-    display dispData = do
-      dd <- get dispData
-      case dd of
-        Nothing -> return ()
-        Just dispD -> do
-          clear [ColorBuffer,DepthBuffer]
-          renderPrimitive Points $ mapM_ (\(x,y,z)-> vertex $ Vertex3 (cFloat x) (cFloat y) (cFloat z)) $ dispD
-          swapBuffers
+    display dispD = lift $ do
+      clear [ColorBuffer,DepthBuffer]
+      renderPrimitive Points $ mapM_ (\(x,y,z)-> vertex $ Vertex3 (cFloat x) (cFloat y) (cFloat z)) $ dispD
+      swapBuffers
 
 runInterop = do 
   (progname, _) <- getArgsAndInitialize
   createWindow "Hello World"
   withCUDA True $ do
-    let input = namedGlobal "apa" (16*1024)
+    let input = namedGlobal "apa" (32*1024)
     kern <- capture (\w x y z vx vy vz -> nbody1 0.000000001 256 1 $ zipp3 (w,zipp3 (x,y,z),zipp3 (vx,vy,vz)))
                     (input :- input :- input :- input :- input :- input :- input :- ())
     restructureKern <- captureWithStrategy [(Par,Block,32),(Par,Thread,512),(Seq,Thread,0)] rest3
-                    (input :- input :- input :- input :- ())
+                    (input :- input :- input :- ())
     points <- lift $ mapM (const getPoint) [0..len input-1]
     let (x,y,z,w) = L.unzip4 $ points
-        x0 = map (*0) x
+        x0 = map (const 0) x
         d = L.replicate (4*length points) (0 :: Float)
 
     useVectors [w,x,y,z,x0,x0,x0,x0,x0,x0,x0,x0,x0] $ \[w,x1,y1,z1,x2,y2,z2,vx1,vy1,vz1,vx2,vy2,vz2] -> do
       useGLVectors [V.fromList d] $ \[d] -> do
-        pingPongLoop (x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) (display) $ \(x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) -> do
+        pingPongLoop (x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) (display restructureKern) $ \(x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) -> do
           ((x2,y2,z2),(vx2,vy2,vz2)) <== kern <> w <> x1 <> y1 <> z1 <> vx1 <> vy1 <> vz1
-          --sync
-
-          withMappedResources [fst d] $ \[d] -> do
-            d <== restructureKern <> w <> x2 <> y2 <> z2
-          --sync
-
-          --px <- peekCUDAVector x2
-          --py <- peekCUDAVector y2
-          --pz <- peekCUDAVector z2
-          --ri <- peekCUDAVector x1
-          --lift $ putStrLn $ show $ foldr1 max $ L.zipWith (-) px ri
-          return $ (snd d,length points)
-          --return $ (zip3 px py pz,0)
+          return $ (d,length points,x2,y2,z2)
   where
-    display dispData = do
-      dd <- get dispData
-      case dd of
-        Nothing -> return ()
-        Just (pd,size) -> do
-          let Just (pd,size) = dd
-          clear [ColorBuffer,DepthBuffer]
-          --renderPrimitive Points $ mapM_ (\(x,y,z)-> vertex $ Vertex3 (cFloat x) (cFloat y) (cFloat z)) $ pd
-          drawBufferObject pd size
-          swapBuffers
-    rest :: SPull EFloat -> SPull EFloat -> SPull EFloat -> SPull EFloat -> SPush EFloat
-    rest w x y z = (\a -> traces (len a, len x, len y, len z, len w) a) $
-      Push (4*len x) $ \wf -> do
-        forAll (sizeConv $ len x) $ \ix -> do
-          wf (x!ix) (4*ix+0)
-          --wf (y!ix) (4*ix+1)
-          --wf (z!ix) (4*ix+2)
-          --wf (w!ix) (4*ix+3)
-    {-
-    rest2 :: SPull EFloat -> SPull EFloat -> SPull EFloat -> SPull EFloat -> SPush EFloat
-    rest2 w x y z = push $ fmap rf $ zipp4 (w,x,y,z)
-    rf w x y z =
-      ifThenElse (ix .&. 1 == 0)
-        (ifThenElse (ix .&. 2 == 0) x y)
-        (ifThenElse (ix .&. 2 == 0) z w)
-    -}
-    rest3 :: SPull EFloat -> SPull EFloat -> SPull EFloat -> SPull EFloat -> SPush EFloat
-    rest3 w x y z = pConcatMap rf3 $ resize (len x `div` 4) $  zipp4 (w,x,y,z)
-    rf3 (w,x,y,z) = 
+    display restructureKern (d,size,x2,y2,z2) = do
+      withMappedResources [fst d] $ \[d] -> do
+        d <== restructureKern <> x2 <> y2 <> z2
+      lift $ clear [ColorBuffer,DepthBuffer]
+      lift $ drawBufferObject (snd d) size Points 4
+      lift $ swapBuffers
+    rest3 :: SPull EFloat -> SPull EFloat -> SPull EFloat -> SPush EFloat
+    rest3 x y z = pSplitMap 8 (pConcatMap rf3) $ zipp3 (x,y,z)
+    rf3 (x,y,z) = 
       Push 4 $ \wf -> do
         wf x 0
         wf y 1
         wf z 2
-        wf w 3
+        wf 1 3
 
+main = runInterop
+
+--Threads per Block: 32
+--Blocks: 128
 
 
 cFloat :: Float -> CFloat

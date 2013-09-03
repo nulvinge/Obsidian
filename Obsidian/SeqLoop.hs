@@ -14,6 +14,8 @@ import Obsidian.Program
 import Obsidian.Exp
 import Obsidian.Array
 import Obsidian.Memory
+import Obsidian.Inplace
+import Obsidian.Force
 
 import Data.Word
 
@@ -40,6 +42,27 @@ seqFoldP a arr f = seqFoldPI a arr (\i a b -> f a b)
 seqFold  a arr f = seqFoldPI a arr (\i a b -> return $ f a b)
 seqFoldI a arr f = seqFoldPI a arr (\i a b -> return $ f i a b)
 
+
+seqFoldAII :: (MemoryOps a)
+           => EWord32
+           -> SPush a
+           -> (EWord32 -> SPull a -> SPush a)
+           -> Program (SPull a)
+seqFoldAII n a f = do
+  t <- forceInplace a
+  seqFor n $ \i -> do
+    let t' = f i (pullInplace t)
+    t'' <- force t'
+    inplaceForce t $ push t''
+  return $ pullInplace t
+
+seqFoldA :: (ASize l, MemoryOps a)
+         => SPush a
+         -> Pull l b
+         -> (SPull a -> b -> SPush a)
+         -> Program (SPull a)
+seqFoldA a arr f = seqFoldAII (sizeConv $ len arr) a
+                              (\i a -> f a (arr!i))
 
 seqReducePI1 :: (ASize l, MemoryOps a)
              => (EWord32 -> a -> a -> Program a)

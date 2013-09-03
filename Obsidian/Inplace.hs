@@ -12,7 +12,7 @@ import Obsidian.Memory
 import Obsidian.Force
 import Obsidian.Atomic
 import Obsidian.Types
-import Obsidian
+import Obsidian.Force
 import Data.Word
 
 --------------------------------------------------------------------------

@@ -168,14 +168,14 @@ instance (Scalar a, Scalar b, Scalar c)
     => KernelO (CUDAVector a, CUDAVector b, CUDAVector c) where
   type KOutput (CUDAVector a, CUDAVector b, CUDAVector c) = SPush (Exp a, Exp b, Exp c)
   addOutParam (KernelT f t bb s i o) (a,b,c) =
-    KernelT f bb t s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b),CUDA.VArg (cvPtr c)])
+    KernelT f t bb s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b),CUDA.VArg (cvPtr c)])
 
 instance (Scalar a, Scalar b, Scalar c, Scalar d, Scalar e, Scalar f)
     => KernelO ((CUDAVector a, CUDAVector b, CUDAVector c), (CUDAVector d, CUDAVector e, CUDAVector f)) where
   type KOutput ((CUDAVector a, CUDAVector b, CUDAVector c), (CUDAVector d, CUDAVector e, CUDAVector f))
           = SPush ((Exp a, Exp b, Exp c),(Exp d, Exp e, Exp f))
   addOutParam (KernelT ff t bb s i o) ((a,b,c),(d,e,f)) =
-    KernelT ff bb t s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b),CUDA.VArg (cvPtr c),CUDA.VArg (cvPtr d),CUDA.VArg (cvPtr e),CUDA.VArg (cvPtr f)])
+    KernelT ff t bb s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b),CUDA.VArg (cvPtr c),CUDA.VArg (cvPtr d),CUDA.VArg (cvPtr e),CUDA.VArg (cvPtr f)])
 
 ---------------------------------------------------------------------------
 -- (<>) apply a kernel to an input
@@ -207,6 +207,9 @@ instance (Scalar a, Scalar b, Scalar c, Scalar d, Scalar e, Scalar f)
 (<==) o kern =
   do
     let k = addOutParam kern o
+    when (False && debug) $ do
+      lift $ putStrLn $ "B: " ++ show (fromIntegral (ktBlocks k),1,1)
+                     ++ " T: " ++ show (fromIntegral (ktThreadsPerBlock k), 1, 1)
     lift $ CUDA.launchKernel
       (ktFun k)
       (fromIntegral (ktBlocks k),1,1)
@@ -284,7 +287,7 @@ captureWithStrategy strat f a =
         fn     = kn ++ ".cu"
         cub    = fn ++ ".cubin"
 
-        (prgstr,bytesShared,threadsPerBlock,blocks) = CG.genKernelM kn strat f a
+        (prgstr,bytesShared,blocks,threadsPerBlock) = CG.genKernelM kn strat f a
         header = "#include <stdint.h>\n" -- more includes ? 
 
     when debug $ 
@@ -368,11 +371,11 @@ withMappedResources ress f = do
   lift $ CUGL.unmapResources ress Nothing
   return b
 
-drawBufferObject bo size = do
+drawBufferObject bo size tt coords = do
   GL.bindBuffer GL.ArrayBuffer GL.$= Just bo
-  GL.arrayPointer GL.VertexArray GL.$= (GL.VertexArrayDescriptor 4 GL.Float 0 nullPtr)
+  GL.arrayPointer GL.VertexArray GL.$= (GL.VertexArrayDescriptor coords GL.Float 0 nullPtr)
   GL.clientState GL.VertexArray GL.$= GL.Enabled
-  GL.drawArrays GL.Points 0 (fromIntegral size)
+  GL.drawArrays tt 0 (fromIntegral size)
   GL.clientState GL.VertexArray GL.$= GL.Disabled
   GL.bindBuffer GL.ArrayBuffer GL.$= Nothing
 
