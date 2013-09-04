@@ -51,7 +51,7 @@ splitLoops oldStrat im = traverseIMaccDown trav newStrat im
 
     newStrat = makeStrat $ merge $ snd $ traverseIMaccUp collectLoops im
     makeStrat (n,p,s) = s2 ++ s3
-      where s1 = strace $ splitLoopInfo oldStrat (p*s)
+      where s1 = splitLoopInfo oldStrat (p*s)
             s2 = map (\(t,l,s) -> (t,l,tryConst s)) s1
             s3 = removeStrategy oldStrat s1
             tryConst (Literal a) = a
@@ -199,35 +199,38 @@ removeUnusedAllocations im = mapIMs trav im
     trav (SComment ""    ,_)                       = []
     trav (p,d) = [(p,d)]
 
-scalarLiftingS :: M.Map (Int,Int) Access -> IMList IMData -> IMList IMData
-scalarLiftingS accesses = mapIMs liftAssigns
-                        . mapIM (traverseExp replaceExp)
+scalarLifting :: M.Map (Int,Int) Access -> [DepEdge] -> IMList IMData -> IMList IMData
+scalarLifting accesses depEdges
+  = scalarLifting' depEdges'
+  . mapIMs liftAssigns
+  . mapIM (traverseExp replaceExp)
   where
-    arrmap = M.fromListWith (++)
-           $ map (\(n,e,l,d,i) -> (n,[e]))
-           $ M.elems accesses
-    liftarrs = S.fromList
-             $ map (\(n,es) -> n)
-             $ filter (\(n,es) -> isSame es)
-             $ M.toList arrmap
+    liftarrs = M.map (\eis -> map snd eis)
+             $ M.filter (\eis -> isSame $ map fst eis)
+             $ M.fromListWith (++)
+             $ map (\(n,e,l,d,i) -> (n,[(e,i)]))
+             $ M.elems accesses
+    liftAccs = strace $ S.fromList $ concat $ M.elems liftarrs
+    depEdges' = filter (\(a,b,t,c) -> not (S.member a liftAccs || S.member b liftAccs)) depEdges
+
     isSame = all isSame'
     isSame' (ThreadIdx X) = True
     isSame' _ = False
     makeName n e = "ss" ++ n
 
-    liftAssigns (SAssign n i e,d) | S.member n liftarrs =
+    liftAssigns (SAssign n i e,d) | M.member n liftarrs =
                 [(SAssign liftable [] e,d)]
         where liftable = makeName n e
     liftAssigns (p,d) = [(p,d)]
 
     replaceExp :: Exp e -> Exp e
-    replaceExp (Index (n,[i])) | S.member n liftarrs =
+    replaceExp (Index (n,[i])) | M.member n liftarrs =
                (variable $ makeName n i)
     replaceExp e = e
 -- type Access = (Name, Exp Word32, Bool, IMData, (Int,Int))
 
-scalarLifting :: [DepEdge] -> IMList IMData -> IMList IMData
-scalarLifting depEdges = mapIMs liftAssigns
+scalarLifting' :: [DepEdge] -> IMList IMData -> IMList IMData
+scalarLifting' depEdges = mapIMs liftAssigns
                        . mapIM liftReads
   where
     liftAssigns (SAssign n i e,d) | isJust liftable
@@ -236,7 +239,7 @@ scalarLifting depEdges = mapIMs liftAssigns
         : if hasOtherDependences d
             then [(SAssign n i $ getVar liftable $ e,d)]
             else []
-      where liftable = getLiftable d
+      where liftable = getLiftableAssign d
             getVar :: (Scalar a) => Maybe Name -> Exp a -> Exp a
             getVar (Just n) e = variable n
     liftAssigns (p,d) = [(p,d)]
@@ -247,15 +250,18 @@ scalarLifting depEdges = mapIMs liftAssigns
     hasOtherDependences d = not $ all (\(_,(bi,br),t,_) -> (getInstruction d == bi) `implies` isThreadDep t) depEdges
     implies True False = False
     implies _    _     = True
-    getLiftable d = do
-      _ <- getLift $ filter (\(_,(bi,br),_,_) -> getInstruction d == bi) depEdges
-      return $ makeName $ getInstruction d
 
-    getLift l = do
+    getLiftableAssign d = do
+      let l = filter (\(_,(bi,br),_,_) -> getInstruction d == bi) depEdges
+      guard $ any (\(_,_,t,_) -> isThreadDep t) l
+      return $ makeName $ getInstruction d
+    getLiftableRead (n,e,r,d,i) = do
+      guard r
+      let l = filter (\(a,_,_,_) -> i == a) depEdges
       guard $ all (\(_,_,t,_) -> isThreadDep t) l
       guard $ length l == 1
-      let [a] = l
-      return a
+      let [(_,(bi,br),_,_)] = l
+      return (e,n,makeName bi)
     isThreadDep t = all isThreadDep' t
     isThreadDep' DataAnyDep = False
     isThreadDep' SyncDepEdge = True
@@ -265,11 +271,7 @@ scalarLifting depEdges = mapIMs liftAssigns
 
     liftReads (p,d) = traverseExp (replaceExp replaceMap) (p,d)
       where replaceMap :: [(Exp Word32, Name, Name)]
-            replaceMap = mapMaybe getLiftables $ getAccessesIM (p,d)
-    getLiftables (n,e,r,d,i) = do
-      guard r
-      (_,(bi,br),_,_) <- getLift $ filter (\(a,_,_,_) -> i == a) depEdges
-      return (e,n,makeName bi)
+            replaceMap = mapMaybe getLiftableRead $ getAccessesIM (p,d)
     replaceExp m (Index (n,[i])) =
       case find (\(e,n',_) -> n==n' && e==i) m of
         Just (_,_,liftName) -> variable liftName
@@ -284,9 +286,10 @@ addDecls im = im'
     allUses = makeMap $ map fst allNameTypes
     types = M.fromList allNameTypes
     isLifted n = isPrefixOf "ts" n || isPrefixOf "ss" n
-    insertDecls nss (p,d) = case tryAddDecl of
-                            Just p' -> traces (ns',decls,ns'') ((p',d),ns'')
-                            Nothing -> ((p,d),ns')
+    insertDecls nss (p,d) =
+      case tryAddDecl of
+        Just p' -> ((p',d),ns'')
+        Nothing -> ((p,d),ns')
       where
         ns = M.unionsWith (+) nss
         nns = makeMap $ getNamesIM (p,d)
@@ -299,7 +302,6 @@ addDecls im = im'
           SSeqWhile    e l -> Just $ SSeqWhile e (imDecls++l)
           SFor t nn pl e l -> Just $ SFor t nn pl e (imDecls++l)
           _                -> Nothing
-
 
     makeMap = M.fromList
             . map (\l@(a:_) -> (a,length l))

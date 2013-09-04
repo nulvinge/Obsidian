@@ -67,11 +67,8 @@ insertAnalysis strategy inSizes im = traverseComment (map Just . getComments . s
           , insertStringsIM "Hazards"       $ insertEdges accesses hazardEdges
           , insertStringsIM "Unnessary sync"$ unneccessarySyncs syncs accesses depEdgesF
           , mapIMData insertCost
-          -- , scalarLiftingS accesses
-          , scalarLifting depEdgesF
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          , scalarLifting accesses depEdgesF
           , addDecls
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           -- , removeUnneccessarySyncs syncs accesses depEdgesF
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Uppers" $ \(p,d) -> [Just $ show (M.toList $ getUpperMap d)]

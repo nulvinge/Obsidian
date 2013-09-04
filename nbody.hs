@@ -297,6 +297,7 @@ runInterop = do
     display restructureKern (d,size,x2,y2,z2) = do
       withMappedResources [fst d] $ \[d] -> do
         d <== restructureKern <> x2 <> y2 <> z2
+      sync
       lift $ clear [ColorBuffer,DepthBuffer]
       lift $ drawBufferObject (snd d) size Points 4
       lift $ swapBuffers
