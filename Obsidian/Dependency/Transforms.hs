@@ -276,6 +276,37 @@ scalarLifting depEdges = mapIMs liftAssigns
         Nothing             -> Index (n,[i])
     replaceExp _ e = e
 
+addDecls im = im'
+  where
+    (im',[]) = mapSnd (concat . map M.toList) $ traverseIMaccUp insertDecls im
+    allNameTypes = map (\(n,_,_,t,_) -> (n,t))
+                 $ collectIM (getIndicesIMAll) im
+    allUses = makeMap $ map fst allNameTypes
+    types = M.fromList allNameTypes
+    isLifted n = isPrefixOf "ts" n || isPrefixOf "ss" n
+    insertDecls nss (p,d) = case tryAddDecl of
+                            Just p' -> traces (ns',decls,ns'') ((p',d),ns'')
+                            Nothing -> ((p,d),ns')
+      where
+        ns = M.unionsWith (+) nss
+        nns = makeMap $ getNamesIM (p,d)
+        ns' = M.unionWith (+) nns ns
+        decls = M.filter id $ M.intersectionWith (==) allUses ns
+        imDecls = map (\n -> (SDeclare n (fromJust $ M.lookup n types), d)) $ M.keys decls
+        ns'' = M.unionWith (+) nns $ M.difference ns' decls
+        tryAddDecl = case p of
+          SCond        e l -> Just $ SCond e (imDecls++l)
+          SSeqWhile    e l -> Just $ SSeqWhile e (imDecls++l)
+          SFor t nn pl e l -> Just $ SFor t nn pl e (imDecls++l)
+          _                -> Nothing
+
+
+    makeMap = M.fromList
+            . map (\l@(a:_) -> (a,length l))
+            . group
+            . sort
+            . filter isLifted
+
 
 loopUnroll maxUnroll = mapIMs unroll
   where

@@ -14,6 +14,7 @@ import Obsidian.Globs
 import Obsidian.Exp
 import Obsidian.Program
 import Obsidian.Memory
+import Obsidian.Types
 import Obsidian.CodeGen.Program
 import qualified Obsidian.CodeGen.Program as P
 
@@ -321,34 +322,28 @@ getIndice _ _ = []
 getIndicesExp (Index (n,[r])) = [(n,r)]
 getIndicesExp _ = []
 
-getIndicesIM :: (P.Statement b, a) -> [(Name, Exp Word32, Bool, a)]
-getIndicesIM (a,cs) = map (\(n,e,rw) -> (n,e,rw,cs)) $ getIndicesIM' a
+getIndicesIMAll :: (P.Statement b, a) -> [(Name, [Exp Word32], Bool, Type, a)]
+getIndicesIMAll (a,cs) = map (\(n,e,rw,t) -> (n,e,rw,t,cs)) $ getIndicesIM' a
   where
-    getIndicesIM' :: (P.Statement b) -> [(Name, Exp Word32, Bool)]
-    getIndicesIM' (P.SAssign     n [r] e) = [(n,r,False)] ++ ce r ++ ce e
-    getIndicesIM' (P.SAssign     n r e)   = concat (map ce r) ++ ce e
-    getIndicesIM' (P.SAtomicOp _ n r   _) = [(n,r,False)] ++ ce r
+    getIndicesIM' :: (P.Statement b) -> [(Name, [Exp Word32], Bool,Type)]
+    getIndicesIM' (P.SAssign     n r e) = [(n,r,False,typeOf e)] ++ concat (map ce r) ++ ce e
+    getIndicesIM' (P.SAtomicOp _ n r   _) = [(n,[r],False,Word32)] ++ ce r
     getIndicesIM' (P.SCond           e l) = ce e
     getIndicesIM' (P.SSeqWhile       e l) = ce e
     getIndicesIM' (P.SFor _ _ _      e l) = ce e
     getIndicesIM' _ = []
-    ce :: (Scalar a) => (Exp a) -> [(Name, Exp Word32, Bool)]
-    ce = map (\(n,e) -> (n,e,True)) . collectExp getIndicesExp
+    ce :: (Scalar a) => Exp a -> [(Name, [Exp Word32], Bool,Type)]
+    ce = collectExp getIndicesExp
+    getIndicesExp e@(Index (n,r)) = [(n,r,True,typeOf e)]
+    getIndicesExp _ = []
+
+getIndicesIM :: (P.Statement b, a) -> [(Name, Exp Word32, Bool, a)]
+getIndicesIM = map (\(n,[e],rw,t,cs) -> (n,e,rw,cs))
+             . filter (\(_,e,_,_,_) -> length e == 1)
+             . getIndicesIMAll
 
 getNamesIM :: (P.Statement b, a) -> [Name]
-getNamesIM (a,cs) = getIndicesIM' a
-  where
-    getIndicesIM' :: (P.Statement b) -> [Name]
-    getIndicesIM' (P.SAssign     n r e)   = [n] ++ concat (map ce r) ++ ce e
-    getIndicesIM' (P.SAtomicOp _ n r   _) = [n] ++ ce r
-    getIndicesIM' (P.SCond           e l) = ce e
-    getIndicesIM' (P.SSeqWhile       e l) = ce e
-    getIndicesIM' (P.SFor _ _ _      e l) = ce e
-    getIndicesIM' _ = []
-    ce :: (Scalar a) => (Exp a) -> [Name]
-    ce = collectExp getNamesExp
-    getNamesExp (Index (n,r)) = [n]
-    getNamesExp _ = []
+getNamesIM = map (\(n,_,_,_,_) -> n) . getIndicesIMAll
 
 getSizesIM ((P.SAllocate n s t),_) = [(n,s)]
 getSizesIM _ = []

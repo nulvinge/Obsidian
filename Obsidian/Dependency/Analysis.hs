@@ -48,14 +48,14 @@ insertAnalysis strategy inSizes im = traverseComment (map Just . getComments . s
 
         imActions1 :: [IMList IMData -> IMList IMData]
         imActions1 = [id
-          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          -- , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           , moveLoops
           , mergeLoops
           , loopUnroll 4
           , cleanupAssignments
           , removeUnusedAllocations --move after scalar lifting
           , insertSyncs
-          , (\im -> trace (printIM (emptyIM im)) im)
+          -- , (\im -> trace (printIM (emptyIM im)) im)
           ]
 
         imActions2 :: [IMList IMData -> IMList IMData]
@@ -68,7 +68,10 @@ insertAnalysis strategy inSizes im = traverseComment (map Just . getComments . s
           , insertStringsIM "Unnessary sync"$ unneccessarySyncs syncs accesses depEdgesF
           , mapIMData insertCost
           -- , scalarLiftingS accesses
-          -- , scalarLifting depEdgesF
+          , scalarLifting depEdgesF
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
+          , addDecls
+          , (\im -> trace (printIM (mapDataIM (const ()) im)) im)
           -- , removeUnneccessarySyncs syncs accesses depEdgesF
           -- , insertStringsIM "Cost"    $ \(p,d) -> if getCost d /= noCost then [Just $ showCost (getCost d)] else []
           -- , insertStringsIM "Uppers" $ \(p,d) -> [Just $ show (M.toList $ getUpperMap d)]
