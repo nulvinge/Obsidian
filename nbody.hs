@@ -142,8 +142,8 @@ getUniCircle = do
     else return (x1,x2)
 
 
-pingPongLoop :: a -> a -> (b -> CUDA ()) -> (a -> a -> CUDA b) -> CUDA ()
-pingPongLoop a b display p = do
+pingPongLoop :: a -> a -> (b -> CUDA ()) -> Int -> (a -> a -> CUDA b) -> CUDA ()
+pingPongLoop a b display size p = do
   st <- ST.get
   lift $ do
     tick <- newIORef 0
@@ -174,7 +174,7 @@ pingPongLoop a b display p = do
       (dispD,st') <- ST.runStateT (p i o) st
       state $=! st'
       dispData $=! (Just dispD)
-      if t `mod` 1 /= 0
+      if t `mod` 8 /= 0
         then return ()
         else do
           tt <- get time
@@ -183,8 +183,7 @@ pingPongLoop a b display p = do
           ft <- get frameTick
           frameTick $= (t+1)
           CUDA.sync
-          let size = 32*1024
-              frames = (t+1-ft)
+          let frames = (t+1-ft)
               time = diffUTCTime tt' tt
               flop = (fromIntegral $ (size*size*20 + size*10) * frames) / 1e9
           putStrLn $ "FPS: " ++ show (fromIntegral frames / time)
@@ -223,7 +222,7 @@ runVector = do
 
     useGLVectors (map V.fromList [p1,p2]) $ \[p1,p2] -> do
       useVectors [v,v] $ \[v1,v2] -> do
-        pingPongLoop (p1,v1) (p2,v2) (display) $ \((p1,_),v1) ((p2,pd),v2) -> do
+        pingPongLoop (p1,v1) (p2,v2) (display) (length points) $ \((p1,_),v1) ((p2,pd),v2) -> do
           withMappedResources [p1,p2] $ \[p1,p2] -> do
             () <== (fixOutputs (kern <^> p1 <^^^> v1) (p2,v2))
             sync
@@ -257,7 +256,7 @@ runNormal = do
         x0 = map (*0) x
 
     useVectors [w,x,y,z,x0,x0,x0,x0,x0,x0,x0,x0,x0] $ \[w,x1,y1,z1,x2,y2,z2,vx1,vy1,vz1,vx2,vy2,vz2] -> do
-      pingPongLoop (x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) display $ \(x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) -> do
+      pingPongLoop (x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) display (length points) $ \(x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) -> do
         ((x2,y2,z2),(vx2,vy2,vz2)) <== kern <> w <> x1 <> y1 <> z1 <> vx1 <> vy1 <> vz1
         sync
 
@@ -273,6 +272,31 @@ runNormal = do
       clear [ColorBuffer,DepthBuffer]
       renderPrimitive Points $ mapM_ (\(x,y,z)-> vertex $ Vertex3 (cFloat x) (cFloat y) (cFloat z)) $ dispD
       swapBuffers
+
+runFast = do 
+  (progname, _) <- getArgsAndInitialize
+  createWindow "Hello World"
+  withCUDA True $ do
+    let input = namedGlobal "apa" (32*1024)
+    kern <- capture (\w x y z -> nbody0 $ zipp4 (x,y,z,w))
+                    (input :- input :- input :- input :- ())
+    points <- lift $ mapM (const getPoint) [0..len input-1]
+    let (x,y,z,w) = L.unzip4 $ points
+        x0 = map (*0) x
+
+    useVectors [w,x,y,z,x0,x0,x0,x0,x0,x0,x0,x0,x0] $ \[w,x1,y1,z1,x2,y2,z2,vx1,vy1,vz1,vx2,vy2,vz2] -> do
+      pingPongLoop (x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) display (length points) $ \(x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) -> do
+        (vx2,vy2,vz2) <== kern <> w <> x1 <> y1 <> z1
+
+        --px <- peekCUDAVector x2
+        --py <- peekCUDAVector y2
+        --pz <- peekCUDAVector z2
+        --ri <- peekCUDAVector x1
+        --lift $ putStrLn $ show $ foldr1 max $ L.zipWith (-) px ri
+        --lift $ putStrLn $ show $ L.take 10 $ (zip3 px py pz)
+        return ()
+  where
+    display dispD = return ()
 
 runInterop = do 
   (progname, _) <- getArgsAndInitialize
@@ -290,7 +314,7 @@ runInterop = do
 
     useVectors [w,x,y,z,x0,x0,x0,x0,x0,x0,x0,x0,x0] $ \[w,x1,y1,z1,x2,y2,z2,vx1,vy1,vz1,vx2,vy2,vz2] -> do
       useGLVectors [V.fromList d] $ \[d] -> do
-        pingPongLoop (x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) (display restructureKern) $ \(x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) -> do
+        pingPongLoop (x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) (display restructureKern) (length points) $ \(x1,y1,z1,vx1,vy1,vz1) (x2,y2,z2,vx2,vy2,vz2) -> do
           ((x2,y2,z2),(vx2,vy2,vz2)) <== kern <> w <> x1 <> y1 <> z1 <> vx1 <> vy1 <> vz1
           return $ (d,length points,x2,y2,z2)
   where
