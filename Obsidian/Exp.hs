@@ -68,6 +68,7 @@ class (Eq a, ExpToCExp a, Show a) => Scalar a where
 data Witness a where
   Word32Witness :: Witness Word32
   BoolWitness :: Witness Bool
+  FloatWitness :: Witness Double
   NothingWitness :: Witness a
 
 witnessConv :: Scalar b => Witness a -> Exp b -> Maybe (Exp a)
