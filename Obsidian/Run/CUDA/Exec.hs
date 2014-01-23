@@ -17,6 +17,9 @@ import qualified Foreign.CUDA.Driver as CUDA
 import qualified Foreign.CUDA.Driver.Device as CUDA
 import qualified Foreign.CUDA.Analysis.Device as CUDA
 import qualified Foreign.CUDA.Driver.Stream as CUDAStream
+import qualified Foreign.CUDA.Driver.Graphics as CUGL
+import qualified Foreign.CUDA.Driver.Graphics.OpenGL as CUGL
+import qualified Graphics.Rendering.OpenGL as GL
 
 import Obsidian.CodeGen.Program
 import Obsidian.CodeGen.InOut
@@ -24,6 +27,7 @@ import qualified Obsidian.CodeGen.CUDA as CG
 
 import Obsidian.Types -- experimental
 import Obsidian.Exp
+import Obsidian.Globs
 import Obsidian.Array
 import Obsidian.Program (Program)
 -- import Obsidian.Mutable
@@ -31,8 +35,10 @@ import Obsidian.Program (Program)
 import Foreign.Marshal.Array
 import Foreign.ForeignPtr.Unsafe -- (req GHC 7.6 ?)
 import Foreign.ForeignPtr hiding (unsafeForeignPtrToPtr)
+import Foreign.Ptr (nullPtr)
 
 import qualified Data.Vector.Storable as V 
+import qualified Foreign.Storable as V 
 
 import Data.Word
 import Data.Int
@@ -103,6 +109,7 @@ data Kernel = Kernel {kFun :: CUDA.Fun,
 -- represents the "captured" type, with CUDAVectors instead of Pull, Push vectors. 
 data KernelT a = KernelT {ktFun :: CUDA.Fun,
                           ktThreadsPerBlock :: Word32,
+                          ktBlocks :: Word32,
                           ktSharedBytes :: Word32,
                           ktInputs :: [CUDA.FunParam],
                           ktOutput :: [CUDA.FunParam] }
@@ -122,11 +129,18 @@ class KernelO a where
   type KOutput a 
   addOutParam :: KernelT (KOutput a) -> a -> KernelT () 
 
+{-
 instance Scalar a => KernelI (CUDAVector a) where
   type KInput (CUDAVector a) = DPull (Exp a) 
   addInParam (KernelT f t s i o) b =
     KernelT f t s (i ++ [CUDA.VArg (cvPtr b),
                          CUDA.VArg (cvLen b)]) o
+-}
+
+instance Scalar a => KernelI (CUDAVector a) where
+  type KInput (CUDAVector a) = SPull (Exp a) 
+  addInParam (KernelT f t bb s i o) b =
+    KernelT f t bb s (CUDA.VArg (cvPtr b) : i) o
 
 {-
 instance Scalar a => KernelM (CUDAVector a) where
@@ -136,36 +150,69 @@ instance Scalar a => KernelM (CUDAVector a) where
                          CUDA.VArg (cvLen b)]) o
 -}
 
+instance KernelO () where
+  type KOutput () = ()
+  addOutParam k () = k
+
 instance Scalar a => KernelO (CUDAVector a) where
-  type KOutput (CUDAVector a) = DPush (Exp a) 
-  addOutParam (KernelT f t s i o) b =
-    KernelT f t s i (o ++ [CUDA.VArg (cvPtr b)])
+  type KOutput (CUDAVector a) = SPush (Exp a) 
+  addOutParam (KernelT f t bb s i o) b =
+    KernelT f t bb s i (o ++ [CUDA.VArg (cvPtr b)])
+
+instance (Scalar a, Scalar b) => KernelO (CUDAVector a, CUDAVector b) where
+  type KOutput (CUDAVector a,CUDAVector b) = SPush (Exp a, Exp b)
+  addOutParam (KernelT f t bb s i o) (a,b) =
+    KernelT f t bb s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b)])
+
+instance (Scalar a, Scalar b, Scalar c)
+    => KernelO (CUDAVector a, CUDAVector b, CUDAVector c) where
+  type KOutput (CUDAVector a, CUDAVector b, CUDAVector c) = SPush (Exp a, Exp b, Exp c)
+  addOutParam (KernelT f t bb s i o) (a,b,c) =
+    KernelT f t bb s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b),CUDA.VArg (cvPtr c)])
+
+instance (Scalar a, Scalar b, Scalar c, Scalar d, Scalar e, Scalar f)
+    => KernelO ((CUDAVector a, CUDAVector b, CUDAVector c), (CUDAVector d, CUDAVector e, CUDAVector f)) where
+  type KOutput ((CUDAVector a, CUDAVector b, CUDAVector c), (CUDAVector d, CUDAVector e, CUDAVector f))
+          = SPush ((Exp a, Exp b, Exp c),(Exp d, Exp e, Exp f))
+  addOutParam (KernelT ff t bb s i o) ((a,b,c),(d,e,f)) =
+    KernelT ff t bb s i (o ++ [CUDA.VArg (cvPtr a),CUDA.VArg (cvPtr b),CUDA.VArg (cvPtr c),CUDA.VArg (cvPtr d),CUDA.VArg (cvPtr e),CUDA.VArg (cvPtr f)])
 
 ---------------------------------------------------------------------------
 -- (<>) apply a kernel to an input
 ---------------------------------------------------------------------------
-(<>) :: KernelI a
-        => (Word32,KernelT (KInput a -> b)) -> a -> (Word32,KernelT b)
-(<>) (blocks,kern) a = (blocks,addInParam kern a)
+(<>) :: KernelI a => KernelT (KInput a -> b) -> a -> KernelT b
+(<>) kern a = addInParam kern a
+
+(<^>) :: KernelT (SPull (Exp a) -> b) -> CUDAVector a -> KernelT b
+(<^>) (KernelT f t bb s i o) b = KernelT f t bb s (CUDA.VArg (cvPtr b) : i) o
+
+(<^^>) :: KernelT (SPull (Exp (a,a)) -> b) -> CUDAVector a -> KernelT b
+(<^^>) (KernelT f t bb s i o) b = KernelT f t bb s (CUDA.VArg (cvPtr b) : i) o
+
+(<^^^>) :: KernelT (SPull (Exp (a,a,a)) -> b) -> CUDAVector a -> KernelT b
+(<^^^>) (KernelT f t bb s i o) b = KernelT f t bb s (CUDA.VArg (cvPtr b) : i) o
 
 ---------------------------------------------------------------------------
 -- Assign a mutable input/output to a kernel
 --------------------------------------------------------------------------- 
 (<:>) :: KernelM a
-         => (Word32, KernelT (KMutable a -> b)) -> a -> (Word32, KernelT b)
-(<:>) (blocks,kern) a = (blocks, addMutable kern a)
+         => KernelT (KMutable a -> b) -> a -> KernelT b
+(<:>) kern a = addMutable kern a
 
 
 ---------------------------------------------------------------------------
 -- Execute a kernel and store output to an array
 ---------------------------------------------------------------------------
-(<==) :: KernelO b => b -> (Word32, KernelT (KOutput b)) -> CUDA ()
-(<==) o (nb,kern) =
+(<==) :: KernelO b => b -> KernelT (KOutput b) -> CUDA ()
+(<==) o kern =
   do
     let k = addOutParam kern o
+    when (False && debug) $ do
+      lift $ putStrLn $ "B: " ++ show (fromIntegral (ktBlocks k),1,1)
+                     ++ " T: " ++ show (fromIntegral (ktThreadsPerBlock k), 1, 1)
     lift $ CUDA.launchKernel
       (ktFun k)
-      (fromIntegral nb,1,1)
+      (fromIntegral (ktBlocks k),1,1)
       (fromIntegral (ktThreadsPerBlock k), 1, 1)
       (fromIntegral (ktSharedBytes k))
       Nothing -- stream
@@ -176,6 +223,9 @@ sync = lift $ CUDA.sync
 
 -- Tweak these 
 infixl 4 <>
+infixl 4 <^>
+infixl 4 <^^>
+infixl 4 <^^^>
 infixl 3 <==
 
 ---------------------------------------------------------------------------
@@ -204,7 +254,10 @@ newIdent =
 ---------------------------------------------------------------------------
 -- Run a CUDA computation
 ---------------------------------------------------------------------------
-withCUDA p =
+--if useGL == True:
+--remember to initialize GLUT and create a rendering context (create a window)
+
+withCUDA useGL p =
   do
     CUDA.initialise []
     devs <- getDevices
@@ -212,15 +265,19 @@ withCUDA p =
       [] -> error "No CUDA device found!" 
       (x:xs) ->
         do 
-          ctx <- CUDA.create (fst x) [CUDA.SchedAuto] 
+          ctx <- (if useGL then CUGL.createGLContext else CUDA.create) (fst x) [CUDA.SchedAuto]
           runStateT p (CUDAState 0 ctx (snd x)) 
           CUDA.destroy ctx
 
 ---------------------------------------------------------------------------
 -- Capture without an inputlist! 
 ---------------------------------------------------------------------------    
+
 capture :: ToProgram prg => prg -> InputList prg -> CUDA (KernelT prg) 
-capture f a =
+capture = captureWithStrategy defaultStrategy
+
+captureWithStrategy :: ToProgram prg => Strategy -> prg -> InputList prg -> CUDA (KernelT prg) 
+captureWithStrategy strat f a =
   do
     i <- newIdent
 
@@ -230,13 +287,15 @@ capture f a =
         fn     = kn ++ ".cu"
         cub    = fn ++ ".cubin"
 
-        (prgstr,bytesShared,threadsPerBlock,blocks) = CG.genKernelM kn f a
+        (prgstr,bytesShared,blocks,threadsPerBlock) = CG.genKernelM kn strat f a
         header = "#include <stdint.h>\n" -- more includes ? 
 
     when debug $ 
       do 
-        lift $ putStrLn $ "Bytes shared mem: " ++ show bytesShared
         lift $ putStrLn $ prgstr
+        lift $ putStrLn $ "Bytes shared mem: " ++ show bytesShared
+        lift $ putStrLn $ "Threads per Block: " ++ show threadsPerBlock
+        lift $ putStrLn $ "Blocks: " ++ show blocks
 
     let arch = archStr props
         
@@ -248,7 +307,7 @@ capture f a =
     {- After loading the binary into the running process
        can I delete the .cu and the .cu.cubin ? -} 
            
-    return $ KernelT fun threadsPerBlock bytesShared [] []
+    return $ KernelT fun threadsPerBlock blocks bytesShared [] []
 
 
 
@@ -264,10 +323,61 @@ useVector v f =
     dptr <- lift $ CUDA.mallocArray n
     let hptr = unsafeForeignPtrToPtr hfptr
     lift $ CUDA.pokeArray n hptr dptr
-    let cvector = CUDAVector dptr (fromIntegral (V.length v)) 
+    let cvector = CUDAVector dptr (fromIntegral (V.length v))
     b <- f cvector -- dptr     
     lift $ CUDA.free dptr
     return b
+
+useVectors :: V.Storable a => [[a]] -> ([CUDAVector a] -> CUDA b) -> CUDA b
+useVectors l p = useVectors' [] l p
+  where
+    useVectors' vl [] p = p $ reverse vl
+    useVectors' vl (v:l) p = useVector (V.fromList v) $ \vv -> useVectors' (vv:vl) l p
+
+useGLVectors :: V.Storable a =>
+                [V.Vector a] -> ([(CUGL.Resource, GL.BufferObject)] -> CUDA b) -> CUDA b
+useGLVectors vs f =
+  do
+    buffs <- lift $ GL.genObjectNames $ length vs
+    ress <- mapM makeResource $ zip vs buffs
+    withMappedResources ress $ \devs -> do
+      mapM writeArrays $ zip vs devs
+
+    b <- f $ zip ress buffs
+
+    lift $ mapM CUGL.unregisterResource ress
+    lift $ GL.deleteObjectNames buffs
+    
+    return b
+
+  where makeResource (v,buff) = do
+          lift $ GL.bindBuffer GL.ArrayBuffer GL.$= (Just buff)
+          let size = fromIntegral $ V.sizeOf (V.head v) * 4*V.length v
+          lift $ GL.bufferData GL.ArrayBuffer GL.$= (size, nullPtr, GL.DynamicDraw)
+          lift $ GL.bindBuffer GL.ArrayBuffer GL.$= Nothing
+          lift $ CUGL.registerBuffer buff CUGL.RegisterNone
+        writeArrays (v,CUDAVector dev n) = do
+          let (hfptr,n) = V.unsafeToForeignPtr0 v
+          let hptr = unsafeForeignPtrToPtr hfptr
+          lift $ CUDA.pokeArray n hptr dev
+
+withMappedResources :: [CUGL.Resource] -> ([CUDAVector a] -> CUDA b) -> CUDA b
+withMappedResources ress f = do
+  lift $ CUGL.mapResources ress Nothing
+  ps <- lift $ mapM CUGL.getMappedPointer ress
+  let elemsize = 4*4
+  let cvectors = map (\(devptr,n) -> CUDAVector devptr (fromIntegral n `div` elemsize)) ps
+  b <- f cvectors
+  lift $ CUGL.unmapResources ress Nothing
+  return b
+
+drawBufferObject bo size tt coords = do
+  GL.bindBuffer GL.ArrayBuffer GL.$= Just bo
+  GL.arrayPointer GL.VertexArray GL.$= (GL.VertexArrayDescriptor coords GL.Float 0 nullPtr)
+  GL.clientState GL.VertexArray GL.$= GL.Enabled
+  GL.drawArrays tt 0 (fromIntegral size)
+  GL.clientState GL.VertexArray GL.$= GL.Disabled
+  GL.bindBuffer GL.ArrayBuffer GL.$= Nothing
 
 ---------------------------------------------------------------------------
 -- allocaVector: allocates room for a vector in the GPU Global mem
@@ -311,7 +421,7 @@ fill (CUDAVector dptr n) a =
 peekCUDAVector :: V.Storable a => CUDAVector a -> CUDA [a]
 peekCUDAVector (CUDAVector dptr n) = 
     lift $ CUDA.peekListArray (fromIntegral n) dptr
-    
+
 copyOut :: V.Storable a => CUDAVector a -> CUDA (V.Vector a)
 copyOut (CUDAVector dptr n) =
   do
@@ -349,3 +459,4 @@ storeAndCompile arch fp code =
       createProcess (shell ("nvcc " ++ arch ++ " -cubin -o " ++ nfp ++ " " ++ fp))
     exitCode <- waitForProcess pid
     return nfp
+

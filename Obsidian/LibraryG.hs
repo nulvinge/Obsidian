@@ -38,7 +38,7 @@ pConcat arr =
   where
     rn = len $ arr ! 0
 
-prConcat :: ASize l => PreferredLoopLocation -> Pull l (SPush a) -> Push l a
+prConcat :: ASize l => Strategy -> Pull l (SPush a) -> Push l a
 prConcat pl arr =
   Push (len arr * fromIntegral rn) $ \wf ->
     preferredFor pl (sizeConv $ len arr) $ \bix ->

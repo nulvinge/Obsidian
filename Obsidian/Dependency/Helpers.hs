@@ -36,7 +36,7 @@ import Obsidian.Helpers
 import Obsidian.Exp
 import Obsidian.Array
 import Obsidian.Types
-import Obsidian.Library
+import Obsidian.Library hiding (zip)
 import Obsidian.Program
 
 import Data.Word

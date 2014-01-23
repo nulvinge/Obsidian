@@ -37,16 +37,15 @@ data Statement t
   | SCond (Exp Bool) (IMList t) 
   | SSeqWhile (EBool) (IMList t)
   | SPar [(IMList t)]
-  | SWithStrategy PreferredLoopLocation (IMList t)
 
   --Statements
   | forall a. (Show a, Scalar a) => SAssign Name [Exp Word32] (Exp a)
   | forall a. (Show a, Scalar a) => SAtomicOp Name Name (Exp Word32) (Atomic a)
   | SBreak
     -- Memory Allocation..
+  | SOutput   Name EWord32 Type
   | SAllocate Name Word32 Type
   | SDeclare  Name Type
-  | SOutput   Name Type
   | SComment String
   | SSynchronize
 
@@ -58,35 +57,16 @@ instance Show (Statement t) where
   show (SAssign _ _   _) = "SAssign"
   show (SAtomicOp _ _ _ _) = "SAtomicOp"
   show (SBreak)          = "SBreak"
+  show (SOutput   _ _ _) = "SOutput"
   show (SAllocate _ _ _) = "SAllocate"
   show (SDeclare    _ _) = "SDeclare"
-  show (SOutput     _ _) = "SOutput"
   show (SComment      _) = "SComment"
   show (SSynchronize   ) = "SSynchronize"
-  show (SWithStrategy _ _) = "SWithStrategy"
 
 -- compileStep1 :: P.Program t a -> IM
 -- compileStep1 p = snd $ cs1 ns p
 --   where
 --     ns = unsafePerformIO$ newEnumSupply
-
-defaultStrategy, defaultStrategy' :: PreferredLoopLocation
-defaultStrategy' =
-  [(Par,Block,1)
-  ,(Par,Thread,32)
-  ,(Par,Block,32)
-  ,(Par,Thread,32)
-  ,(Par,Block,32)
-  ,(Par,Vector,4)
-  ,(Par,Block,32)
-  ,(Seq,Thread,0)
-  ]
-defaultStrategy =
-  [(Par,Block,65536)
-  ,(Par,Thread,1024)
-  ,(Par,Vector,4)
-  ,(Par,Block,0)
-  ]
 
 compileStep1 :: P.Program a -> IM
 compileStep1 p = snd $ compile ns p
@@ -143,7 +123,7 @@ compile i (P.Allocate id n t) = ((),out (SAllocate id n t))
 compile i (P.Declare  id t)   = ((),out (SDeclare id t))
 -- Output works in a different way! (FIX THIS!)
 --  Uniformity! (Allocate Declare Output) 
-compile i (P.Output   t)      = (nom,out (SOutput nom t))
+compile i (P.Output   t l)      = (nom,out (SOutput nom l t))
   where nom = "output" ++ show (supplyOutput i) 
 compile i (P.Comment c)       = ((),out (SComment c))
 
@@ -151,9 +131,6 @@ compile i (P.ParBind a b) = ((a',b'),out $ SPar [ima, imb])
   where (s1,s2) = supplySplit i
         (a',ima) = compile s1 a
         (b',imb) = compile s2 b
-
-compile i (P.WithStrategy s p) = (a,out $ SWithStrategy s im)
-  where (a,im) = compile i p
 
 compile i (P.Bind p f) = (b,im1 ++ im2) 
   where
@@ -245,15 +222,24 @@ compile i (P.Return a) = (a,[])
 ---------------------------------------------------------------------------
 -- Analysis
 --------------------------------------------------------------------------- 
-numThreads :: IMList a -> Either Word32 (EWord32)
-numThreads im = foldl maxCheck (Left 0) $ map process im
+numThreads :: IMList a -> (Either Word32 (EWord32), Either Word32 (EWord32))
+numThreads im = (recT im, recB im)
   where
-    process (SCond bexp im,_) = numThreads im
-    process (SFor Seq _ _ _ _,_) = Left 1
-    process (SFor Par Thread _ (Literal n) _,_) = Left n
-    process (SFor Par Thread _ n _,_) = Right n
-    process (SFor Par _ _              n im,_) = numThreads im
-    process a = Left 0 -- ok ? 
+    recT im = foldl maxCheck (Left 0) $ map processT im
+    processT (SCond bexp im,_) = recT im
+    processT (SFor Seq _ _ _ _,_) = Left 1
+    processT (SFor Par Thread _ (Literal n) _,_) = Left n
+    processT (SFor Par Thread _ n _,_) = Right n
+    processT (SFor Par _ _              n im,_) = recT im
+    processT a = Left 0 -- ok ? 
+
+    recB im = foldl maxCheck (Left 0) $ map processB im
+    processB (SCond bexp im,_) = recB im
+    processB (SFor Seq _ _ _ _,_) = Left 1
+    processB (SFor Par Block _ (Literal n) _,_) = Left n
+    processB (SFor Par Block _ n _,_) = Right n
+    processB (SFor Par _ _              n im,_) = recB im
+    processB a = Left 0 -- ok ? 
 
     maxCheck (Left a) (Right b)  = Right $ maxE (fromIntegral a) b
     maxCheck (Right a) (Left b)  = Right $ maxE a (fromIntegral b)
@@ -261,11 +247,11 @@ numThreads im = foldl maxCheck (Left 0) $ map process im
     maxCheck (Right a) (Right b) = Right $ maxE a b
 
 
-getOutputs :: IMList a -> [(Name,Type)]
+getOutputs :: IMList a -> [(Name,EWord32,Type)]
 getOutputs im = concatMap process im
   where
-    process (SOutput name t,_)      = [(name,t)]
-    process (SFor _ _ _ _ im,_)     = getOutputs im
+    process (SOutput name l t,_) = [(name,l,t)]
+    process (SFor _ _ _ _ im,_)  = getOutputs im
     process a = []
     
 
@@ -290,14 +276,10 @@ printStm (SAllocate name n t,m) =
   name ++ " = malloc(" ++ show n ++ ");" ++ meta m
 printStm (SDeclare name t,m) =
   show t ++ " " ++ name ++ ";" ++ meta m
-printStm (SOutput name t,m) =
-  show t ++ " " ++ name ++ ";" ++ meta m
+printStm (SOutput name l t,m) =
+  show t ++ " " ++ show l ++ " " ++ name ++ ";" ++ meta m
 printStm (SCond bexp im,m) =
   "if " ++ show bexp ++ "{\n" ++ meta m ++ 
-  concatMap printStm im ++ "\n};"
-
-printStm (SWithStrategy s im,m) =
-  "WithStrategy " ++ show s ++ "{\n" ++ meta m ++ 
   concatMap printStm im ++ "\n};"
 
 printStm (SSynchronize,m) =

@@ -1,6 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables, FlexibleContexts #-}
 
-module Examples.Simple.ScanExec where
+module Examples.Simple.SortExec where
 
 import ExamplesNoCUDA
 
@@ -51,16 +51,15 @@ perform = do
       allocaVector (fromIntegral size) $ \ (o :: CUDAVector Int32) -> do
         fill o 0
         lift $ printTimeSince "create vectors" tt
-        sequence_ [runKern inputSI i o s | s <- [5..10]]
+        sequence_ [runKern inputSI i o s | s <- [5..9]]
 
 runKern input i o bs = do
   let size = len input
   tt <- lift $ getCurrentTime
   
   kern <- captureWithStrategy
-        [(Par,Block,0),(Par,Thread,2^(bs-2)),(Seq,Thread,0)]
-        --((pConcatMapJoin $ sklansky3 bs (+)) . splitUpS (2^bs))
-        ((pConcatMap $ pJoinPush . scan1 (+)) . splitUpS (2^bs))
+        [(Par,Block,0),(Par,Thread,2^bs),(Seq,Thread,0)]
+        ((pConcatMapJoin $ liftM push . bitonicSort1) . splitUpS (2^bs))
         (input :- ())
   sync
   tt <- lift $ printTimeSince "init" tt
@@ -74,12 +73,12 @@ runKern input i o bs = do
   lift $ printTimeSince "readback" tt
   let ss :: Int32
       ss = fromIntegral size
-      sumil = ss*(ss+1)*(ss+2)`div`6
+      sumil = ss*(ss+1)`div`2
   --lift $ putStrLn $ show r
   --lift $ putStrLn $ show $ sum $ P.take (fromIntegral bs) il
-  --lift $ putStrLn $ show $ sum r
-  --lift $ putStrLn $ show $ sum il
-  lift $ putStrLn $ "diff " ++ (show $ sumil - sum r)
+  lift $ putStrLn $ show $ sum r
+  lift $ putStrLn $ show $ sumil
+  lift $ putStrLn $ "diff " ++ (show $ sumil + sum r)
   fill o 0
   sync
 
@@ -87,7 +86,7 @@ runKern input i o bs = do
   sequence_ $ P.replicate 1000 $ do
     o <== kern <> i
     sync
-  lift $ printTimeSinceN 1000 (2*fromIntegral size) tt $ "bench\tscan1-2"
+  lift $ printTimeSinceN 1000 (2*fromIntegral size) tt $ "bench\tsort"
     ++ "\t" ++ show size
     ++ "\t" ++ show bs 
     ++ "\t" ++ show (2^bs)

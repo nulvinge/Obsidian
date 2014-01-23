@@ -155,17 +155,17 @@ bKung op arr = undefined
 ---------------------------------------------------------------------------
 -- Go Towards Counting sort again.  
 --------------------------------------------------------------------------- 
-histogram :: Pull EWord32 EInt32 -> Program ()
-histogram arr = do
-  global <- Output $ Pointer Word32
+histogram :: EWord32 -> DPull EInt32 -> Program ()
+histogram max arr = do
+  global <- Output (Pointer Word32) max
   forAll (len arr) $ \gix -> atomicOp global (i32ToW32 (arr ! gix)) AtomicInc
 
-  
+
 atomicOp n e1 a = AtomicOp n e1 a >> return () 
 
 getHist =
-  quickPrint histogram
-             ((undefinedGlobal (variable "X") :: Pull (Exp Word32) EInt32) :- ())
+  quickPrint (histogram 256)
+             ((undefinedGlobal (variable "X") :: DPull EInt32) :- ())
   
 reconstruct :: Pull EWord32 EWord32 -> Push EWord32 EInt32
 reconstruct arr = Push (len arr) f
@@ -402,6 +402,16 @@ convToPush arr =
   where
     n = len arr                             
 
+redoob :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> Program (SPush a)
+redoob f arr
+    | len arr == 1 = return $ push arr
+    | otherwise    = do
+        let (a1,a2) = evenOdds arr
+        arr' <- unsafeForce $ zipWith f a1 a2
+        redoob f arr'
 
 red1 :: MemoryOps a
      => (a -> a -> a)
@@ -472,6 +482,16 @@ red7 f arr = do
                                (coalesce 32 arr)
     red3 f arr'
 
+red8 :: MemoryOps a
+     => (a -> a -> a)
+     -> SPull a
+     -> Program (SPush a)
+red8 f arr
+    | len arr == 1 = return $ push arr
+    | otherwise    = do
+        let (a1,a2) = halve arr
+        arr' <- force $ pushA [(Par,Thread,64)] $ zipWith f a1 a2
+        red8 f arr'
 
 red10 :: MemoryOps a
      => (a -> a -> a)
@@ -512,7 +532,7 @@ red13 :: MemoryOps a
      -> Program (SPush a)
 red13 f arr
     | len arr == 1 = return $ push arr
-    | otherwise    = WithStrategy [(Par,Thread,128),(Seq,Thread,0)] $ do
+    | otherwise    = do
         let (a1,a2) = halve arr
         arr' <- force $ zipWith f a1 a2
         red13 f arr'
@@ -533,7 +553,7 @@ redc0 f a = do
   a' <- red10 f $ fmap toCompensated a
   return $ fmap fromCompensated a'
 
-tr1 = printAnalysis (pSplitMapJoin 1024 $ red1 (+)) (inputSI :- ())
+tr1 = printAnalysis (pSplitMapJoin 64 $ red1 (+)) (inputSI :- ())
 tr2 = printAnalysis (pSplitMapJoin 1024 $ red2 (+)) (inputSI :- ())
 tr3 = printAnalysis (pSplitMapJoin 1024 $ red3 (+)) (inputSI :- ())
 tr4 = printAnalysis (pSplitMapJoin 1024 $ red4 (+)) (inputSI :- ())
@@ -543,7 +563,11 @@ tr7 = printAnalysis (pSplitMapJoin 1024 $ red7 (+)) (inputSI :- ())
 tr10= printAnalysis (pSplitMapJoin 1024 $ red10(+)) (inputSI :- ())
 tr11= printAnalysis (pSplitMapJoin 1024 $ red11(+)) (inputSI :- ())
 tr12= printAnalysis (pSplitMapJoin 1024 $ red12(+)) (inputSI :- ())
-tr13= printAnalysis (pSplitMapJoin 1024 $ red13(+)) (inputSI :- ())
+tr13'=printAnalysis (pSplitMapJoin 1024 $ red13(+)) (inputSI :- ())
+tr13= printWithStrategy
+        [(Par,Block,0),(Par,Thread,128),(Seq,Thread,0)]
+        (pSplitMapJoin 1024 $ red13(+))
+        (inputSI :- ())
 trl0= printAnalysis (pSplitMapJoin 1024 $ redl0(*)) (inputSF :- ())
 trc0= printAnalysis (pSplitMapJoin 1024 $ redc0(+)) (inputSF :- ())
 trc1= printAnalysis (pSplitMapJoin 1024 $ redc0(*)) (inputSF :- ())
@@ -603,6 +627,8 @@ trevs  = printAnalysis reverses (inputDI :- ())
 trevL1 = printAnalysis largeReverse1 (inputDI :- ())
 trevL2 = printAnalysis largeReverse2 (inputDI :- ())
 trevL3 = printAnalysis largeReverse3 (inputDI :- ())
+trevll = printAnalysis (push . Obsidian.reverse) (inputSI :- ())
+trevll'= printAnalysis (push . Obsidian.reverse) (inputMI :- ())
 
 mandel :: Push Word32 EWord8
 mandel = genRect 512 512 iters
@@ -744,57 +770,64 @@ tmm1 = printAnalysis (curry $ (uncurry matMul1 . unzipp . fmap unzipp) . splitUp
         ((undefinedGlobal (256*256) {-(variable "X")-} :: Pull Word32 EFloat) :-
          (undefinedGlobal (256*256) {-(variable "Y")-} :: Pull Word32 EFloat) :- ())
 
+saxpy :: (Num a, ASize l)
+      => a -> Pull l a -> Pull l a -> Push l a
+saxpy a x y = pConcat
+            $ fmap (push . fmap (\(x,y) -> y+a*x))
+            $ splitUp 256
+            $ zipp (x,y)
+
 saxpy0 :: (Num a, ASize l)
-       => a -> Pull l a -> Pull l a -> Push l a
-saxpy0 a x y = pConcatMap (push . fmap (\(x,y) -> y+a*x))
-                          (splitUp 256 $ zipp (x,y))
+       => Word32 -> a -> Pull l a -> Pull l a -> Push l a
+saxpy0 bs a x y = pConcatMap (push . fmap (\(x,y) -> y+a*x))
+                             (splitUp bs $ zipp (x,y))
 
 saxpy1 :: (Num a, ASize l)
-       => a -> Pull l a -> Pull l a -> Push l a
-saxpy1 a x y = pConcatMap (pConcatMap (seqMap (\(x,y) -> y+a*x)) . splitUp 8)
-                          (splitUp (8*256) $ zipp (x,y))
+       => Word32 -> a -> Pull l a -> Pull l a -> Push l a
+saxpy1 bs a x y = pConcatMap (pConcatMap (seqMap (\(x,y) -> y+a*x)) . splitUp 8)
+                             (splitUp (8*bs) $ zipp (x,y))
 
 --this is wrong
 saxpy2 :: (Num a, ASize l, MemoryOps a)
-       => a -> Pull l a -> Pull l a -> Push l a
-saxpy2 a x y = pConcatMap (pConcatMap(seqMap (\(x,y) -> y+a*x)) . coalesce 8)
-                          (splitUp (8*256) $ zipp (x,y))
+       => Word32 -> a -> Pull l a -> Pull l a -> Push l a
+saxpy2 bs a x y = pConcatMap (pConcatMap(seqMap (\(x,y) -> y+a*x)) . coalesce 8)
+                             (splitUp (8*bs) $ zipp (x,y))
 
 saxpy3 :: (Num a, ASize l, MemoryOps a)
-       => a -> Pull l a -> Pull l a -> Push l a
-saxpy3 a x y = pConcatMap (pUnCoalesceMap (seqMap (\(x,y) -> y+a*x)) . coalesce 8)
-                          (splitUp (8*256) $ zipp (x,y))
+       => Word32 -> a -> Pull l a -> Pull l a -> Push l a
+saxpy3 bs a x y = pConcatMap (pUnCoalesceMap (seqMap (\(x,y) -> y+a*x)) . coalesce 8)
+                             (splitUp (8*bs) $ zipp (x,y))
 
 saxpy4 :: (Num a, ASize l, MemoryOps a)
-       => a -> Pull l a -> Pull l a -> Push l a
-saxpy4 a x y = pSplitMap (8*256) (pCoalesceMap 8 (seqMap (\(x,y) -> y+a*x)))
-             $ zipp (x,y)
+       => Word32 -> a -> Pull l a -> Pull l a -> Push l a
+saxpy4 bs a x y = pSplitMap (8*bs) (pCoalesceMap 8 (seqMap (\(x,y) -> y+a*x)))
+                $ zipp (x,y)
 
 saxpy5 :: (Num a, ASize l)
-       => a -> Pull l a -> Pull l a -> Push l a
-saxpy5 a x y = pushA [(Par,Thread,256),(Seq,Thread,2),(Par,Block,0)]
-             $ fmap (\(x,y) -> y+a*x) $ zipp (x,y)
+       => Word32 -> a -> Pull l a -> Pull l a -> Push l a
+saxpy5 bs a x y = pushA [(Par,Thread,bs),(Seq,Thread,8),(Par,Block,0)]
+                $ fmap (\(x,y) -> y+a*x) $ zipp (x,y)
 
 saxpy6 :: (Num a, ASize l)
-       => a -> Pull l a -> Pull l a -> Push l a
-saxpy6 a x y = push $ fmap (\(x,y) -> y+a*x) $ zipp (x,y)
+       => Word32 -> a -> Pull l a -> Pull l a -> Push l a
+saxpy6 bs a x y = push $ fmap (\(x,y) -> y+a*x) $ zipp (x,y)
 
-tsx0  = printAnalysis saxpy0 (2 :- inputSI :- inputSI :- ())
-tsx0D = printAnalysis saxpy0 (2 :- inputDI :- inputDI :- ())
-tsx1  = printAnalysis saxpy1 (2 :- inputSI :- inputSI :- ())
-tsx1D = printAnalysis saxpy1 (2 :- inputDI :- inputDI :- ())
-tsx2  = printAnalysis saxpy2 (2 :- inputSI :- inputSI :- ())
-tsx2D = printAnalysis saxpy2 (2 :- inputDI :- inputDI :- ())
-tsx3  = printAnalysis saxpy3 (2 :- inputSI :- inputSI :- ())
-tsx3D = printAnalysis saxpy3 (2 :- inputDI :- inputDI :- ())
-tsx4  = printAnalysis saxpy4 (2 :- inputSI :- inputSI :- ())
-tsx4D = printAnalysis saxpy4 (2 :- inputDI :- inputDI :- ())
-tsx5  = printAnalysis saxpy5 (2 :- inputSI :- inputSI :- ())
-tsx5D = printAnalysis saxpy5 (2 :- inputDI :- inputDI :- ())
-tsx5M = printAnalysis saxpy5 (2 :- inputMI :- inputMI :- ())
-tsx6  = printAnalysis saxpy6 (2 :- inputSI :- inputSI :- ())
-tsx6D = printAnalysis saxpy6 (2 :- inputDI :- inputDI :- ())
-tsx6M = printAnalysis saxpy6 (2 :- inputMI :- inputMI :- ())
+tsx0  = printAnalysis (saxpy0 256) (2 :- inputSI :- inputSI :- ())
+tsx0D = printAnalysis (saxpy0 256) (2 :- inputDI :- inputDI :- ())
+tsx1  = printAnalysis (saxpy1 256) (2 :- inputSI :- inputSI :- ())
+tsx1D = printAnalysis (saxpy1 256) (2 :- inputDI :- inputDI :- ())
+tsx2  = printAnalysis (saxpy2 256) (2 :- inputSI :- inputSI :- ())
+tsx2D = printAnalysis (saxpy2 256) (2 :- inputDI :- inputDI :- ())
+tsx3  = printAnalysis (saxpy3 256) (2 :- inputSI :- inputSI :- ())
+tsx3D = printAnalysis (saxpy3 256) (2 :- inputDI :- inputDI :- ())
+tsx4  = printAnalysis (saxpy4 256) (2 :- inputSI :- inputSI :- ())
+tsx4D = printAnalysis (saxpy4 256) (2 :- inputDI :- inputDI :- ())
+tsx5  = printAnalysis (saxpy5 256) (2 :- inputSI :- inputSI :- ())
+tsx5D = printAnalysis (saxpy5 256) (2 :- inputDI :- inputDI :- ())
+tsx5M = printAnalysis (saxpy5 256) (2 :- inputMI :- inputMI :- ())
+tsx6  = printAnalysis (saxpy6 256) (2 :- inputSI :- inputSI :- ())
+tsx6D = printAnalysis (saxpy6 256) (2 :- inputDI :- inputDI :- ())
+tsx6M = printAnalysis (saxpy6 256) (2 :- inputMI :- inputMI :- ())
 
 bitonicMerge1 :: (MemoryOps a, OrdE a) => Word32 -> Word32 -> Pull Word32 a -> Program (Push Word32 a)
 bitonicMerge1 s m a = do

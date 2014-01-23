@@ -13,6 +13,7 @@ module Obsidian (module Obsidian.Array
                 ,module Data.Word
                 ,quickPrint
                 ,printAnalysis
+                ,printWithStrategy
                 ) where
 
 
@@ -34,8 +35,11 @@ import Data.Word
 
 quickPrint :: ToProgram prg => prg -> InputList prg -> IO ()
 quickPrint prg input =
-  putStrLn $ genKernel "kernel" prg input 
+  putStrLn $ genKernel "kernel" defaultStrategy prg input 
 
 printAnalysis :: ToProgram prg => prg -> InputList prg -> IO ()
 printAnalysis = quickPrint
+
+printWithStrategy strat prg input =
+  putStrLn $ genKernel "kernel" strat prg input 
 

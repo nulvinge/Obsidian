@@ -1,7 +1,14 @@
 module Main where
 
 import ExamplesNoCUDA
+-- import Examples.Simple.ReductionExec
+-- import Examples.Simple.ScanExec
+-- import Examples.Simple.SortExec
+import Examples.Simple.SAXPYExec
 
+main = perform
+
+{-
 main = do
   tr5
   tr10
@@ -30,4 +37,5 @@ main = do
   tsx4D
   tsx5D
   tsx5M
+-}
 

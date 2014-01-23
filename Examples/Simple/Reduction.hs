@@ -26,5 +26,5 @@ reduce f = pConcatMap $ pJoin . reduceLocal f
 input :: DPull EInt32
 input = undefinedGlobal (variable "X")
 
-getReduce = putStrLn $ genKernel "reduce" (reduce (+) . splitUp 256) (input :- ())
+getReduce = quickPrint (reduce (+) . splitUp 256) (input :- ())
 

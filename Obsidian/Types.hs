@@ -16,6 +16,7 @@ data Type
             
 -- Used by CUDA, C And OpenCL generators        
   | Pointer Type   -- C thing 
+  | VectorT Int Type
   | Global Type    -- OpenCL thing
   | Local Type     -- OpenCL thing
   deriving (Eq, Show)

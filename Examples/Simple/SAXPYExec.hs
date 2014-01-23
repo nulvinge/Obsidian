@@ -1,11 +1,12 @@
 {-# LANGUAGE ScopedTypeVariables, FlexibleContexts #-}
 
-module Examples.Simple.ScanExec where
+module Examples.Simple.SAXPYExec where
 
 import ExamplesNoCUDA
 
 import Prelude hiding (replicate)
 import Prelude as P
+
 
 import Obsidian
 import Obsidian.Run.CUDA.Exec
@@ -16,81 +17,73 @@ import Control.Monad.State
 import Data.Time.Clock
 
 import Data.Int
-import Data.Word
 
--- import Examples.Simple.Scan
+t :: (MemoryOps a,Num a) => DPull (SPull a) -> DPush a
+t arr = Push 1 $ \wf ->
+          forAll (len arr) $ \ix ->
+            forAll 1 $ \ix ->
+              wf ((+1) $ arr!0!0) 0
 
-
-{-
-perform =
-  withCUDA $
-  do
-    kern <- capture (256, 0) (sklansky 10 (+) . splitUp 1024) 
-
-    useVector (V.fromList [0..1023 :: Word32]) $ \i -> 
-      allocaVector 1024 $ \ (o :: CUDAVector Word32) ->
-      do
-        fill o 0
-        o <== (1,kern) <> i 
-        r <- peekCUDAVector o
-        lift $ putStrLn $ show r 
--}
+t2 :: (MemoryOps a,Num a) => SPull (SPull a) -> SPush a
+t2 = pConcat . fmap (push . fmap (+1))
 
 perform = do
   tt <- getCurrentTime
   withCUDA False $ do
+    --kern <- capture (t . splitUp 512) (input :- ())
+    --kern <- capture (t2 . splitUp 512) (inputS :- ())
+    --kern <- capture (reduce (+) . splitUp 512) (inputS :- ())
 
     tt <- lift $ printTimeSince "init cuda" tt
 
-    let size = 1024*1024
-        inputSI :: SPull EInt32
+    let size = 1024*1024*8
+        bs = 2048
+        inputSI :: SPull EFloat
         inputSI = namedGlobal "apa" size
 
-    let il = [0..(fromIntegral size-1)]
-    useVector (V.fromList il) $ \i ->
-      allocaVector (fromIntegral size) $ \ (o :: CUDAVector Int32) -> do
-        fill o 0
-        lift $ printTimeSince "create vectors" tt
-        sequence_ [runKern inputSI i o s | s <- [5..10]]
+    let xl = [0..(fromIntegral size-1)]
+        yl = [0..(fromIntegral size-1)]
+        ol = P.replicate (fromIntegral size) 0
+    useVector (V.fromList xl) $ \(x :: CUDAVector Float) ->
+      useVector (V.fromList yl) $ \(y :: CUDAVector Float) ->
+        allocaVector (fromIntegral size) $ \(o :: CUDAVector Float) -> do
+          lift $ printTimeSince "create vectors" tt
+          sequence_ [runKern inputSI x y o (2^s) | s <- [5..10]]
 
-runKern input i o bs = do
+runKern input x y o bs = do
   let size = len input
   tt <- lift $ getCurrentTime
   
-  kern <- captureWithStrategy
-        [(Par,Block,0),(Par,Thread,2^(bs-2)),(Seq,Thread,0)]
-        --((pConcatMapJoin $ sklansky3 bs (+)) . splitUpS (2^bs))
-        ((pConcatMap $ pJoinPush . scan1 (+)) . splitUpS (2^bs))
-        (input :- ())
+  kern <- captureWithStrategy [(Par,Thread,bs),(Seq,Thread,8),(Par,Block,0)]
+        (saxpy1 bs 2)
+        (input :- input :- ())
+  let kernname = "saxpy6-8"
   sync
   tt <- lift $ printTimeSince "init" tt
 
-  o <== kern <> i
+  o <== kern <> x <> y
   sync
   tt <- lift $ printTimeSince "run once" tt
 
   r <- peekCUDAVector o
   sync
   lift $ printTimeSince "readback" tt
-  let ss :: Int32
-      ss = fromIntegral size
-      sumil = ss*(ss+1)*(ss+2)`div`6
+  let ss = fromIntegral size
+      sumil = 3*ss*(ss+1)/2
   --lift $ putStrLn $ show r
   --lift $ putStrLn $ show $ sum $ P.take (fromIntegral bs) il
   --lift $ putStrLn $ show $ sum r
   --lift $ putStrLn $ show $ sum il
-  lift $ putStrLn $ "diff " ++ (show $ sumil - sum r)
-  fill o 0
-  sync
+  --lift $ putStrLn $ "diff " ++ (show $ sumil - fromIntegral (sum r))
 
   tt <- lift $ getCurrentTime
   sequence_ $ P.replicate 1000 $ do
-    o <== kern <> i
+    o <== kern <> x <> y
     sync
-  lift $ printTimeSinceN 1000 (2*fromIntegral size) tt $ "bench\tscan1-2"
+  lift $ printTimeSinceN 1000 (2*fromIntegral size) tt $ "bench\t" ++ kernname
     ++ "\t" ++ show size
     ++ "\t" ++ show bs 
-    ++ "\t" ++ show (2^bs)
+    ++ "\t" ++ show 0
     ++ "\t"
   return ()
 

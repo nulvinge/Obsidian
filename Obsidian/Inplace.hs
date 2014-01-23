@@ -12,7 +12,7 @@ import Obsidian.Memory
 import Obsidian.Force
 import Obsidian.Atomic
 import Obsidian.Types
-import Obsidian
+import Obsidian.Force
 import Data.Word
 
 --------------------------------------------------------------------------
@@ -31,7 +31,7 @@ inplaceVariable s ns = Inplace s (const $ assignScalar ns) (const $ readFrom ns)
 instance Array Inplace where
   resize m (Inplace _ w r) = Inplace m w r
   len      (Inplace s _ r) = s
-  aMap   f (Inplace s w r) = error "Cannot amap Inplace"
+  imap   f (Inplace s w r) = error "Cannot amap Inplace"
   ixMap  f (Inplace s w r) = Inplace s (w.f) (r.f)
 
 instance Indexible Inplace where
@@ -109,7 +109,7 @@ data APush s a = APush s ((Exp Word32 -> a -> Program ()) -> Exp Word32 -> Progr
 instance Array APush where
   resize m (APush _ p) = APush m p
   len      (APush s _) = s
-  aMap   f (APush s p) = APush s $ \wf i -> p (\ix e -> wf ix (f e)) i
+  imap   f (APush s p) = APush s $ \wf i -> p (\ix e -> wf ix (f ix e)) i
   ixMap  f (APush s p) = APush s $ \wf i -> p (\ix e -> wf (f ix) e) i
 
 {-

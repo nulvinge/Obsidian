@@ -18,7 +18,7 @@ isCoalesced (n,e,rw,cs) = appendCost $ case local of
   GlobalMem |  nonConstantsAll /= [] -> (Sequential,) $ Just $ "The following variables are not warp constant: " ++ (show nonConstantsAll)
   GlobalMem | stride == 0 -> (Broadcast,Nothing)
   GlobalMem | stride == 1 || stride == -1 -> (Coalesced,Nothing)
-  GlobalMem -> (Sequential, Nothing)
+  GlobalMem -> (Sequential,) $ Just $ "Sequential read with stride: " ++ (show stride)
   SharedMem  | nonConstants /= [] -> (Sequential,) $ Just $ "The following variables are not warp constant: " ++ (show nonConstants)
   SharedMem  | nonConstantsAll == [] && stride == 0 -> (Broadcast,Nothing)
   SharedMem  | nonConstantsAll == [] && stride == 1 -> (Parallel,Nothing)

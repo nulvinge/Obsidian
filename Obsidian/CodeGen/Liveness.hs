@@ -13,6 +13,7 @@ import qualified Data.Set as Set
 import Obsidian.Exp
 import Obsidian.Globs
 import Obsidian.CodeGen.Program
+import Obsidian.Dependency.ExpAnalysis
 
 import Control.Monad.State
 
@@ -62,7 +63,7 @@ cl im = mapM process im
     process (SAssign nom ixs e,_) =
       do
         s <- get
-        let arrays = collectArrays e
+        let arrays = map fst $ collectExp getIndicesExp e
             living = Set.fromList (nom:arrays) `Set.union` s
         
         put living  -- update state   
@@ -84,10 +85,10 @@ cl im = mapM process im
         s <- get 
         return (SDeclare name t,s)
 
-    process (SOutput name t,_) = 
+    process (SOutput name size t,_) = 
       do 
         s <- get 
-        return (SOutput name t,s)
+        return (SOutput name size t,s)
 
     process (SSynchronize,_) = 
       do 

@@ -20,7 +20,7 @@ import Obsidian.Program
 
 import Data.List
 import Data.Word
-import Control.Comonad
+--import Control.Comonad
 
 ---------------------------------------------------------------------------
 -- Aliases
@@ -66,19 +66,19 @@ mkPullArray n p = Pull n p
 class Array a where
   resize :: (ASize r,ASize s) => r -> a s e -> a r e
   len    :: ASize s => a s e -> s
-  aMap   :: (e -> e') -> a s e -> a s e'
+  imap   :: (Exp Word32 -> e -> e') -> a s e -> a s e'
   ixMap  :: (Exp Word32 -> Exp Word32) -> a s e -> a s e
   
 instance Array Pull where 
   resize m (Pull _ ixf) = Pull m ixf
   len      (Pull s _)   = s
-  aMap   f (Pull n ixf) = Pull n (f . ixf)
+  imap   f (Pull n ixf) = Pull n (\ix -> f ix $ ixf ix)
   ixMap  f (Pull n ixf) = Pull n (ixf . f) 
   
 instance Array Push where 
   resize m (Push _ p) = Push m p
   len      (Push s _) = s
-  aMap   f (Push s p) = Push s $ \wf -> p (\e ix -> wf (f e) ix)
+  imap   f (Push s p) = Push s $ \wf -> p (\e ix -> wf (f ix e) ix)
   ixMap  f (Push s p) = Push s $ \wf -> p (\e ix -> wf e (f ix))
 
 class Indexible a where 
@@ -91,7 +91,7 @@ instance Indexible Pull where
 -- Functor instance Pull/Push arrays
 ---------------------------------------------------------------------------
 instance Array arr => Functor (arr w) where 
-  fmap = aMap
+  fmap f = imap (const f)
 
 
 ---------------------------------------------------------------------------
@@ -115,7 +115,7 @@ pushN n arr =
     forAll (fromIntegral n) $ \tix -> wf (arr ! (bix * fromIntegral n + tix))
                                                 (bix * fromIntegral n + tix) 
 
-pushA :: ASize s => PreferredLoopLocation -> Pull s e -> Push s e
+pushA :: ASize s => Strategy -> Pull s e -> Push s e
 pushA pl arr = Push (len arr) $ \wf ->
                 preferredFor pl (sizeConv (len arr)) $ \i ->
                   wf (arr ! i) i
@@ -128,16 +128,18 @@ infixl 9 !
 (!) :: Indexible a => a s e -> Exp Word32 -> e 
 (!) = access
 
+{-
 data CoPull s a = CoPull s (Pull s a)
 
 instance Array CoPull where
   resize r (CoPull i a) = CoPull (fromIntegral i) (resize r a)
   len (CoPull i a) = len a
-  aMap f (CoPull i a) = CoPull i (aMap f a)
+  imap f (CoPull i a) = CoPull i (imap f a)
   ixMap f (CoPull i a) = CoPull i (ixMap f a)
 
 
 instance ASize s => Comonad (CoPull s) where
   extract (CoPull i a) = a ! fromIntegral i
   duplicate (CoPull i a) = CoPull i (Pull (len a) (\j -> CoPull (fromIntegral j) a))
+-}
 

@@ -58,25 +58,29 @@ kernelHead name ins outs =
 ---------------------------------------------------------------------------
 -- genKernel 
 ---------------------------------------------------------------------------
-genKernel name kernel a = s
-  where (s,_,_,_) = genKernelM name kernel a
+genKernel name strategy kernel a = s
+  where (s,_,_,_) = genKernelM name strategy kernel a
 
 --genKernel :: ToProgram a b => String -> (a -> b) -> Ips a b -> String
-genKernelM :: ToProgram a => String -> a -> InputList a -> (String,Bytes,Word32,Word32)
-genKernelM name kernel a = (proto ++ ts ++ cuda, size m, 1, tb)
+genKernelM :: ToProgram a => String -> Strategy -> a -> InputList a -> (String,Bytes,Word32,Word32)
+genKernelM name strategy kernel a = (proto ++ ts ++ cuda, size m, bb, tb)
   where
     (ins,sizes,im0) = toProgram 0 kernel a
-    im = insertAnalysis ins sizes im0
+    outs' = getOutputs im0
+    sizes' = sizes ++ map (\(n,s,_) -> (n,s)) outs'
+    im = insertAnalysis strategy sizes' im0
 
-    outs = getOutputs im
+    outs = map (\(n,s,t) -> (n,t)) outs'
+
 
     lc  = computeLiveness im 
     
     -- Creates (name -> memory address) map      
     (m,mm) = mmIM lc sharedMem Map.empty
 
-    threadBudget = numThreads im
-    tb = case threadBudget of Left a -> a
+    (threadBudget,blockBudget) = numThreads im
+    Left tb = threadBudget
+    Left bb = blockBudget
     ts = "/* number of threads needed " ++ show threadBudget ++ "*/\n"
 
     spmd = imToSPMDC threadBudget im
@@ -91,13 +95,13 @@ genKernelM name kernel a = (proto ++ ts ++ cuda, size m, 1, tb)
     body = body' -- spdecls ++ body''
               
     swap (x,y) = (y,x)
-    inputs = map ((\(t,n) -> (typeToCType t,n)) . swap) ins
-    outputs = map ((\(t,n) -> (typeToCType t,n)) . swap) outs 
-    
+    inputs = map (\(n,t) -> (typeToCType t,n)) ins
+    outputs = map (\(n,t) -> (typeToCType t,n)) outs 
+
     ckernel = CKernel CQualifyerKernel CVoid name (inputs++outputs) body
     shared = CDecl (CQualified CQualifyerExtern (CQualified CQualifyerShared ((CQualified (CQualifyerAttrib (CAttribAligned 16)) (CArray []  (CWord8)))))) "sbase"
 
-    proto = getProto name ins outs 
+    proto = getProto name ins outs
     cuda = printCKernel (PPConfig "__global__" "" "" "__syncthreads()") ckernel 
 
 
@@ -181,7 +185,7 @@ imToSPMDC nt im = concatMap processG im
     processG (SFor Par Block [] n im,_) =
       -- TODO: there should be "number of blocks"-related conditionals here (possibly) 
       concatMap processB im
-    processG (SOutput name t,_) = []
+    processG (SOutput name s t,_) = []
     processG (SComment s,_) = [cComment s]
     processG (a,d) = error ("Cannot occur at grid level: " ++ show a)
 
@@ -193,11 +197,11 @@ imToSPMDC nt im = concatMap processG im
         code
       where 
         code = concatMap processT im
-    processB (SFor Seq pl name e im,_) =
-      [cFor name (expToCExp e) (concatMap processB im)]
-    processB (SComment s,_) = [cComment s]
+    processB (SFor Seq pl name e im,_) = [cFor name (expToCExp e) (concatMap processB im)]
+    processB (SComment s,_)            = [cComment s]
     processB (SAllocate name size t,_) = []
-    processB (SSynchronize,_)   = [CSync]
+    processB (SSynchronize,_)          = [CSync]
+    processB (SDeclare name t,_)       = [cDecl (typeToCType t) name]
     processB (a,d) = error ("Cannot occur at block level:" ++ show a)
 
     processT (SFor Par Vector name e im,_) = --this should be more advanced
