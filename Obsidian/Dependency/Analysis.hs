@@ -81,7 +81,7 @@ insertAnalysis strategy inSizes im = traverseComment (map Just . getComments . s
         cost = sumCost $ collectIM (list.getCost.snd) imF
         hazardEdges = keepHazards accesses depEdgesF
 
-runAnalysis threadBudget inScalars actions im = (imF,depEdges,accesses,syncs)
+runAnalysis threadBudget inScalars actions im = (imF,[],accesses,syncs)
   where
     im1, im2, imF :: IMList IMData
     im1 = mapDataIM (collectIMData.snd) $ insertIMCollection threadBudget inScalars im

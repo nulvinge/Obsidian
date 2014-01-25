@@ -48,6 +48,9 @@ import qualified Obsidian.Program as P
 import qualified Obsidian.CodeGen.Program as CG
 import qualified Obsidian as O
 
+import Feldspar.Core.Types hiding (Type, BoolType, FloatType, ArrayType)
+import Feldspar.Core.Frontend
+
 import Data.List
 
 icompile :: (Compilable t internal) => t -> IO ()
@@ -58,6 +61,8 @@ icompile' prg functionName opts = do
     putStrLn "=============== Source ================"
     putStrLn $ src
     putStrLn "=============== Source ================"
+    putStrLn $ show $ astf
+    putStrLn "=============== Source ================"
     putStrLn $ unlines $ intersperse "" $ map (show.procBody) $ entities m
     putStrLn "=============== Source ================"
     O.printAnalysis m ()
@@ -66,20 +71,22 @@ icompile' prg functionName opts = do
     m = executePluginChain' Interactive prg fsignature opts
     fsignature = NameExtractor.OriginalFunctionSignature functionName []
     (dbgModule, (src, endPos)) = compToCWithInfos ((opts,Declaration_pl), 1) m
+    astf = reifyFeld N32 prg
 
 convType :: Variable t -> (O.Name,O.Type)
-convType v = (varName v, ct $ varType v)
-  where ct BoolType = O.Bool
-        ct FloatType = O.Float
-        ct (NumType Signed S8)  = O.Int8
-        ct (NumType Signed S16) = O.Int16
-        ct (NumType Signed S32) = O.Int32
-        ct (NumType Signed S64) = O.Int64
-        ct (NumType Unsigned S8)  = O.Word8
-        ct (NumType Unsigned S16) = O.Word16
-        ct (NumType Unsigned S32) = O.Word32
-        ct (NumType Unsigned S64) = O.Word64
-        ct (ArrayType s t) = O.Pointer (ct t)
+convType v = (varName v, convT $ varType v)
+convT :: Type -> O.Type
+convT BoolType = O.Bool
+convT FloatType = O.Float
+convT (NumType Signed S8)  = O.Int8
+convT (NumType Signed S16) = O.Int16
+convT (NumType Signed S32) = O.Int32
+convT (NumType Signed S64) = O.Int64
+convT (NumType Unsigned S8)  = O.Word8
+convT (NumType Unsigned S16) = O.Word16
+convT (NumType Unsigned S32) = O.Word32
+convT (NumType Unsigned S64) = O.Word64
+convT (ArrayType s t) = O.Pointer (convT t)
 
 makeIM :: Block () -> [Variable t] -> CG.IM
 makeIM b o = map ((\(n,t) -> (CG.SOutput n 0 t,())) . convType) o
@@ -91,37 +98,68 @@ makeBlock (Block l b ll) = makeProg b
 makeProg :: Program () -> CG.IM
 makeProg (Empty _ _) = []
 makeProg (Comment _ s _ _) = [(CG.SComment s, ())]
-makeProg (Assign  l r _ _) = f $ makeExpr undefined r
+makeProg (Assign  l r _ _) = case makeExpr r of Ebox e -> [(CG.SAssign name inds e, ())]
   where (name, inds) = makeLHS l
-        f :: O.EInt32 -> CG.IM
-        f e = [(CG.SAssign name inds e, ())]
 makeProg (Sequence p _ _) = concatMap makeProg p
 makeProg (Branch   c t f _ _) = [(CG.SCond cc          (makeBlock t), ())
                                 ,(CG.SCond (O.notE cc) (makeBlock t), ())
                                 ]
-  where cc = makeExpr O.BoolWitness c
-makeProg (SeqLoop c condCalc b _ _) = [(CG.SFor O.Seq O.Unknown "test" (makeExpr O.Word32Witness c)
+  where cc = makeExp O.BoolWitness c
+makeProg (SeqLoop c condCalc b _ _) = [(CG.SFor O.Seq O.Unknown "test" (makeExp O.Word32Witness c)
                                                 (makeBlock b ++ makeBlock condCalc), ())]
-makeProg (ParLoop v c 1 b _ _) = [(CG.SFor O.Par O.Unknown name (makeExpr O.Word32Witness c)
+makeProg (ParLoop v c 1 b _ _) = [(CG.SFor O.Par O.Unknown name 65536 -- (makeExp O.Word32Witness c)
                                            (makeBlock b), ())]
   where (name,t) = convType v
 makeProg (BlockProgram b _) = makeBlock b
+makeProg (ProcedureCall n p _ _) = makeCall n p
+makeProg a = error $ "Prog: " ++ show a
 
-makeExpr :: (O.Scalar t) => O.Witness t -> Expression () -> O.Exp t
-makeExpr w (VarExpr v _) = O.Index (n,[])
+makeCall "initArray" [Out (VarExpr v _) _, In (SizeOf t _ _) _, In e _] = [] -- [(CG.SOutput n e' t', ())]
+  where e' = makeExp O.Word32Witness e
+        (n,t')  = convType v
+
+makeExpr :: Expression () -> EBox
+makeExpr (VarExpr v _) = makeEBox t (\_ -> O.Index (n,[]))
   where (n,t) = convType v
-makeExpr w (ArrayElem (VarExpr v _) i _ _) = O.Index (n,[makeExpr O.Word32Witness i])
+makeExpr (ArrayElem (VarExpr v _) i _ _) = makeEBox t (\_ -> O.Index (n,[makeExp O.Word32Witness i]))
   where (n,t) = convType v
-makeExpr O.Word32Witness (ConstExpr (IntConst v _ _ _) _) = O.Literal $ fromIntegral v
-makeExpr O.FloatWitness  (ConstExpr (FloatConst v _ _) _) = O.Literal $ v
-makeExpr O.BoolWitness   (ConstExpr (BoolConst  v _ _) _) = O.Literal $ v
-makeExpr w (FunctionCall f p _ _) = makeFun w (expWitness $ head p) (funName f) p
+makeExpr (ConstExpr (IntConst v t _ _) _) = makeEBoxN t' (\_ -> (O.Literal $ fromIntegral v))
+  where t' = convT t
+makeExpr (ConstExpr (FloatConst v _ _) _) = Ebox $ O.Literal $ v
+makeExpr (ConstExpr (BoolConst  v _ _) _) = Ebox $ O.Literal $ v
+makeExpr (FunctionCall f p _ _) = Ebox $ makeFun O.Word32Witness (funName f) p
+  where t = convT $ returnType f
 
-makeFun :: (O.Scalar t) => O.Witness t -> O.Witness t' -> String -> [Expression ()] -> O.Exp t
-makeFun O.BoolWitness O.Word32Witness "==" [a,b] = (O.==*) (makeExpr O.Word32Witness a) (makeExpr O.Word32Witness b)
+makeEBox :: O.Type -> (forall a. (O.Scalar a) => () -> O.Exp a) -> EBox
+makeEBox O.Bool f = Ebox (f () :: O.EBool)
 
-expWitness :: Expression () -> O.Witness t
-expWitness = t2w . exprT
+makeEBoxN :: O.Type -> (forall a. (O.Scalar a, Num a) => () -> O.Exp a) -> EBox
+makeEBoxN O.Word32 f = Ebox (f () :: O.EWord32)
+
+makeExp :: (O.Scalar t) => O.Witness t -> Expression () -> O.Exp t
+makeExp _ (VarExpr v _) = O.Index (n,[])
+  where (n,t) = convType v
+makeExp _ (ArrayElem (VarExpr v _) i _ _) = O.Index (n,[makeExp O.Word32Witness i])
+  where (n,t) = convType v
+makeExp O.Word32Witness (ConstExpr (IntConst v t _ _) _) = O.Literal $ fromIntegral v
+-- makeExp O.DoubleWitness (ConstExpr (FloatConst v _ _) _) = O.Literal $ v
+makeExp O.BoolWitness (ConstExpr (BoolConst  v _ _) _) = O.Literal $ v
+makeExp w (FunctionCall f p _ _) = makeFun w (funName f) p
+
+makeFun :: (O.Scalar t) => O.Witness t -> String -> [Expression ()] -> O.Exp t
+makeFun O.BoolWitness "==" [a,b] = (O.==*) (makeExp O.Word32Witness a) (makeExp O.Word32Witness b)
+makeFun O.Word32Witness "+" [a,b] = (+) (makeExp O.Word32Witness a) (makeExp O.Word32Witness b)
+makeFun O.Word32Witness "*" [a,b] = (*) (makeExp O.Word32Witness a) (makeExp O.Word32Witness b)
+makeFun O.Word32Witness "min" [a,b] = O.minE (makeExp O.Word32Witness a) (makeExp O.Word32Witness b)
+makeFun O.Word32Witness "getLength" [a] = 65536
+makeFun w f a = error $ show $ (f,a)
+
+data EBox where
+  Ebox :: (O.Scalar a) => O.Exp a -> EBox
+
+{-
+expWitness :: Expression () -> (forall a. (O.Scalar a) => () -> O.Witness a)
+expWitness = t2w . convT . exprT
   where
     exprT (VarExpr v _) = varType v
     exprT (ArrayElem (VarExpr v _) _ _ _) = t
@@ -131,12 +169,16 @@ expWitness = t2w . exprT
     exprT (ConstExpr (BoolConst  v _ _) _) = BoolType
     exprT (FunctionCall f p _ _) = returnType f
 
-    t2w :: Type -> (forall a. (O.Scalar a) => O.Witness a)
-    -- t2w FloatType = O.FloatWitness
-    t2w (NumType Unsigned S32) = O.Word32Witness
-    -- t2w BoolType = O.BoolWitness
+    t2w :: O.Type -> (forall a. (O.Scalar a) => () -> O.Witness a)
+    t2w O.Word32 = \() -> O.Word32Witness
+    t2w O.Bool   = \() -> O.BoolWitness
+-}
 
-makeLHS l = undefined
+makeLHS (VarExpr v _) = case varRole v of
+  Value   -> (varName v, [])
+  Pointer -> (varName v, [0])
+makeLHS (ArrayElem (VarExpr v _) i _ _) = (varName v, [makeExp O.Word32Witness i])
+makeLHS a = error $ "LHS: " ++ show a
 
 
 

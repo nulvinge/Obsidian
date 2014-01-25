@@ -160,5 +160,5 @@ rangeInSize r s = r `rangeIn` (0,s-1)
 isLocal n | "arr"    `isPrefixOf` n = True
           | "input"  `isPrefixOf` n = False
           | "output" `isPrefixOf` n = False
-          | otherwise = error n
+          | otherwise = False -- error n
 

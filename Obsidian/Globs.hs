@@ -30,7 +30,7 @@ strace a = trace (show a) a
 traces a = trace (show a)
 
 defaultStrategy :: Strategy
-defaultStrategy' =
+defaultStrategy =
   [(Par,Block,1)
   ,(Par,Thread,32)
   ,(Par,Block,32)
@@ -40,7 +40,7 @@ defaultStrategy' =
   ,(Par,Block,32)
   ,(Seq,Thread,0)
   ]
-defaultStrategy =
+defaultStrategy' =
   [(Par,Block,65536)
   ,(Par,Thread,1024)
   ,(Par,Vector,4)
